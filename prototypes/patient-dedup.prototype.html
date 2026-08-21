@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Patient Dedup Prototype — throwaway, do not ship</title>
+<style>
+  :root {
+    --accent: #2f6f5e;
+    --accent-light: #e6f1ee;
+    --ink: #1c2321;
+    --muted: #5c6b66;
+    --border: #d8e2df;
+    --bg: #fbfbf9;
+    --panel: #ffffff;
+    --danger: #a8432f;
+    --warn: #a67c00;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.5;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 100px; }
+  .banner {
+    background: #fff3e0;
+    border: 1px solid #e0b060;
+    color: #6b4a00;
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    margin-bottom: 28px;
+    text-align: center;
+  }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  .subtitle { color: var(--muted); font-size: 15px; margin: 0 0 20px; }
+  .question {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    font-size: 14.5px;
+  }
+  .question strong { color: var(--accent); }
+  .rules {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 20px;
+    margin-bottom: 36px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .rules ul { margin: 6px 0 0; padding-left: 20px; }
+  .rules li { margin-bottom: 4px; }
+  code { background: #eef2f0; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+
+  section { margin-bottom: 40px; }
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  .panel h3 { margin: 0 0 12px; font-size: 14px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr:last-child td { border-bottom: none; }
+  .empty-row td { color: var(--muted); font-style: italic; }
+
+  .status-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 100px;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .status-active { background: var(--accent-light); color: var(--accent); }
+  .status-merged { background: #eee; color: #777; }
+  .status-pending { background: #fff4d6; color: var(--warn); }
+  .status-confirmed { background: var(--accent-light); color: var(--accent); }
+  .status-dismissed { background: #f2e3e0; color: var(--danger); }
+
+  .inline-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+  .inline-edit input {
+    padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; font-size: 12.5px; width: 118px;
+  }
+  .inline-edit input.name-field { width: 150px; }
+
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 6px 13px;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button.secondary { background: white; color: var(--accent); }
+  button.danger { background: white; color: var(--danger); border-color: var(--danger); }
+  button.ghost { background: transparent; color: var(--muted); border-color: var(--border); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.small { font-size: 12px; padding: 4px 9px; }
+
+  .form-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 11.5px; color: var(--muted); }
+  .field input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; font-size: 13.5px; width: 168px; }
+
+  .log-box {
+    max-height: 230px;
+    overflow-y: auto;
+    background: #f6f8f7;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+  .log-entry { padding: 4px 0; border-bottom: 1px dashed #e3e9e7; }
+  .log-entry:last-child { border-bottom: none; }
+  .log-empty { color: var(--muted); font-style: italic; }
+
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tab-btn {
+    background: white; color: var(--muted); border: 1px solid var(--border);
+  }
+  .tab-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+  .scenario-desc { font-size: 13.5px; color: var(--muted); margin-bottom: 14px; }
+  .steps { display: flex; flex-direction: column; gap: 8px; }
+  .step-row { display: flex; align-items: center; gap: 10px; }
+  .step-num {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--border); color: white;
+    display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0;
+  }
+  .step-row.done .step-num { background: var(--accent); }
+  .step-row.current .step-num { background: var(--warn); }
+  .step-row.done button.step-btn { background: var(--accent-light); color: var(--accent); border-color: var(--accent-light); }
+  button.step-btn { text-align: left; flex: 1; }
+  .scenario-finished { color: var(--accent); font-size: 13px; margin-top: 10px; font-weight: 600; }
+
+  .reset-row { margin-top: 20px; text-align: right; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="banner">🧪 PROTOTYPE — throwaway demo, not part of the real application. In-memory only, resets on reload.</div>
+
+  <h1>Patient Matching &amp; Patient Merge</h1>
+  <p class="subtitle">A clickable model of the duplicate-patient rules, for anyone to poke at.</p>
+
+  <div class="question">
+    <strong>Question this answers:</strong> ADR-0004 says Patient Matching auto-merges two Patient records only on an
+    exact NIK match, and treats everything else as a Duplicate Candidate that needs manual review by a Resepsionis or
+    Admin Klinik. Does that rule actually feel right once it meets messy, real-looking data — typos, shared household
+    phones, look-alike names, NIK entered late, reviewers who got it wrong? Click around freely below, or run a guided
+    scenario to see the awkward cases on purpose.
+  </div>
+
+  <div class="rules">
+    The model being tested, in plain terms:
+    <ul>
+      <li>Both records have a NIK and it's <strong>identical</strong> → certain match → <strong>auto-merged instantly</strong>, no review, no matter what else differs.</li>
+      <li>Both records have a NIK and it <strong>differs</strong> → treated as definitely different people, even if name/phone/date of birth all look identical.</li>
+      <li>Otherwise, at least <strong>2 of 3</strong> signals must match — phone number, name (small typos tolerated), date of birth — to raise a <strong>Duplicate Candidate</strong> pending review.</li>
+      <li>Only one matching signal (e.g. phone number alone) → not flagged at all.</li>
+      <li>A dismissed Duplicate Candidate stays dismissed <strong>unless</strong> a later edit produces a certain NIK match — NIK evidence overrides a human's earlier "not the same person" call.</li>
+    </ul>
+  </div>
+
+  <section>
+    <h2>Current State</h2>
+
+    <div class="panel">
+      <h3>Patients</h3>
+      <table id="patients-table"></table>
+    </div>
+
+    <div class="panel">
+      <h3>Duplicate Candidates</h3>
+      <table id="candidates-table"></table>
+    </div>
+
+    <div class="panel">
+      <h3>Event Log</h3>
+      <div class="log-box" id="log-box"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Free Play</h2>
+    <div class="panel">
+      <h3>Register a new Patient</h3>
+      <div class="form-grid">
+        <div class="field"><label>Name</label><input id="f-name" placeholder="Siti Aminah"></div>
+        <div class="field"><label>Phone</label><input id="f-phone" placeholder="0812xxxxxxx"></div>
+        <div class="field"><label>NIK (optional)</label><input id="f-nik" placeholder="16 digits, or leave blank"></div>
+        <div class="field"><label>Date of birth</label><input id="f-dob" type="date"></div>
+        <button onclick="doRegister()">Register Patient</button>
+      </div>
+    </div>
+    <div class="reset-row">
+      <button class="ghost" onclick="resetDemo()">↺ Reset demo to empty state</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Guided Walkthroughs</h2>
+    <div class="tabs" id="scenario-tabs"></div>
+    <div class="panel" id="scenario-panel"></div>
+  </section>
+
+</div>
+
+<script id="patient-matching-module">
+// ---------------------------------------------------------------------------
+// Pure Patient Matching / Patient Merge module.
+// No DOM access. (state, action) -> { state, log }. Liftable into the real
+// backend service as-is once the rules below are validated.
+// ---------------------------------------------------------------------------
+const PatientMatching = (() => {
+
+  function normalizeText(s) {
+    return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+  function normalizePhone(s) {
+    return (s || '').replace(/[^0-9]/g, '');
+  }
+  function levenshtein(a, b) {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+    return dp[m][n];
+  }
+  function namesSimilar(a, b) {
+    const na = normalizeText(a), nb = normalizeText(b);
+    if (!na || !nb) return false;
+    if (na === nb) return true;
+    return levenshtein(na, nb) <= 2;
+  }
+
+  // Evaluates whether `candidate` is a match against an existing active `existing` patient.
+  function evaluateMatch(existing, candidate) {
+    const nikA = (existing.nik || '').trim();
+    const nikB = (candidate.nik || '').trim();
+    if (nikA && nikB) {
+      return nikA === nikB ? { kind: 'nik-certain' } : { kind: 'nik-mismatch' };
+    }
+    const phoneMatch = normalizePhone(existing.phone) !== '' &&
+      normalizePhone(existing.phone) === normalizePhone(candidate.phone);
+    const nameMatch = namesSimilar(existing.name, candidate.name);
+    const dobMatch = !!existing.dob && !!candidate.dob && existing.dob === candidate.dob;
+    const score = [phoneMatch, nameMatch, dobMatch].filter(Boolean).length;
+    return { kind: score >= 2 ? 'fuzzy-candidate' : 'no-match', phoneMatch, nameMatch, dobMatch, score };
+  }
+
+  function describeSignals(m) {
+    const parts = [];
+    if (m.phoneMatch) parts.push('phone');
+    if (m.nameMatch) parts.push('name');
+    if (m.dobMatch) parts.push('date of birth');
+    return parts.join(' + ');
+  }
+
+  function activePatients(state) {
+    return state.patients.filter(p => p.status === 'active');
+  }
+
+  function findExistingCandidatePair(state, idA, idB) {
+    return state.candidates.find(c =>
+      (c.patientAId === idA && c.patientBId === idB) ||
+      (c.patientAId === idB && c.patientBId === idA)
+    );
+  }
+
+  // Marks `loserId` merged into `survivorId`, and retargets/dedupes any
+  // pending candidates that referenced the loser.
+  function mergePatients(state, survivorId, loserId, log) {
+    const patients = state.patients.map(p =>
+      p.id === loserId ? { ...p, status: 'merged', mergedInto: survivorId } : p
+    );
+    let candidates = state.candidates.map(c => {
+      if (c.status !== 'pending') return c;
+      let a = c.patientAId, b = c.patientBId;
+      if (a === loserId) a = survivorId;
+      if (b === loserId) b = survivorId;
+      if (a === b) return null; // collapsed onto itself, drop
+      return (a === c.patientAId && b === c.patientBId) ? c : { ...c, patientAId: a, patientBId: b };
+    }).filter(Boolean);
+
+    const seen = new Set();
+    candidates = candidates.filter(c => {
+      if (c.status !== 'pending') return true;
+      const key = [c.patientAId, c.patientBId].slice().sort((x, y) => x - y).join('-');
+      if (seen.has(key)) {
+        log.push(`Dropped a duplicate pending candidate for #${c.patientAId} & #${c.patientBId} — already covered after the merge.`);
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+
+    return { ...state, patients, candidates };
+  }
+
+  function registerPatient(state, payload) {
+    const log = [];
+    const id = state.nextId;
+    const newPatient = {
+      id, name: payload.name, phone: payload.phone,
+      nik: (payload.nik || '').trim(), dob: payload.dob || '',
+      status: 'active', mergedInto: null
+    };
+    const others = activePatients(state);
+    let next = { ...state, patients: [...state.patients, newPatient], nextId: id + 1 };
+    log.push(`Registered Patient #${id} "${payload.name}".`);
+
+    const nikMatch = others.find(o => evaluateMatch(o, newPatient).kind === 'nik-certain');
+    if (nikMatch) {
+      next = mergePatients(next, nikMatch.id, id, log);
+      log.push(`NIK exact match with Patient #${nikMatch.id} — auto-merged per ADR-0004. No manual review happened.`);
+      return { state: next, log };
+    }
+
+    others.forEach(other => {
+      const m = evaluateMatch(other, newPatient);
+      if (m.kind === 'nik-mismatch') {
+        log.push(`Looks similar to Patient #${other.id}, but NIK explicitly differs — treated as a different person.`);
+      } else if (m.kind === 'fuzzy-candidate') {
+        const candId = next.nextCandidateId;
+        next = {
+          ...next,
+          candidates: [...next.candidates, {
+            id: candId, patientAId: other.id, patientBId: id,
+            reason: describeSignals(m), status: 'pending'
+          }],
+          nextCandidateId: candId + 1
+        };
+        log.push(`Duplicate Candidate #${candId} raised: #${other.id} & #${id} match on ${describeSignals(m)}. Pending review.`);
+      }
+    });
+    return { state: next, log };
+  }
+
+  function editPatient(state, payload) {
+    const log = [];
+    const target = state.patients.find(p => p.id === payload.patientId);
+    if (!target) return { state, log: ['No such patient.'] };
+
+    const updated = { ...target, ...payload.fields };
+    if (payload.fields.nik !== undefined) updated.nik = payload.fields.nik.trim();
+    let next = { ...state, patients: state.patients.map(p => p.id === target.id ? updated : p) };
+    log.push(`Edited Patient #${target.id}: now "${updated.name}", phone ${updated.phone || '-'}, NIK ${updated.nik || '-'}, DOB ${updated.dob || '-'}.`);
+
+    const others = activePatients(state).filter(p => p.id !== target.id);
+
+    const nikMatch = others.find(o => evaluateMatch(o, updated).kind === 'nik-certain');
+    if (nikMatch) {
+      const priorPair = findExistingCandidatePair(state, target.id, nikMatch.id);
+      next = mergePatients(next, nikMatch.id, target.id, log);
+      if (priorPair && priorPair.status === 'dismissed') {
+        log.push(`Note: #${target.id} & #${nikMatch.id} were previously dismissed as "not the same person" — the new NIK match overrides that dismissal and merges them anyway, per ADR-0004.`);
+      } else {
+        log.push(`NIK exact match with Patient #${nikMatch.id} after edit — auto-merged per ADR-0004.`);
+      }
+      return { state: next, log };
+    }
+
+    others.forEach(other => {
+      const m = evaluateMatch(other, updated);
+      if (m.kind === 'nik-mismatch') {
+        log.push(`#${target.id} now looks similar to #${other.id}, but NIK explicitly differs — still treated as different people.`);
+        return;
+      }
+      if (m.kind === 'fuzzy-candidate') {
+        const existingPair = findExistingCandidatePair(next, other.id, target.id);
+        if (existingPair) return; // already pending/confirmed/dismissed — fuzzy signals don't resurrect a dismissal
+        const candId = next.nextCandidateId;
+        next = {
+          ...next,
+          candidates: [...next.candidates, {
+            id: candId, patientAId: other.id, patientBId: target.id,
+            reason: describeSignals(m), status: 'pending'
+          }],
+          nextCandidateId: candId + 1
+        };
+        log.push(`Duplicate Candidate #${candId} raised after edit: #${other.id} & #${target.id} match on ${describeSignals(m)}. Pending review.`);
+      }
+    });
+    return { state: next, log };
+  }
+
+  function reviewCandidate(state, payload) {
+    const log = [];
+    const cand = state.candidates.find(c => c.id === payload.candidateId);
+    if (!cand || cand.status !== 'pending') return { state, log: ['That candidate is no longer pending.'] };
+
+    if (payload.decision === 'dismiss') {
+      const next = { ...state, candidates: state.candidates.map(c => c.id === cand.id ? { ...c, status: 'dismissed' } : c) };
+      log.push(`Duplicate Candidate #${cand.id} dismissed: #${cand.patientAId} & #${cand.patientBId} confirmed as different people (for now).`);
+      return { state: next, log };
+    }
+
+    let next = { ...state, candidates: state.candidates.map(c => c.id === cand.id ? { ...c, status: 'confirmed' } : c) };
+    next = mergePatients(next, cand.patientAId, cand.patientBId, log);
+    log.push(`Duplicate Candidate #${cand.id} confirmed — Patient #${cand.patientBId} merged into #${cand.patientAId}.`);
+    return { state: next, log };
+  }
+
+  function initialState() {
+    return { patients: [], candidates: [], nextId: 1, nextCandidateId: 1 };
+  }
+
+  return { registerPatient, editPatient, reviewCandidate, initialState };
+})();
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Thin UI shell over the pure module above. Everything below is throwaway.
+// ---------------------------------------------------------------------------
+let appState = PatientMatching.initialState();
+let eventLog = [];
+
+function applyResult(result) {
+  appState = result.state;
+  eventLog = [...eventLog, ...result.log];
+  render();
+}
+
+function resetDemo() {
+  appState = PatientMatching.initialState();
+  eventLog = [];
+  activeScenario = null;
+  render();
+}
+
+function doRegister() {
+  const name = document.getElementById('f-name').value.trim();
+  const phone = document.getElementById('f-phone').value.trim();
+  const nik = document.getElementById('f-nik').value.trim();
+  const dob = document.getElementById('f-dob').value;
+  if (!name || !phone) { alert('Name and phone are required.'); return; }
+  applyResult(PatientMatching.registerPatient(appState, { name, phone, nik, dob }));
+  document.getElementById('f-name').value = '';
+  document.getElementById('f-phone').value = '';
+  document.getElementById('f-nik').value = '';
+  document.getElementById('f-dob').value = '';
+}
+
+function doEditSave(id) {
+  const name = document.getElementById(`e-name-${id}`).value.trim();
+  const phone = document.getElementById(`e-phone-${id}`).value.trim();
+  const nik = document.getElementById(`e-nik-${id}`).value.trim();
+  const dob = document.getElementById(`e-dob-${id}`).value;
+  applyResult(PatientMatching.editPatient(appState, { patientId: id, fields: { name, phone, nik, dob } }));
+}
+
+function doConfirm(candId) {
+  applyResult(PatientMatching.reviewCandidate(appState, { candidateId: candId, decision: 'confirm' }));
+}
+function doDismiss(candId) {
+  applyResult(PatientMatching.reviewCandidate(appState, { candidateId: candId, decision: 'dismiss' }));
+}
+
+function patientLabel(id) {
+  const p = appState.patients.find(p => p.id === id);
+  return p ? `#${p.id} ${p.name}` : `#${id}`;
+}
+
+function renderPatients() {
+  const table = document.getElementById('patients-table');
+  if (appState.patients.length === 0) {
+    table.innerHTML = `<tr class="empty-row"><td>No patients registered yet.</td></tr>`;
+    return;
+  }
+  let rows = `<tr><th>ID</th><th>Name</th><th>Phone</th><th>NIK</th><th>DOB</th><th>Status</th></tr>`;
+  appState.patients.forEach(p => {
+    const statusHtml = p.status === 'active'
+      ? `<span class="status-pill status-active">active</span>`
+      : `<span class="status-pill status-merged">merged → #${p.mergedInto}</span>`;
+    rows += `<tr>
+      <td>#${p.id}</td>
+      <td>${p.name}</td>
+      <td>${p.phone || '-'}</td>
+      <td>${p.nik || '-'}</td>
+      <td>${p.dob || '-'}</td>
+      <td>${statusHtml}</td>
+    </tr>`;
+    if (p.status === 'active') {
+      rows += `<tr><td></td><td colspan="5">
+        <div class="inline-edit">
+          <input class="name-field" id="e-name-${p.id}" value="${p.name}">
+          <input id="e-phone-${p.id}" value="${p.phone || ''}">
+          <input id="e-nik-${p.id}" value="${p.nik || ''}" placeholder="NIK">
+          <input id="e-dob-${p.id}" type="date" value="${p.dob || ''}">
+          <button class="small secondary" onclick="doEditSave(${p.id})">Save edit</button>
+        </div>
+      </td></tr>`;
+    }
+  });
+  table.innerHTML = rows;
+}
+
+function renderCandidates() {
+  const table = document.getElementById('candidates-table');
+  if (appState.candidates.length === 0) {
+    table.innerHTML = `<tr class="empty-row"><td>No Duplicate Candidates raised yet.</td></tr>`;
+    return;
+  }
+  let rows = `<tr><th>ID</th><th>Patient A</th><th>Patient B</th><th>Matched on</th><th>Status</th><th></th></tr>`;
+  appState.candidates.forEach(c => {
+    let actions = '';
+    if (c.status === 'pending') {
+      actions = `<button class="small" onclick="doConfirm(${c.id})">Confirm merge</button>
+                 <button class="small danger" onclick="doDismiss(${c.id})">Dismiss</button>`;
+    }
+    rows += `<tr>
+      <td>#${c.id}</td>
+      <td>${patientLabel(c.patientAId)}</td>
+      <td>${patientLabel(c.patientBId)}</td>
+      <td>${c.reason}</td>
+      <td><span class="status-pill status-${c.status}">${c.status}</span></td>
+      <td>${actions}</td>
+    </tr>`;
+  });
+  table.innerHTML = rows;
+}
+
+function renderLog() {
+  const box = document.getElementById('log-box');
+  if (eventLog.length === 0) {
+    box.innerHTML = `<div class="log-empty">Nothing has happened yet.</div>`;
+    return;
+  }
+  box.innerHTML = eventLog.map(l => `<div class="log-entry">${l}</div>`).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+// --- Guided scenarios ---------------------------------------------------
+
+const SCENARIOS = [
+  {
+    key: 'happy',
+    title: 'Alur Normal',
+    description: 'Two unrelated patients register normally. A third patient — actually the first patient again, just with a typo in their name — registers too. Watch a Duplicate Candidate get raised, then confirmed by a Resepsionis.',
+    steps: [
+      { label: 'Register Siti Aminah (081234500001, DOB 1985-03-10)', run: () => PatientMatching.registerPatient(appState, { name: 'Siti Aminah', phone: '081234500001', nik: '', dob: '1985-03-10' }) },
+      { label: 'Register Budi Santoso (081234500002, DOB 1990-07-22)', run: () => PatientMatching.registerPatient(appState, { name: 'Budi Santoso', phone: '081234500002', nik: '', dob: '1990-07-22' }) },
+      { label: 'Register "Siti Amina" (typo) — same phone & DOB as #1', run: () => PatientMatching.registerPatient(appState, { name: 'Siti Amina', phone: '081234500001', nik: '', dob: '1985-03-10' }) },
+      { label: 'Confirm the Duplicate Candidate (Resepsionis review)', run: () => PatientMatching.reviewCandidate(appState, { candidateId: firstPendingCandidateId(), decision: 'confirm' }) },
+    ]
+  },
+  {
+    key: 'nik-wins',
+    title: 'NIK Selalu Menang',
+    description: 'Two patients look nothing alike — different name, phone, and birth date — but share the exact same NIK (a data-entry mistake, or a name change). ADR-0004 treats an exact NIK match as certain. Watch it auto-merge with zero human review.',
+    steps: [
+      { label: 'Register Ahmad Fauzi (NIK 3271010101900001, DOB 1990-01-01)', run: () => PatientMatching.registerPatient(appState, { name: 'Ahmad Fauzi', phone: '081200000001', nik: '3271010101900001', dob: '1990-01-01' }) },
+      { label: 'Register Dewi Lestari — same NIK, everything else different', run: () => PatientMatching.registerPatient(appState, { name: 'Dewi Lestari', phone: '081399999999', nik: '3271010101900001', dob: '2001-12-31' }) },
+    ]
+  },
+  {
+    key: 'shared-phone',
+    title: 'Satu HP, Dua Orang',
+    description: 'A mother registers, then her son registers using the same household phone number — but his name and birth date are clearly different. One matching signal alone should not be enough to flag two different people as duplicates.',
+    steps: [
+      { label: 'Register Rina Wijaya (081211112222, DOB 1978-04-15)', run: () => PatientMatching.registerPatient(appState, { name: 'Rina Wijaya', phone: '081211112222', nik: '', dob: '1978-04-15' }) },
+      { label: 'Register Fajar Wijaya — same phone, different name & DOB', run: () => PatientMatching.registerPatient(appState, { name: 'Fajar Wijaya', phone: '081211112222', nik: '', dob: '2010-09-02' }) },
+    ]
+  },
+  {
+    key: 'dismissed-then-nik',
+    title: 'Ditolak, Lalu NIK Muncul',
+    description: 'Two records look similar enough to raise a Duplicate Candidate. A Resepsionis dismisses it: "these are two different people." Later, both records get a NIK filled in — and it turns out to be an exact match after all.',
+    steps: [
+      { label: 'Register Andi Prasetyo (081277778888, DOB 1995-05-05)', run: () => PatientMatching.registerPatient(appState, { name: 'Andi Prasetyo', phone: '081277778888', nik: '', dob: '1995-05-05' }) },
+      { label: 'Register a second "Andi Prasetyo" — same phone & DOB', run: () => PatientMatching.registerPatient(appState, { name: 'Andi Prasetyo', phone: '081277778888', nik: '', dob: '1995-05-05' }) },
+      { label: 'Dismiss the Duplicate Candidate as "not the same person"', run: () => PatientMatching.reviewCandidate(appState, { candidateId: firstPendingCandidateId(), decision: 'dismiss' }) },
+      { label: 'Add NIK 3271011111950001 to Patient #1', run: () => PatientMatching.editPatient(appState, { patientId: firstPatientIdNamed('Andi Prasetyo', 1), fields: { nik: '3271011111950001' } }) },
+      { label: 'Add the same NIK 3271011111950001 to Patient #2', run: () => PatientMatching.editPatient(appState, { patientId: firstPatientIdNamed('Andi Prasetyo', 2), fields: { nik: '3271011111950001' } }) },
+    ]
+  },
+  {
+    key: 'twins',
+    title: 'Mirip Tapi Beda',
+    description: 'Twins: near-identical name, same birth date, same household phone — but each has their own NIK on file, and the NIKs differ. Explicit proof of two different people beats every fuzzy signal.',
+    steps: [
+      { label: 'Register Kevin Halim (NIK 3271020202900001, DOB 2000-06-06)', run: () => PatientMatching.registerPatient(appState, { name: 'Kevin Halim', phone: '081255556666', nik: '3271020202900001', dob: '2000-06-06' }) },
+      { label: 'Register Kelvin Halim — near-identical name & same DOB/phone, different NIK', run: () => PatientMatching.registerPatient(appState, { name: 'Kelvin Halim', phone: '081255556666', nik: '3271020202900002', dob: '2000-06-06' }) },
+    ]
+  },
+];
+
+function firstPendingCandidateId() {
+  const c = appState.candidates.find(c => c.status === 'pending');
+  return c ? c.id : null;
+}
+function firstPatientIdNamed(name, occurrence) {
+  const matches = appState.patients.filter(p => p.name === name);
+  return matches[occurrence - 1] ? matches[occurrence - 1].id : null;
+}
+
+let activeScenario = null; // { key, stepIndex }
+
+function renderScenarioTabs() {
+  const tabs = document.getElementById('scenario-tabs');
+  tabs.innerHTML = SCENARIOS.map(s =>
+    `<button class="tab-btn ${activeScenario && activeScenario.key === s.key ? 'active' : ''}" onclick="startScenario('${s.key}')">${s.title}</button>`
+  ).join('');
+}
+
+function startScenario(key) {
+  resetDemo();
+  activeScenario = { key, stepIndex: 0 };
+  render();
+}
+
+function runScenarioStep(idx) {
+  const scenario = SCENARIOS.find(s => s.key === activeScenario.key);
+  if (idx !== activeScenario.stepIndex) return;
+  const result = scenario.steps[idx].run();
+  applyResult(result);
+  activeScenario.stepIndex++;
+  render();
+}
+
+function renderScenarioPanel() {
+  const panel = document.getElementById('scenario-panel');
+  if (!activeScenario) {
+    panel.innerHTML = `<p class="scenario-desc">Pick a scenario tab above to walk through it step by step. Starting one resets the demo to a known empty state.</p>`;
+    return;
+  }
+  const scenario = SCENARIOS.find(s => s.key === activeScenario.key);
+  let stepsHtml = scenario.steps.map((step, i) => {
+    const state = i < activeScenario.stepIndex ? 'done' : (i === activeScenario.stepIndex ? 'current' : '');
+    const disabled = i !== activeScenario.stepIndex ? 'disabled' : '';
+    const mark = i < activeScenario.stepIndex ? '✓' : (i + 1);
+    return `<div class="step-row ${state}">
+      <div class="step-num">${mark}</div>
+      <button class="step-btn ${state === 'current' ? '' : 'secondary'}" ${disabled} onclick="runScenarioStep(${i})">${step.label}</button>
+    </div>`;
+  }).join('');
+  const finished = activeScenario.stepIndex >= scenario.steps.length
+    ? `<div class="scenario-finished">Scenario complete — check the state above and the Event Log for what happened.</div>` : '';
+  panel.innerHTML = `<p class="scenario-desc">${scenario.description}</p><div class="steps">${stepsHtml}</div>${finished}`;
+}
+
+function render() {
+  renderPatients();
+  renderCandidates();
+  renderLog();
+  renderScenarioTabs();
+  renderScenarioPanel();
+}
+
+render();
+</script>
+</body>
+</html>
