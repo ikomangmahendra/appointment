@@ -1,0 +1,711 @@
+<!--
+  PROTOTYPE — throwaway. Not wired to any backend, no persistence, no build step.
+  Question: "What should the patient-facing appointment booking flow look like on a
+  smartphone browser?"
+  Plan: three structurally different mobile flows, switchable via ?variant=A|B|C, in one
+  static HTML file. Mock Layanan/Dokter/Jadwal data per CONTEXT.md; Jam Operasional and
+  Jadwal drive which slots are offered. NIK is captured but optional per
+  docs/adr/0005-nik-and-satu-sehat-readiness-without-integration.md. No real OTP/SMS —
+  any 4-6 digit code is accepted.
+  Try ?layanan=gigi&dokter=bagus to simulate arriving via a Deep Link (see CONTEXT.md).
+  Run: open this file directly in a phone browser, or on desktop and narrow the window
+  (or use device toolbar) — it's designed for a phone-width viewport.
+-->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prototype: Booking Appointment (Mobile)</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #e7e9ee;
+    color: #1c1f26;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+
+  #harness-banner {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: .02em;
+    color: #6b5400;
+    background: #fff3c4;
+    padding: 6px 10px;
+    border-bottom: 1px solid #e6d27a;
+  }
+
+  #stage {
+    display: flex;
+    justify-content: center;
+    padding: 0;
+  }
+  #phone {
+    width: 100%;
+    max-width: 428px;
+    min-height: 100vh;
+    background: #fff;
+    position: relative;
+    overflow-x: hidden;
+    padding-bottom: 90px; /* room for floating switcher */
+  }
+  @media (min-width: 480px) {
+    #stage { padding: 28px 12px 56px; }
+    #phone {
+      min-height: 844px;
+      max-height: 844px;
+      overflow-y: auto;
+      border: 9px solid #14161b;
+      border-radius: 42px;
+      box-shadow: 0 30px 60px -20px rgba(0,0,0,.35);
+    }
+  }
+
+  /* ---------- shared bits (cosmetic only, not layout) ---------- */
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .muted { color: #8a8f9c; }
+  .err { color: #c0392b; font-size: 13px; margin-top: 6px; }
+  .field {
+    width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid #dbdde3;
+    font-size: 15px; margin-top: 6px; background: #fafbfc;
+  }
+  .field:focus { outline: none; border-color: #2563eb; background: #fff; }
+  label.flabel { font-size: 13px; font-weight: 600; color: #4a4f5b; display: block; margin-top: 14px; }
+  .primary-btn {
+    width: 100%; border: none; border-radius: 14px; padding: 14px; font-size: 15px;
+    font-weight: 700; color: #fff; margin-top: 18px;
+  }
+  .primary-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ================= VARIANT A — Wizard Bertahap ================= */
+  .a-root { --accent: #2563eb; --accent-dark:#1d4ed8; display:flex; flex-direction:column; min-height:100%; }
+  .a-head { padding: 16px 18px 10px; }
+  .a-head .rowtop { display:flex; align-items:center; gap:10px; }
+  .a-back { border:none; background:#eef1f6; width:34px; height:34px; border-radius:10px; font-size:16px; }
+  .a-title { font-size: 18px; font-weight: 800; margin:0; }
+  .a-dots { display:flex; gap:6px; margin-top:14px; }
+  .a-dots i { flex:1; height:4px; border-radius:4px; background:#e7e9ee; display:block; }
+  .a-dots i.on { background: var(--accent); }
+  .a-body { padding: 6px 18px 18px; flex:1; }
+  .a-card {
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding: 14px 16px; border:1.5px solid #e7e9ee; border-radius:14px; margin-top:10px; background:#fff;
+  }
+  .a-card:active { background:#f2f6ff; }
+  .a-card .name { font-weight:700; font-size:15px; }
+  .a-card .sub { font-size:12.5px; color:#8a8f9c; margin-top:2px; }
+  .a-card .price { font-size:13px; font-weight:700; color: var(--accent); }
+  .a-card.booked { opacity:.4; }
+  .a-slotgrid { display:grid; grid-template-columns: repeat(3,1fr); gap:8px; margin-top:12px; }
+  .a-slot { padding:10px 4px; text-align:center; border-radius:10px; border:1.5px solid #e7e9ee; font-size:14px; font-weight:600; background:#fff; }
+  .a-slot.booked { color:#c3c6cd; background:#f4f5f7; text-decoration:line-through; }
+  .a-slot.sel { background: var(--accent); color:#fff; border-color: var(--accent); }
+  .a-summary { background:#f2f6ff; border-radius:14px; padding:14px 16px; margin-top:4px; font-size:13.5px; line-height:1.6; }
+  .a-summary b { color: var(--accent-dark); }
+  .a-code { text-align:center; padding: 22px 10px; }
+  .a-code .big { font-size:26px; font-weight:800; letter-spacing:.05em; color: var(--accent-dark); margin-top:8px; }
+  .a-check { width:64px; height:64px; border-radius:50%; background:#e8f5e9; color:#2e7d32; display:flex; align-items:center; justify-content:center; font-size:32px; margin: 0 auto 6px; }
+
+  /* ================= VARIANT B — Ringkasan Berjalan ================= */
+  .b-root { --accent:#059669; --accent-dark:#047857; }
+  .b-hero { padding: 20px 18px 12px; }
+  .b-hero h1 { font-size: 19px; margin:0 0 4px; font-weight:800; }
+  .b-hero p { font-size: 13px; color:#6b7280; margin:0; }
+  .b-chips { display:flex; gap:8px; overflow-x:auto; padding: 4px 18px 14px; scrollbar-width:none; }
+  .b-chips::-webkit-scrollbar{ display:none; }
+  .b-chip { background:#e7f7f0; color: var(--accent-dark); flex-shrink:0; }
+  .b-section { margin: 0 14px 12px; border-radius: 16px; overflow:hidden; border:1.5px solid #e9ebef; }
+  .b-section.locked { opacity:.5; }
+  .b-row {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding: 14px 16px; background:#fff;
+  }
+  .b-row .lbl { font-weight:700; font-size:14.5px; }
+  .b-row .val { font-size:13px; color: var(--accent-dark); font-weight:600; }
+  .b-row .caret { color:#c3c6cd; font-size:13px; }
+  .b-open-body { padding: 4px 14px 16px; background:#fafcfb; }
+  .b-opt {
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding:12px 14px; border-radius:12px; background:#fff; border:1.5px solid #e9ebef; margin-top:8px;
+  }
+  .b-opt.booked { opacity:.4; }
+  .b-slotwrap { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .b-slotchip { padding:9px 12px; border-radius:10px; background:#fff; border:1.5px solid #e9ebef; font-size:13.5px; font-weight:600; }
+  .b-slotchip.booked { color:#c3c6cd; background:#f4f5f7; text-decoration:line-through; }
+  .b-slotchip.sel { background: var(--accent); border-color: var(--accent); color:#fff; }
+  .b-confirm { margin: 14px 14px 4px; padding:18px; border-radius:16px; background:#e7f7f0; text-align:center; }
+
+  /* ================= VARIANT C — Kalender & Bottom Sheet ================= */
+  .c-root { --accent:#7c3aed; --accent-dark:#5b21b6; position:relative; min-height:100%; }
+  .c-appbar { padding: 16px 18px 10px; background: linear-gradient(160deg, var(--accent), var(--accent-dark)); color:#fff; border-radius: 0 0 22px 22px; }
+  .c-appbar h1 { margin:0; font-size:17px; font-weight:800; }
+  .c-appbar p { margin:4px 0 12px; font-size:12px; opacity:.85; }
+  .c-filters { display:flex; gap:8px; }
+  .c-filterchip { background: rgba(255,255,255,.18); color:#fff; border:1px solid rgba(255,255,255,.4); font-size:12.5px; }
+  .c-strip { display:flex; gap:8px; overflow-x:auto; padding: 14px 18px; scrollbar-width:none; }
+  .c-strip::-webkit-scrollbar{ display:none; }
+  .c-daycard { flex-shrink:0; width:58px; padding:10px 4px; border-radius:14px; border:1.5px solid #e9ebef; text-align:center; background:#fff; }
+  .c-daycard.sel { background: var(--accent); border-color: var(--accent); color:#fff; }
+  .c-daycard .dow { font-size:11px; font-weight:700; opacity:.7; }
+  .c-daycard .dom { font-size:17px; font-weight:800; margin:2px 0; }
+  .c-daycard .dot { width:5px; height:5px; border-radius:50%; margin:0 auto; background:#22c55e; }
+  .c-daycard.sel .dot { background:#fff; }
+  .c-daycard .dot.none { background:transparent; }
+  .c-timegrid { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; padding: 4px 18px 100px; }
+  .c-timechip { padding:11px 4px; text-align:center; border-radius:12px; border:1.5px solid #e9ebef; font-size:13.5px; font-weight:700; background:#fff; }
+  .c-timechip.booked { color:#c3c6cd; background:#f4f5f7; text-decoration:line-through; }
+  .c-timechip.sel { background: var(--accent); color:#fff; border-color: var(--accent); }
+  .c-empty { padding: 30px 18px; text-align:center; color:#8a8f9c; font-size:13.5px; }
+  .c-cta {
+    position:absolute; left:12px; right:12px; bottom:12px;
+    background:#14161b; color:#fff; border-radius:16px; padding:12px 14px;
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    box-shadow: 0 10px 30px -8px rgba(0,0,0,.4);
+  }
+  .c-cta .info { font-size:12.5px; line-height:1.4; }
+  .c-cta .info b { display:block; font-size:14px; }
+  .c-cta button { background: var(--accent); color:#fff; border:none; border-radius:10px; padding:10px 16px; font-weight:700; font-size:13.5px; }
+  .c-backdrop {
+    position:absolute; inset:0; background: rgba(0,0,0,.45); display:flex; align-items:flex-end; z-index: 20;
+  }
+  .c-sheet {
+    width:100%; background:#fff; border-radius: 20px 20px 0 0; padding: 10px 18px 22px;
+    max-height: 80%; overflow-y:auto;
+  }
+  .c-sheet .handle { width:36px; height:4px; background:#dbdde3; border-radius:4px; margin: 4px auto 12px; }
+  .c-sheet h2 { font-size:16px; margin: 4px 0 12px; }
+  .c-sheetopt {
+    display:flex; justify-content:space-between; align-items:center; padding:13px 14px;
+    border:1.5px solid #e9ebef; border-radius:12px; margin-bottom:8px;
+  }
+  .c-sheetopt.sel { border-color: var(--accent); background:#f5f0fe; }
+  .c-sheetopt.booked { opacity:.4; }
+  .c-steps { display:flex; gap:6px; margin-bottom:14px; }
+  .c-steps i { flex:1; height:3px; border-radius:3px; background:#e9ebef; }
+  .c-steps i.on { background: var(--accent); }
+
+  /* ---------- harness: switcher + debug (not part of any design) ---------- */
+  #switcher {
+    position: fixed; left:50%; bottom: 14px; transform: translateX(-50%);
+    background:#14161b; color:#fff; border-radius: 999px; padding: 6px 6px 6px 6px;
+    display:flex; align-items:center; gap:4px; box-shadow: 0 8px 24px -6px rgba(0,0,0,.5);
+    z-index: 100; font-size: 13px;
+  }
+  #switcher button { background:#2a2d36; border:none; color:#fff; width:30px; height:30px; border-radius:50%; font-size:14px; }
+  #switcher button:hover { background:#3a3e4a; }
+  #switcher .label { padding: 0 10px; font-weight:700; white-space:nowrap; }
+  #switcher .sub { opacity:.6; font-weight:500; }
+  #dbgToggle {
+    position:fixed; right:10px; bottom:66px; z-index:100; font-size:11px; background:#14161b; color:#fff;
+    border:none; border-radius:8px; padding:5px 8px; opacity:.55;
+  }
+  #dbgPanel {
+    position:fixed; right:8px; bottom:96px; z-index:101; width: min(320px, 90vw); max-height:50vh; overflow:auto;
+    background:#0f1115; color:#b6f0c1; font: 11px/1.5 ui-monospace, monospace; padding:10px 12px; border-radius:10px;
+    box-shadow: 0 10px 30px -8px rgba(0,0,0,.5); display:none; white-space:pre-wrap;
+  }
+  #dbgPanel.show { display:block; }
+</style>
+</head>
+<body>
+
+<div id="harness-banner">🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan</div>
+<div id="stage"><div id="phone"><div id="app"></div></div></div>
+<div id="switcher"></div>
+<button id="dbgToggle" onclick="toggleDebug()">🔍 state</button>
+<pre id="dbgPanel"></pre>
+
+<script>
+/* ---------------------------------------------------------------------- */
+/* Mock domain data (per CONTEXT.md: Layanan, Dokter, Jadwal)             */
+/* ---------------------------------------------------------------------- */
+var TODAY = new Date('2026-08-22T00:00:00');
+var KLINIK = { name: 'Klinik Sehat Sentosa', address: 'Jl. Merdeka No. 12, Denpasar', hours: 'Senin–Sabtu 08:00–17:00' };
+
+var LAYANAN = [
+  { id:'umum',  nama:'Pemeriksaan Umum',   durasi:30, harga:150000, desc:'Konsultasi dokter umum untuk keluhan sehari-hari.' },
+  { id:'vaksin',nama:'Vaksinasi',          durasi:15, harga:250000, desc:'Vaksinasi dewasa dan anak.' },
+  { id:'gigi',  nama:'Konsultasi Gigi',    durasi:45, harga:300000, desc:'Pemeriksaan dan perawatan gigi.' },
+  { id:'fisio', nama:'Fisioterapi',        durasi:60, harga:350000, desc:'Terapi fisik untuk pemulihan otot dan sendi.' }
+];
+
+// jadwal: { dayOfWeek(0=Min..6=Sab): [jamBuka, jamTutup] }
+var DOKTER = [
+  { id:'amelia', nama:'dr. Amelia Putri',   layanan:['umum','vaksin'], jadwal:{1:[8,16],2:[8,16],3:[8,16],4:[8,16],5:[8,16],6:[8,12]} },
+  { id:'bagus',  nama:'drg. Bagus Wirawan', layanan:['gigi'],          jadwal:{1:[9,15],2:[9,15],3:[9,15],4:[9,15],5:[9,15]} },
+  { id:'citra',  nama:'dr. Citra Dewi',     layanan:['fisio','umum'],  jadwal:{1:[8,16],3:[8,16],5:[8,16],6:[8,12]} }
+];
+var ANY_DOKTER = { id:'any', nama:'Dokter manapun (tercepat tersedia)' };
+
+function pad(n){ return n<10?'0'+n:''+n; }
+function fmtDate(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+var DOW = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+var MON = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
+function dayLabel(d){ return DOW[d.getDay()]; }
+function shortDate(d){ return d.getDate()+' '+MON[d.getMonth()]; }
+function idr(n){ return 'Rp' + n.toLocaleString('id-ID'); }
+function esc(s){ return (s||'').replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]; }); }
+
+function days(n){ var out=[]; for(var i=0;i<n;i++){ var d=new Date(TODAY); d.setDate(d.getDate()+i); out.push(d); } return out; }
+var NEXT_DAYS = days(7);
+
+function hashKey(key){ var h=0; for(var i=0;i<key.length;i++){ h=(h*31+key.charCodeAt(i))>>>0; } return h; }
+function isBooked(key){ return hashKey(key)%5===0; } // ~20% pre-booked, deterministic
+
+function layananById(id){ return LAYANAN.filter(function(l){return l.id===id;})[0]; }
+function dokterById(id){ if(id==='any') return ANY_DOKTER; return DOKTER.filter(function(d){return d.id===id;})[0]; }
+function dokterForLayanan(layananId){ return DOKTER.filter(function(d){ return !layananId || d.layanan.indexOf(layananId)>-1; }); }
+
+function slotsForDokterDate(dokter, layanan, date){
+  var dow = date.getDay();
+  var jadwal = dokter.jadwal[dow];
+  if(!jadwal) return [];
+  var openMin = jadwal[0]*60, closeMin = jadwal[1]*60, durasi = layanan.durasi;
+  var out = [], cursor = openMin;
+  while(cursor + durasi <= closeMin){
+    var h = Math.floor(cursor/60), m = cursor%60;
+    var time = pad(h)+':'+pad(m);
+    var key = dokter.id+'-'+fmtDate(date)+'-'+time;
+    out.push({ time:time, booked:isBooked(key), dokterId:dokter.id });
+    cursor += durasi;
+  }
+  return out;
+}
+
+// merges slots across matching dokter (when patient picked "any" or none yet)
+function slotsForDate(date, layananId, dokterId){
+  if(!layananId) return [];
+  var layanan = layananById(layananId);
+  var doks = dokterForLayanan(layananId);
+  if(dokterId && dokterId!=='any'){ doks = doks.filter(function(d){return d.id===dokterId;}); }
+  var merged = {};
+  doks.forEach(function(d){
+    slotsForDokterDate(d, layanan, date).forEach(function(s){
+      var existing = merged[s.time];
+      if(!existing || (existing.booked && !s.booked)) merged[s.time] = s;
+    });
+  });
+  return Object.keys(merged).sort().map(function(t){ return merged[t]; });
+}
+function countAvailable(date, layananId, dokterId){
+  return slotsForDate(date, layananId, dokterId).filter(function(s){ return !s.booked; }).length;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Shared booking state + mutators (data, not layout — shared on purpose) */
+/* ---------------------------------------------------------------------- */
+var booking = { layananId:null, dokterId:null, dateISO:null, slotTime:null, assignedDokterId:null,
+                nama:'', hp:'', nik:'', otp:'', confirmed:false, err:null };
+
+function setLayanan(id){ booking.layananId=id; booking.dokterId=null; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.err=null; }
+function setDokter(id){ booking.dokterId=id; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.err=null; }
+function setDate(iso){ booking.dateISO=iso; booking.slotTime=null; booking.assignedDokterId=null; booking.err=null; }
+function setSlot(time){
+  var d = new Date(booking.dateISO+'T00:00:00');
+  var slots = slotsForDate(d, booking.layananId, booking.dokterId);
+  var s = slots.filter(function(x){return x.time===time;})[0];
+  if(!s || s.booked) return false;
+  booking.slotTime = time; booking.assignedDokterId = s.dokterId; booking.err=null;
+  return true;
+}
+function isValidPhone(v){ return /^08[0-9]{8,11}$/.test((v||'').trim()); }
+function isValidNik(v){ return (v||'').trim()==='' || /^[0-9]{16}$/.test(v.trim()); }
+function setIdentitas(nama, hp, nik){
+  if(!(nama||'').trim()){ booking.err='Nama wajib diisi.'; return false; }
+  if(!isValidPhone(hp)){ booking.err='Nomor HP tidak valid. Contoh: 081234567890'; return false; }
+  if(!isValidNik(nik)){ booking.err='NIK harus 16 digit (opsional, boleh dikosongkan).'; return false; }
+  booking.nama=nama.trim(); booking.hp=hp.trim(); booking.nik=(nik||'').trim(); booking.err=null;
+  return true;
+}
+function verifyOtp(code){
+  if(!/^[0-9]{4,6}$/.test((code||'').trim())){ booking.err='Kode OTP tidak valid.'; return false; }
+  booking.otp = code.trim(); booking.confirmed = true; booking.err=null;
+  return true;
+}
+function bookingCode(){
+  var key = (booking.layananId||'')+booking.dateISO+booking.slotTime+booking.hp;
+  return 'APT-' + hashKey(key).toString(36).toUpperCase().slice(0,6);
+}
+function summaryLines(){
+  var layanan = layananById(booking.layananId);
+  var dokter = dokterById(booking.assignedDokterId || booking.dokterId);
+  var d = booking.dateISO ? new Date(booking.dateISO+'T00:00:00') : null;
+  return {
+    layanan: layanan ? layanan.nama : '—',
+    dokter: dokter ? dokter.nama : '—',
+    tanggal: d ? (dayLabel(d)+', '+shortDate(d)) : '—',
+    jam: booking.slotTime || '—',
+    harga: layanan ? idr(layanan.harga) : '—'
+  };
+}
+
+/* ---------------------------------------------------------------------- */
+/* UI (navigation) state — separate per variant on purpose                */
+/* ---------------------------------------------------------------------- */
+var ui = { A:{ step:0 }, B:{ open:'layanan' }, C:{ sheet:null, checkoutStep:'identitas' } };
+var VARIANT = 'A';
+
+function applyDeepLink(){
+  var p = new URLSearchParams(location.search);
+  var l = p.get('layanan'), d = p.get('dokter');
+  if(l && layananById(l)){ setLayanan(l); if(d && dokterById(d)) setDokter(d); }
+  booking._deepLink = !!(l && layananById(l));
+}
+
+/* ================= VARIANT A — Wizard Bertahap ================= */
+var A_TITLES = ['Pilih Layanan','Pilih Dokter','Pilih Tanggal','Pilih Jam','Data Pasien','Verifikasi OTP','Konfirmasi'];
+
+function goA(delta){ ui.A.step = Math.max(0, Math.min(6, ui.A.step+delta)); render(); }
+function selLayananA(id){ setLayanan(id); ui.A.step=1; render(); }
+function selDokterA(id){ setDokter(id); ui.A.step=2; render(); }
+function selDateA(iso){ setDate(iso); ui.A.step=3; render(); }
+function selSlotA(time){ if(setSlot(time)) ui.A.step=4; render(); }
+function submitIdentitasA(){
+  var nama=document.getElementById('a-nama').value, hp=document.getElementById('a-hp').value, nik=document.getElementById('a-nik').value;
+  if(setIdentitas(nama,hp,nik)) ui.A.step=5;
+  render();
+}
+function submitOtpA(){
+  var code = document.getElementById('a-otp').value;
+  if(verifyOtp(code)) ui.A.step=6;
+  render();
+}
+
+function renderA(){
+  var step = ui.A.step, out = '';
+  out += '<div class="a-root">';
+  out += '<div class="a-head">';
+  out += '<div class="rowtop">';
+  out += step>0 && step<6 ? '<button class="a-back" onclick="goA(-1)">‹</button>' : '<span style="width:34px"></span>';
+  out += '<h1 class="a-title">'+A_TITLES[step]+'</h1>';
+  out += '</div>';
+  out += '<div class="a-dots">' + A_TITLES.map(function(_,i){ return '<i class="'+(i<=step?'on':'')+'"></i>'; }).join('') + '</div>';
+  out += '</div><div class="a-body">';
+
+  if(booking._deepLink && step<=2) out += '<p class="muted" style="font-size:12.5px;margin:0 0 8px">Dibuka dari link klinik — beberapa pilihan sudah terisi.</p>';
+
+  if(step===0){
+    LAYANAN.forEach(function(l){
+      out += '<div class="a-card" onclick="selLayananA(\''+l.id+'\')"><div><div class="name">'+l.nama+'</div><div class="sub">'+l.durasi+' menit &middot; '+l.desc+'</div></div><div class="price">'+idr(l.harga)+'</div></div>';
+    });
+  } else if(step===1){
+    var doks = dokterForLayanan(booking.layananId);
+    out += '<div class="a-card" onclick="selDokterA(\'any\')"><div><div class="name">'+ANY_DOKTER.nama+'</div><div class="sub">Sistem pilih otomatis</div></div></div>';
+    doks.forEach(function(d){
+      out += '<div class="a-card" onclick="selDokterA(\''+d.id+'\')"><div><div class="name">'+d.nama+'</div></div></div>';
+    });
+  } else if(step===2){
+    NEXT_DAYS.forEach(function(d){
+      var avail = countAvailable(d, booking.layananId, booking.dokterId);
+      out += '<div class="a-card'+(avail===0?' booked':'')+'" onclick="'+(avail>0?('selDateA(\''+fmtDate(d)+'\')'):'')+'"><div><div class="name">'+dayLabel(d)+', '+shortDate(d)+'</div><div class="sub">'+(avail>0? avail+' jam tersedia' : 'Penuh')+'</div></div></div>';
+    });
+  } else if(step===3){
+    var d3 = new Date(booking.dateISO+'T00:00:00');
+    var slots = slotsForDate(d3, booking.layananId, booking.dokterId);
+    out += '<div class="a-slotgrid">';
+    slots.forEach(function(s){
+      out += '<div class="a-slot'+(s.booked?' booked':'')+(booking.slotTime===s.time?' sel':'')+'" onclick="'+(s.booked?'':('selSlotA(\''+s.time+'\')'))+'">'+s.time+'</div>';
+    });
+    if(!slots.length) out += '<p class="muted">Tidak ada jam tersedia di tanggal ini.</p>';
+    out += '</div>';
+  } else if(step===4){
+    out += '<label class="flabel">Nama Lengkap</label><input id="a-nama" class="field" placeholder="Nama sesuai KTP" value="'+esc(booking.nama)+'">';
+    out += '<label class="flabel">No. HP</label><input id="a-hp" class="field" placeholder="081234567890" value="'+esc(booking.hp)+'">';
+    out += '<label class="flabel">NIK <span class="muted">(opsional)</span></label><input id="a-nik" class="field" placeholder="16 digit" value="'+esc(booking.nik)+'">';
+    if(booking.err) out += '<p class="err">'+booking.err+'</p>';
+    out += '<button class="primary-btn" style="background:var(--accent)" onclick="submitIdentitasA()">Lanjut</button>';
+  } else if(step===5){
+    out += '<p class="muted">Kode OTP dikirim ke '+esc(booking.hp)+' (demo: kode apa saja 4-6 digit)</p>';
+    out += '<label class="flabel">Kode OTP</label><input id="a-otp" class="field" placeholder="123456" inputmode="numeric">';
+    if(booking.err) out += '<p class="err">'+booking.err+'</p>';
+    out += '<button class="primary-btn" style="background:var(--accent)" onclick="submitOtpA()">Verifikasi &amp; Booking</button>';
+  } else if(step===6){
+    var sm = summaryLines();
+    out += '<div class="a-code"><div class="a-check">✓</div><div class="muted">Appointment terkonfirmasi</div><div class="big">'+bookingCode()+'</div></div>';
+    out += '<div class="a-summary"><b>'+sm.layanan+'</b><br>'+sm.dokter+'<br>'+sm.tanggal+' &middot; '+sm.jam+'<br>'+KLINIK.name+', '+KLINIK.address+'<br>Biaya: '+sm.harga+'</div>';
+  }
+  out += '</div></div>';
+  return out;
+}
+
+/* ================= VARIANT B — Ringkasan Berjalan ================= */
+var B_SECTIONS = ['layanan','dokter','tanggal','jam','identitas','otp'];
+var B_LABELS = { layanan:'Layanan', dokter:'Dokter', tanggal:'Tanggal', jam:'Jam', identitas:'Data Pasien', otp:'Verifikasi OTP' };
+
+function isDoneB(id){
+  if(id==='layanan') return !!booking.layananId;
+  if(id==='dokter') return !!booking.dokterId;
+  if(id==='tanggal') return !!booking.dateISO;
+  if(id==='jam') return !!booking.slotTime;
+  if(id==='identitas') return !!(booking.nama && booking.hp);
+  if(id==='otp') return booking.confirmed;
+}
+function prevDoneB(id){
+  var i = B_SECTIONS.indexOf(id);
+  for(var k=0;k<i;k++){ if(!isDoneB(B_SECTIONS[k])) return false; }
+  return true;
+}
+function reopenB(id){ if(!prevDoneB(id)) return; ui.B.open = id; render(); }
+function selLayananB(id){ setLayanan(id); ui.B.open='dokter'; render(); }
+function selDokterB(id){ setDokter(id); ui.B.open='tanggal'; render(); }
+function selDateB(iso){ setDate(iso); ui.B.open='jam'; render(); }
+function selSlotB(time){ if(setSlot(time)) ui.B.open='identitas'; render(); }
+function submitIdentitasB(){
+  var nama=document.getElementById('b-nama').value, hp=document.getElementById('b-hp').value, nik=document.getElementById('b-nik').value;
+  if(setIdentitas(nama,hp,nik)) ui.B.open='otp';
+  render();
+}
+function submitOtpB(){
+  var code = document.getElementById('b-otp').value;
+  if(verifyOtp(code)) ui.B.open=null;
+  render();
+}
+
+function chipRowB(){
+  var sm = summaryLines();
+  var chips = [];
+  if(isDoneB('layanan')) chips.push(sm.layanan);
+  if(isDoneB('dokter')) chips.push(sm.dokter);
+  if(isDoneB('tanggal')) chips.push(sm.tanggal);
+  if(isDoneB('jam')) chips.push(sm.jam);
+  if(!chips.length) return '';
+  return '<div class="b-chips">' + chips.map(function(c){ return '<span class="chip b-chip">'+c+'</span>'; }).join('') + '</div>';
+}
+
+function sectionBodyB(id){
+  if(id==='layanan'){
+    return LAYANAN.map(function(l){ return '<div class="b-opt" onclick="selLayananB(\''+l.id+'\')"><div><div style="font-weight:700">'+l.nama+'</div><div class="muted" style="font-size:12px">'+l.durasi+' menit</div></div><div class="chip" style="background:#e7f7f0;color:var(--accent-dark)">'+idr(l.harga)+'</div></div>'; }).join('');
+  }
+  if(id==='dokter'){
+    var doks = dokterForLayanan(booking.layananId);
+    var h = '<div class="b-opt" onclick="selDokterB(\'any\')"><div style="font-weight:700">'+ANY_DOKTER.nama+'</div></div>';
+    return h + doks.map(function(d){ return '<div class="b-opt" onclick="selDokterB(\''+d.id+'\')"><div style="font-weight:700">'+d.nama+'</div></div>'; }).join('');
+  }
+  if(id==='tanggal'){
+    return NEXT_DAYS.map(function(d){
+      var avail = countAvailable(d, booking.layananId, booking.dokterId);
+      return '<div class="b-opt'+(avail===0?' booked':'')+'" onclick="'+(avail>0?('selDateB(\''+fmtDate(d)+'\')'):'')+'"><div style="font-weight:700">'+dayLabel(d)+', '+shortDate(d)+'</div><div class="muted" style="font-size:12px">'+(avail>0?avail+' jam tersedia':'Penuh')+'</div></div>';
+    }).join('');
+  }
+  if(id==='jam'){
+    var d3 = new Date(booking.dateISO+'T00:00:00');
+    var slots = slotsForDate(d3, booking.layananId, booking.dokterId);
+    return '<div class="b-slotwrap">' + slots.map(function(s){
+      return '<div class="b-slotchip'+(s.booked?' booked':'')+(booking.slotTime===s.time?' sel':'')+'" onclick="'+(s.booked?'':('selSlotB(\''+s.time+'\')'))+'">'+s.time+'</div>';
+    }).join('') + '</div>';
+  }
+  if(id==='identitas'){
+    var h2 = '<label class="flabel">Nama Lengkap</label><input id="b-nama" class="field" value="'+esc(booking.nama)+'">';
+    h2 += '<label class="flabel">No. HP</label><input id="b-hp" class="field" placeholder="081234567890" value="'+esc(booking.hp)+'">';
+    h2 += '<label class="flabel">NIK <span class="muted">(opsional)</span></label><input id="b-nik" class="field" value="'+esc(booking.nik)+'">';
+    if(booking.err) h2 += '<p class="err">'+booking.err+'</p>';
+    h2 += '<button class="primary-btn" style="background:var(--accent)" onclick="submitIdentitasB()">Lanjut</button>';
+    return h2;
+  }
+  if(id==='otp'){
+    var h3 = '<p class="muted" style="margin-top:0">Kode dikirim ke '+esc(booking.hp)+' (demo: 4-6 digit apa saja)</p>';
+    h3 += '<input id="b-otp" class="field" placeholder="123456" inputmode="numeric">';
+    if(booking.err) h3 += '<p class="err">'+booking.err+'</p>';
+    h3 += '<button class="primary-btn" style="background:var(--accent)" onclick="submitOtpB()">Verifikasi &amp; Booking</button>';
+    return h3;
+  }
+}
+
+function renderB(){
+  var out = '<div class="b-root">';
+  out += '<div class="b-hero"><h1>'+KLINIK.name+'</h1><p>'+(booking._deepLink ? 'Dibuka dari link klinik — beberapa pilihan sudah terisi.' : 'Buat appointment dalam beberapa langkah — ubah pilihan kapan saja.')+'</p></div>';
+  out += chipRowB();
+  if(booking.confirmed){
+    var sm = summaryLines();
+    out += '<div class="b-confirm"><div style="font-size:28px">✓</div><div style="font-weight:800;margin-top:4px">'+bookingCode()+'</div><div class="muted" style="font-size:13px;margin-top:6px">'+sm.layanan+' &middot; '+sm.tanggal+' '+sm.jam+'<br>'+sm.dokter+'</div></div>';
+    out += '</div>';
+    return out;
+  }
+  B_SECTIONS.forEach(function(id){
+    var done = isDoneB(id), open = ui.B.open===id, locked = !prevDoneB(id);
+    out += '<div class="b-section'+(locked?' locked':'')+'">';
+    var valText = '';
+    if(done){
+      var sm2 = summaryLines();
+      valText = { layanan:sm2.layanan, dokter:sm2.dokter, tanggal:sm2.tanggal, jam:sm2.jam, identitas:booking.nama, otp:'Terverifikasi' }[id];
+    }
+    out += '<div class="b-row" onclick="'+(locked?'':('reopenB(\''+id+'\')'))+'"><span class="lbl">'+B_LABELS[id]+'</span>' + (done && !open ? '<span class="val">'+valText+'</span>' : '<span class="caret">'+(open?'▾':(locked?'🔒':'○'))+'</span>') + '</div>';
+    if(open) out += '<div class="b-open-body">'+sectionBodyB(id)+'</div>';
+    out += '</div>';
+  });
+  out += '</div>';
+  return out;
+}
+
+/* ================= VARIANT C — Kalender & Bottom Sheet ================= */
+function openSheetC(name){ ui.C.sheet = name; render(); }
+function closeSheetC(){ ui.C.sheet = null; render(); }
+function pickLayananC(id){ setLayanan(id); ui.C.sheet=null; render(); }
+function pickDokterC(id){ setDokter(id); ui.C.sheet=null; render(); }
+function pickDateC(iso){ setDate(iso); render(); }
+function pickSlotC(time){ setSlot(time); render(); }
+function openCheckoutC(){ if(!(booking.layananId && booking.dateISO && booking.slotTime)) return; ui.C.sheet='checkout'; ui.C.checkoutStep='identitas'; render(); }
+function submitIdentitasC(){
+  var nama=document.getElementById('c-nama').value, hp=document.getElementById('c-hp').value, nik=document.getElementById('c-nik').value;
+  if(setIdentitas(nama,hp,nik)) ui.C.checkoutStep='otp';
+  render();
+}
+function submitOtpC(){
+  var code = document.getElementById('c-otp').value;
+  if(verifyOtp(code)) ui.C.checkoutStep='done';
+  render();
+}
+
+function sheetContentC(){
+  if(ui.C.sheet==='layanan'){
+    var h = '<h2>Pilih Layanan</h2>';
+    h += LAYANAN.map(function(l){ return '<div class="c-sheetopt'+(booking.layananId===l.id?' sel':'')+'" onclick="pickLayananC(\''+l.id+'\')"><div><div style="font-weight:700">'+l.nama+'</div><div class="muted" style="font-size:12px">'+l.durasi+' menit</div></div><div style="font-weight:700;color:var(--accent-dark)">'+idr(l.harga)+'</div></div>'; }).join('');
+    return h;
+  }
+  if(ui.C.sheet==='dokter'){
+    var doks = dokterForLayanan(booking.layananId);
+    var h2 = '<h2>Pilih Dokter</h2>';
+    h2 += '<div class="c-sheetopt'+(booking.dokterId==='any'?' sel':'')+'" onclick="pickDokterC(\'any\')"><div style="font-weight:700">'+ANY_DOKTER.nama+'</div></div>';
+    h2 += doks.map(function(d){ return '<div class="c-sheetopt'+(booking.dokterId===d.id?' sel':'')+'" onclick="pickDokterC(\''+d.id+'\')"><div style="font-weight:700">'+d.nama+'</div></div>'; }).join('');
+    return h2;
+  }
+  if(ui.C.sheet==='checkout'){
+    var step = ui.C.checkoutStep;
+    var h3 = '<h2>'+(step==='identitas'?'Data Pasien':step==='otp'?'Verifikasi OTP':'Terkonfirmasi')+'</h2>';
+    h3 += '<div class="c-steps"><i class="'+(step!=='' ? 'on':'')+'"></i><i class="'+(step==='otp'||step==='done'?'on':'')+'"></i><i class="'+(step==='done'?'on':'')+'"></i></div>';
+    if(step==='identitas'){
+      h3 += '<label class="flabel">Nama Lengkap</label><input id="c-nama" class="field" value="'+esc(booking.nama)+'">';
+      h3 += '<label class="flabel">No. HP</label><input id="c-hp" class="field" placeholder="081234567890" value="'+esc(booking.hp)+'">';
+      h3 += '<label class="flabel">NIK <span class="muted">(opsional)</span></label><input id="c-nik" class="field" value="'+esc(booking.nik)+'">';
+      if(booking.err) h3 += '<p class="err">'+booking.err+'</p>';
+      h3 += '<button class="primary-btn" style="background:var(--accent)" onclick="submitIdentitasC()">Lanjut</button>';
+    } else if(step==='otp'){
+      h3 += '<p class="muted" style="margin-top:0">Kode dikirim ke '+esc(booking.hp)+' (demo: 4-6 digit apa saja)</p>';
+      h3 += '<input id="c-otp" class="field" placeholder="123456" inputmode="numeric">';
+      if(booking.err) h3 += '<p class="err">'+booking.err+'</p>';
+      h3 += '<button class="primary-btn" style="background:var(--accent)" onclick="submitOtpC()">Verifikasi &amp; Booking</button>';
+    } else {
+      var sm = summaryLines();
+      h3 += '<div style="text-align:center;padding:10px 0"><div class="a-check">✓</div><div style="font-weight:800;font-size:18px">'+bookingCode()+'</div></div>';
+      h3 += '<div class="a-summary"><b>'+sm.layanan+'</b><br>'+sm.dokter+'<br>'+sm.tanggal+' &middot; '+sm.jam+'<br>Biaya: '+sm.harga+'</div>';
+      h3 += '<button class="primary-btn" style="background:var(--accent)" onclick="closeSheetC()">Tutup</button>';
+    }
+    return h3;
+  }
+  return '';
+}
+
+function renderC(){
+  var sm = summaryLines();
+  var out = '<div class="c-root">';
+  out += '<div class="c-appbar"><h1>'+KLINIK.name+'</h1><p>'+KLINIK.address+' &middot; '+KLINIK.hours+'</p>';
+  out += '<div class="c-filters">';
+  out += '<span class="chip c-filterchip" onclick="openSheetC(\'layanan\')">🩺 '+(booking.layananId?sm.layanan:'Pilih Layanan')+' ▾</span>';
+  out += '<span class="chip c-filterchip" onclick="'+(booking.layananId?'openSheetC(\'dokter\')':'')+'">👤 '+(booking.dokterId?sm.dokter:'Semua Dokter')+' ▾</span>';
+  out += '</div></div>';
+
+  out += '<div class="c-strip">';
+  NEXT_DAYS.forEach(function(d){
+    var iso = fmtDate(d);
+    var avail = booking.layananId ? countAvailable(d, booking.layananId, booking.dokterId) : null;
+    var sel = booking.dateISO===iso;
+    out += '<div class="c-daycard'+(sel?' sel':'')+'" onclick="pickDateC(\''+iso+'\')"><div class="dow">'+dayLabel(d).slice(0,3)+'</div><div class="dom">'+d.getDate()+'</div><div class="dot'+(avail===0?' none':'')+'"></div></div>';
+  });
+  out += '</div>';
+
+  if(!booking.layananId){
+    out += '<div class="c-empty">Pilih layanan dulu untuk melihat jam yang tersedia.</div>';
+  } else if(!booking.dateISO){
+    out += '<div class="c-empty">Pilih tanggal di atas untuk melihat jam tersedia.</div>';
+  } else {
+    var d3 = new Date(booking.dateISO+'T00:00:00');
+    var slots = slotsForDate(d3, booking.layananId, booking.dokterId);
+    out += '<div class="c-timegrid">';
+    if(!slots.length) out += '<div class="c-empty">Tidak ada jam tersedia.</div>';
+    slots.forEach(function(s){
+      out += '<div class="c-timechip'+(s.booked?' booked':'')+(booking.slotTime===s.time?' sel':'')+'" onclick="'+(s.booked?'':('pickSlotC(\''+s.time+'\')'))+'">'+s.time+'</div>';
+    });
+    out += '</div>';
+  }
+
+  if(booking.layananId && booking.dateISO && booking.slotTime && !ui.C.sheet){
+    out += '<div class="c-cta"><div class="info"><b>'+sm.layanan+'</b>'+sm.tanggal+' &middot; '+sm.jam+'</div><button onclick="openCheckoutC()">Lanjutkan</button></div>';
+  }
+
+  if(ui.C.sheet){
+    out += '<div class="c-backdrop" onclick="event.target===this && closeSheetC()"><div class="c-sheet"><div class="handle"></div>'+sheetContentC()+'</div></div>';
+  }
+
+  out += '</div>';
+  return out;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Harness: variant switcher + debug panel (not part of any design)       */
+/* ---------------------------------------------------------------------- */
+var VARIANTS = [
+  { key:'A', name:'Wizard Bertahap' },
+  { key:'B', name:'Ringkasan Berjalan' },
+  { key:'C', name:'Kalender & Bottom Sheet' }
+];
+function variantIndex(){ for(var i=0;i<VARIANTS.length;i++){ if(VARIANTS[i].key===VARIANT) return i; } return 0; }
+function cycleVariant(delta){
+  var i = (variantIndex()+delta+VARIANTS.length)%VARIANTS.length;
+  VARIANT = VARIANTS[i].key;
+  var p = new URLSearchParams(location.search);
+  p.set('variant', VARIANT);
+  history.replaceState(null, '', location.pathname+'?'+p.toString());
+  render();
+}
+function renderSwitcher(){
+  var v = VARIANTS[variantIndex()];
+  document.getElementById('switcher').innerHTML =
+    '<button onclick="cycleVariant(-1)">‹</button>' +
+    '<span class="label">'+v.key+' <span class="sub">— '+v.name+'</span></span>' +
+    '<button onclick="cycleVariant(1)">›</button>';
+}
+document.addEventListener('keydown', function(e){
+  var tag = (document.activeElement && document.activeElement.tagName) || '';
+  if(tag==='INPUT' || tag==='TEXTAREA' || document.activeElement.isContentEditable) return;
+  if(e.key==='ArrowLeft') cycleVariant(-1);
+  if(e.key==='ArrowRight') cycleVariant(1);
+});
+
+var debugShown = false;
+function toggleDebug(){ debugShown = !debugShown; updateDebug(); }
+function updateDebug(){
+  var el = document.getElementById('dbgPanel');
+  el.className = debugShown ? 'show' : '';
+  if(debugShown){
+    el.textContent = 'variant: '+VARIANT+'\nui: '+JSON.stringify(ui[VARIANT])+'\nbooking: '+JSON.stringify(booking, null, 2);
+  }
+}
+
+function render(){
+  document.getElementById('app').innerHTML = VARIANT==='A' ? renderA() : VARIANT==='B' ? renderB() : renderC();
+  renderSwitcher();
+  updateDebug();
+  console.log('[prototype] variant='+VARIANT, 'booking=', JSON.parse(JSON.stringify(booking)), 'ui=', JSON.parse(JSON.stringify(ui[VARIANT])));
+}
+
+(function init(){
+  var p = new URLSearchParams(location.search);
+  var v = p.get('variant');
+  if(v && VARIANTS.some(function(x){return x.key===v;})) VARIANT = v;
+  applyDeepLink();
+  if(booking._deepLink){
+    ui.A.step = booking.dokterId ? 2 : 1;
+    ui.B.open = booking.dokterId ? 'tanggal' : 'dokter';
+  }
+  render();
+})();
+</script>
+</body>
+</html>
