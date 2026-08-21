@@ -1,0 +1,436 @@
+<!--
+  PROTOTYPE — throwaway. Not wired to any backend, no persistence, no build step.
+  Question: "What should a status-column kanban board of patients look like?"
+  Plan: three structurally different variants, switchable via ?variant=A|B|C, in one static HTML file.
+  Domain call made here: columns are grouped by VISIT STATUS (belum tiba → telah tiba → menunggu →
+  sedang dilayani → selesai, per docs/adr/0002-appointment-status-vs-visit-status.md), not Appointment
+  Status (confirmed/completed/no-show/cancelled/rescheduled). Visit Status is the same-day, real-time
+  flow a kanban board naturally visualizes; Appointment Status is a longer-lived disposition. If this
+  guess is wrong, say so and this gets rebuilt against Appointment Status instead.
+  Run: open this file directly in a browser (no server needed).
+-->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Prototype: Kanban Visit Status</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #e2e4e9;
+    --text: #1c1f26;
+    --muted: #6b7280;
+    --c-belum: #6b7280;
+    --c-tiba: #2563eb;
+    --c-menunggu: #d97706;
+    --c-dilayani: #7c3aed;
+    --c-selesai: #059669;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header.app {
+    padding: 14px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header.app h1 { font-size: 16px; margin: 0; }
+  header.app .badge {
+    font-size: 11px;
+    color: #92400e;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    letter-spacing: .02em;
+  }
+  header.app .sub { font-size: 12px; color: var(--muted); }
+  main { padding: 20px; padding-bottom: 90px; }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-belum_tiba { background: var(--c-belum); }
+  .dot-telah_tiba { background: var(--c-tiba); }
+  .dot-menunggu { background: var(--c-menunggu); }
+  .dot-sedang_dilayani { background: var(--c-dilayani); }
+  .dot-selesai { background: var(--c-selesai); }
+
+  /* ---------- Variant A: classic board ---------- */
+  .board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; }
+  .col { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: 260px; flex: 0 0 260px; }
+  .col-head { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .col-head .name { font-size: 13px; font-weight: 700; }
+  .col-head .count { font-size: 11px; color: var(--muted); background: var(--bg); border-radius: 999px; padding: 1px 8px; }
+  .col-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 40px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  }
+  .card:hover { border-color: #c7cbd4; }
+  .card .name { font-size: 13px; font-weight: 600; }
+  .card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .card .row2 { display: flex; justify-content: space-between; margin-top: 6px; align-items: center; }
+  .tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: var(--bg); color: var(--muted); }
+  .empty-col { font-size: 11px; color: var(--muted); text-align: center; padding: 14px 0; }
+
+  /* modal */
+  .overlay { position: fixed; inset: 0; background: rgba(15,18,25,.4); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--panel); border-radius: 12px; padding: 20px; width: 320px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+  .modal h3 { margin: 0 0 4px; font-size: 15px; }
+  .modal .line { font-size: 13px; margin-top: 8px; color: var(--text); }
+  .modal .line span { color: var(--muted); }
+  .modal button { margin-top: 16px; border: 1px solid var(--border); background: var(--bg); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+
+  /* ---------- Variant B: queue ops ---------- */
+  .kpis { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; min-width: 140px; }
+  .kpi .v { font-size: 22px; font-weight: 700; }
+  .kpi .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .opsboard { display: flex; gap: 12px; overflow-x: auto; }
+  .opscol { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: 230px; flex: 0 0 230px; }
+  .opscol-head { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+  .opsrow { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-bottom: 1px solid #f0f1f4; font-size: 12px; }
+  .opsrow:last-child { border-bottom: none; }
+  .opsrow .who { display: flex; flex-direction: column; }
+  .opsrow .who b { font-size: 12px; }
+  .opsrow .who span { font-size: 10px; color: var(--muted); }
+  .wait-pill { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+  .wait-ok { background: #e6f4ea; color: #1e7a3d; }
+  .wait-warn { background: #fff3d6; color: #92600a; }
+  .wait-bad { background: #fde2e1; color: #b3261e; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+
+  /* ---------- Variant C: matrix ---------- */
+  table.matrix { border-collapse: collapse; width: 100%; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  table.matrix th, table.matrix td { padding: 8px 10px; font-size: 12px; border-bottom: 1px solid var(--border); text-align: left; }
+  table.matrix th { background: #fafbfc; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  table.matrix .who b { font-size: 12.5px; }
+  table.matrix .who div { font-size: 11px; color: var(--muted); }
+  .trail { display: flex; align-items: center; gap: 0; }
+  .seg { height: 6px; width: 34px; background: #e5e7eb; }
+  .seg.fill { background: var(--seg-color, #059669); }
+  .node { width: 14px; height: 14px; border-radius: 50%; background: #e5e7eb; flex: 0 0 auto; border: 2px solid #fff; margin: -1px; }
+  .node.fill { background: var(--seg-color, #059669); }
+  .node.current { box-shadow: 0 0 0 3px rgba(0,0,0,.08); }
+
+  /* ---------- switcher ---------- */
+  .switcher {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #111827;
+    color: #fff;
+    border-radius: 999px;
+    padding: 6px 6px 6px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    font-size: 13px;
+    z-index: 60;
+  }
+  .switcher button {
+    background: rgba(255,255,255,.12);
+    border: none;
+    color: #fff;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .switcher button:hover { background: rgba(255,255,255,.24); }
+  .switcher .label { min-width: 170px; text-align: center; }
+  .switcher .label b { font-weight: 700; }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <h1>Papan Pasien — Visit Status</h1>
+  <span class="badge">PROTOTYPE</span>
+  <span class="sub">Data dummy · tidak terhubung ke backend · kolom berdasarkan Visit Status</span>
+</header>
+
+<main id="app-root"></main>
+
+<div class="overlay" id="overlay">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<div class="switcher" id="switcher">
+  <button id="prevBtn" aria-label="Variant sebelumnya">←</button>
+  <div class="label" id="switcherLabel"></div>
+  <button id="nextBtn" aria-label="Variant selanjutnya">→</button>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Dummy data
+// ---------------------------------------------------------------------------
+const STATUSES = [
+  { key: 'belum_tiba',      label: 'Belum Tiba' },
+  { key: 'telah_tiba',      label: 'Telah Tiba' },
+  { key: 'menunggu',        label: 'Menunggu' },
+  { key: 'sedang_dilayani', label: 'Sedang Dilayani' },
+  { key: 'selesai',         label: 'Selesai' },
+];
+const STATUS_COLOR = {
+  belum_tiba: '#6b7280',
+  telah_tiba: '#2563eb',
+  menunggu: '#d97706',
+  sedang_dilayani: '#7c3aed',
+  selesai: '#059669',
+};
+
+const PATIENTS = [
+  { id: 1,  name: 'Siti Aminah',        time: '09:00', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'online', status: 'belum_tiba' },
+  { id: 2,  name: 'Budi Santoso',       time: '09:15', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'phone',  status: 'belum_tiba' },
+  { id: 3,  name: 'Made Wirawan',       time: '09:30', layanan: 'Konsultasi Gizi',  dokter: 'dr. Sari',   source: 'online', status: 'belum_tiba' },
+
+  { id: 4,  name: 'Dewi Lestari',       time: '08:30', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'phone',  status: 'telah_tiba', waitMin: 4 },
+  { id: 5,  name: 'Agus Purnomo',       time: '08:45', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'online', status: 'telah_tiba', waitMin: 2 },
+  { id: 6,  name: 'Rina Kurniawati',    time: '08:50', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'phone',  status: 'telah_tiba', waitMin: 6 },
+  { id: 7,  name: 'Yusuf Hidayat',      time: '09:00', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'online', status: 'telah_tiba', waitMin: 1 },
+
+  { id: 8,  name: 'Nur Halimah',        time: '08:00', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'online', status: 'menunggu', waitMin: 26 },
+  { id: 9,  name: 'Eko Prasetyo',       time: '08:15', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'phone',  status: 'menunggu', waitMin: 18 },
+  { id: 10, name: 'Wulan Sari',         time: '08:20', layanan: 'Konsultasi Gizi',  dokter: 'dr. Sari',   source: 'online', status: 'menunggu', waitMin: 9 },
+
+  { id: 11, name: 'Hendra Gunawan',     time: '07:45', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'phone',  status: 'sedang_dilayani', waitMin: 5 },
+  { id: 12, name: 'Putri Ayu',         time: '08:00', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'online', status: 'sedang_dilayani', waitMin: 2 },
+
+  { id: 13, name: 'Bambang Sutrisno',   time: '07:00', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'online', status: 'selesai' },
+  { id: 14, name: 'Fitriani',           time: '07:15', layanan: 'Konsultasi Gizi',  dokter: 'dr. Sari',   source: 'phone',  status: 'selesai' },
+  { id: 15, name: 'Joko Widodo S.',     time: '07:20', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'online', status: 'selesai' },
+  { id: 16, name: 'Anisa Rahmawati',    time: '07:30', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'online', status: 'selesai' },
+];
+
+function patientsByStatus(key) {
+  return PATIENTS.filter(p => p.status === key);
+}
+function statusLabel(key) {
+  return STATUSES.find(s => s.key === key).label;
+}
+
+// ---------------------------------------------------------------------------
+// Variant A — classic kanban board (card columns, click-to-expand)
+// ---------------------------------------------------------------------------
+function renderVariantA(root) {
+  const board = document.createElement('div');
+  board.className = 'board';
+  STATUSES.forEach(s => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const list = patientsByStatus(s.key);
+    col.innerHTML = `
+      <div class="col-head">
+        <span class="name"><span class="status-dot dot-${s.key}"></span>&nbsp; ${s.label}</span>
+        <span class="count">${list.length}</span>
+      </div>
+      <div class="col-body">
+        ${list.length ? list.map(p => `
+          <div class="card" style="border-left-color:${STATUS_COLOR[s.key]}" onclick="showDetail(${p.id})">
+            <div class="name">${p.name}</div>
+            <div class="meta">${p.layanan} · ${p.dokter}</div>
+            <div class="row2">
+              <span class="tag">${p.time}</span>
+              <span class="tag">${p.source === 'online' ? 'Online' : 'Telepon'}</span>
+            </div>
+          </div>
+        `).join('') : `<div class="empty-col">Tidak ada pasien</div>`}
+      </div>
+    `;
+    board.appendChild(col);
+  });
+  root.appendChild(board);
+}
+
+// ---------------------------------------------------------------------------
+// Variant B — queue ops dashboard (KPIs + dense rows + live wait timers)
+// ---------------------------------------------------------------------------
+let liveTimers = [];
+function renderVariantB(root) {
+  liveTimers.forEach(clearInterval);
+  liveTimers = [];
+
+  const waitingLike = PATIENTS.filter(p => ['telah_tiba','menunggu','sedang_dilayani'].includes(p.status));
+  const avgWait = Math.round(
+    waitingLike.reduce((sum, p) => sum + (p.waitMin || 0), 0) / (waitingLike.length || 1)
+  );
+
+  const kpis = document.createElement('div');
+  kpis.className = 'kpis';
+  kpis.innerHTML = `
+    <div class="kpi"><div class="v">${PATIENTS.length}</div><div class="l">Pasien hari ini</div></div>
+    <div class="kpi"><div class="v">${patientsByStatus('menunggu').length}</div><div class="l">Sedang menunggu</div></div>
+    <div class="kpi"><div class="v">${patientsByStatus('sedang_dilayani').length}</div><div class="l">Sedang dilayani</div></div>
+    <div class="kpi"><div class="v">${avgWait} mnt</div><div class="l">Rata-rata tunggu</div></div>
+  `;
+  root.appendChild(kpis);
+
+  const board = document.createElement('div');
+  board.className = 'opsboard';
+
+  STATUSES.forEach(s => {
+    const col = document.createElement('div');
+    col.className = 'opscol';
+    const list = patientsByStatus(s.key).slice().sort((a,b) => (b.waitMin||0) - (a.waitMin||0));
+    col.innerHTML = `<div class="opscol-head"><span class="status-dot dot-${s.key}"></span> ${s.label} (${list.length})</div>`;
+    list.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'opsrow';
+      const wait = p.waitMin;
+      const pillClass = wait == null ? '' : wait >= 20 ? 'wait-bad' : wait >= 10 ? 'wait-warn' : 'wait-ok';
+      row.innerHTML = `
+        <div class="who"><b>${p.name}</b><span>${p.layanan} · ${p.time}</span></div>
+        ${wait != null ? `<span class="wait-pill ${pillClass}" data-wait-id="${p.id}">${wait} mnt</span>` : ''}
+      `;
+      col.appendChild(row);
+    });
+    board.appendChild(col);
+  });
+  root.appendChild(board);
+
+  // live-increment wait minutes once per 5s so the board visibly "breathes"
+  const timer = setInterval(() => {
+    waitingLike.forEach(p => {
+      p.waitMin += 1;
+      const el = document.querySelector(`[data-wait-id="${p.id}"]`);
+      if (!el) return;
+      el.textContent = `${p.waitMin} mnt`;
+      el.className = 'wait-pill ' + (p.waitMin >= 20 ? 'wait-bad' : p.waitMin >= 10 ? 'wait-warn' : 'wait-ok');
+    });
+  }, 5000);
+  liveTimers.push(timer);
+}
+
+// ---------------------------------------------------------------------------
+// Variant C — patient × stage matrix (table with a horizontal progress trail)
+// ---------------------------------------------------------------------------
+function renderVariantC(root) {
+  const sorted = PATIENTS.slice().sort((a,b) => a.time.localeCompare(b.time));
+  const table = document.createElement('table');
+  table.className = 'matrix';
+  table.innerHTML = `
+    <thead><tr>
+      <th>Pasien</th>
+      <th>Layanan</th>
+      <th colspan="9">Progres Visit Status</th>
+    </tr></thead>
+    <tbody>
+      ${sorted.map(p => {
+        const idx = STATUSES.findIndex(s => s.key === p.status);
+        const color = STATUS_COLOR[p.status];
+        let trail = '';
+        STATUSES.forEach((s, i) => {
+          const filled = i <= idx;
+          if (i > 0) trail += `<div class="seg ${filled ? 'fill' : ''}" style="--seg-color:${color}"></div>`;
+          trail += `<div class="node ${filled ? 'fill' : ''} ${i === idx ? 'current' : ''}" style="--seg-color:${color}" title="${s.label}"></div>`;
+        });
+        return `
+          <tr>
+            <td class="who"><b>${p.name}</b><div>${p.time} · ${p.dokter}</div></td>
+            <td>${p.layanan}</td>
+            <td colspan="9"><div class="trail">${trail}</div></td>
+          </tr>
+        `;
+      }).join('')}
+    </tbody>
+  `;
+  root.appendChild(table);
+
+  const legend = document.createElement('div');
+  legend.style.marginTop = '10px';
+  legend.style.fontSize = '11px';
+  legend.style.color = 'var(--muted)';
+  legend.innerHTML = STATUSES.map(s => `<span class="status-dot dot-${s.key}"></span> ${s.label} &nbsp; `).join('');
+  root.appendChild(legend);
+}
+
+// ---------------------------------------------------------------------------
+// Detail modal (used by Variant A)
+// ---------------------------------------------------------------------------
+window.showDetail = function(id) {
+  const p = PATIENTS.find(p => p.id === id);
+  document.getElementById('modal-content').innerHTML = `
+    <h3>${p.name}</h3>
+    <div class="line"><span>Status:</span> ${statusLabel(p.status)}</div>
+    <div class="line"><span>Layanan:</span> ${p.layanan}</div>
+    <div class="line"><span>Dokter:</span> ${p.dokter}</div>
+    <div class="line"><span>Jam appointment:</span> ${p.time}</div>
+    <div class="line"><span>Booking source:</span> ${p.source === 'online' ? 'Online' : 'Telepon'}</div>
+    <button onclick="document.getElementById('overlay').classList.remove('open')">Tutup</button>
+  `;
+  document.getElementById('overlay').classList.add('open');
+};
+document.getElementById('overlay').addEventListener('click', e => {
+  if (e.target.id === 'overlay') e.currentTarget.classList.remove('open');
+});
+
+// ---------------------------------------------------------------------------
+// Variant switcher
+// ---------------------------------------------------------------------------
+const VARIANTS = [
+  { key: 'A', name: 'Board klasik',   render: renderVariantA },
+  { key: 'B', name: 'Queue ops',      render: renderVariantB },
+  { key: 'C', name: 'Matrix progres', render: renderVariantC },
+];
+
+function currentVariantKey() {
+  const q = new URLSearchParams(location.search).get('variant');
+  return VARIANTS.some(v => v.key === q) ? q : 'A';
+}
+
+function renderVariant(key) {
+  const root = document.getElementById('app-root');
+  root.innerHTML = '';
+  const variant = VARIANTS.find(v => v.key === key) || VARIANTS[0];
+  variant.render(root);
+  document.getElementById('switcherLabel').innerHTML = `<b>${variant.key}</b> — ${variant.name}`;
+}
+
+function goToVariant(key) {
+  const params = new URLSearchParams(location.search);
+  params.set('variant', key);
+  history.replaceState(null, '', `${location.pathname}?${params.toString()}`);
+  renderVariant(key);
+}
+
+function cycle(delta) {
+  const idx = VARIANTS.findIndex(v => v.key === currentVariantKey());
+  const next = VARIANTS[(idx + delta + VARIANTS.length) % VARIANTS.length];
+  goToVariant(next.key);
+}
+
+document.getElementById('prevBtn').addEventListener('click', () => cycle(-1));
+document.getElementById('nextBtn').addEventListener('click', () => cycle(1));
+document.addEventListener('keydown', e => {
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  const editable = document.activeElement && document.activeElement.isContentEditable;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+
+renderVariant(currentVariantKey());
+</script>
+
+</body>
+</html>
