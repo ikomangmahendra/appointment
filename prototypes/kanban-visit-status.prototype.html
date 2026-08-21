@@ -7,6 +7,12 @@
   Status (confirmed/completed/no-show/cancelled/rescheduled). Visit Status is the same-day, real-time
   flow a kanban board naturally visualizes; Appointment Status is a longer-lived disposition. If this
   guess is wrong, say so and this gets rebuilt against Appointment Status instead.
+
+  Verdict: Variant A (classic card columns) won, then refined once more — the KPI summary
+  bar from Variant B (total pasien, sedang menunggu, sedang dilayani, rata-rata tunggu) was
+  pulled on top of it (see renderKpiBar, shared by both A and B). This combined shape is the
+  reference for implementation. B and C stay in the switcher for comparison, not as live options.
+
   Run: open this file directly in a browser (no server needed).
 -->
 <!DOCTYPE html>
@@ -230,9 +236,32 @@ function statusLabel(key) {
 }
 
 // ---------------------------------------------------------------------------
-// Variant A — classic kanban board (card columns, click-to-expand)
+// Shared KPI summary bar — pulled from Variant B into the chosen Variant A
+// ---------------------------------------------------------------------------
+function renderKpiBar(root) {
+  const waitingLike = PATIENTS.filter(p => ['telah_tiba','menunggu','sedang_dilayani'].includes(p.status));
+  const avgWait = Math.round(
+    waitingLike.reduce((sum, p) => sum + (p.waitMin || 0), 0) / (waitingLike.length || 1)
+  );
+  const kpis = document.createElement('div');
+  kpis.className = 'kpis';
+  kpis.innerHTML = `
+    <div class="kpi"><div class="v">${PATIENTS.length}</div><div class="l">Pasien hari ini</div></div>
+    <div class="kpi"><div class="v">${patientsByStatus('menunggu').length}</div><div class="l">Sedang menunggu</div></div>
+    <div class="kpi"><div class="v">${patientsByStatus('sedang_dilayani').length}</div><div class="l">Sedang dilayani</div></div>
+    <div class="kpi"><div class="v">${avgWait} mnt</div><div class="l">Rata-rata tunggu</div></div>
+  `;
+  root.appendChild(kpis);
+  return waitingLike;
+}
+
+// ---------------------------------------------------------------------------
+// Variant A — classic kanban board (card columns, click-to-expand),
+// with the KPI summary bar from Variant B added on top (chosen combination)
 // ---------------------------------------------------------------------------
 function renderVariantA(root) {
+  renderKpiBar(root);
+
   const board = document.createElement('div');
   board.className = 'board';
   STATUSES.forEach(s => {
@@ -270,20 +299,7 @@ function renderVariantB(root) {
   liveTimers.forEach(clearInterval);
   liveTimers = [];
 
-  const waitingLike = PATIENTS.filter(p => ['telah_tiba','menunggu','sedang_dilayani'].includes(p.status));
-  const avgWait = Math.round(
-    waitingLike.reduce((sum, p) => sum + (p.waitMin || 0), 0) / (waitingLike.length || 1)
-  );
-
-  const kpis = document.createElement('div');
-  kpis.className = 'kpis';
-  kpis.innerHTML = `
-    <div class="kpi"><div class="v">${PATIENTS.length}</div><div class="l">Pasien hari ini</div></div>
-    <div class="kpi"><div class="v">${patientsByStatus('menunggu').length}</div><div class="l">Sedang menunggu</div></div>
-    <div class="kpi"><div class="v">${patientsByStatus('sedang_dilayani').length}</div><div class="l">Sedang dilayani</div></div>
-    <div class="kpi"><div class="v">${avgWait} mnt</div><div class="l">Rata-rata tunggu</div></div>
-  `;
-  root.appendChild(kpis);
+  const waitingLike = renderKpiBar(root);
 
   const board = document.createElement('div');
   board.className = 'opsboard';
@@ -388,7 +404,7 @@ document.getElementById('overlay').addEventListener('click', e => {
 // Variant switcher
 // ---------------------------------------------------------------------------
 const VARIANTS = [
-  { key: 'A', name: 'Board klasik',   render: renderVariantA },
+  { key: 'A', name: 'Board klasik + KPI (chosen)', render: renderVariantA },
   { key: 'B', name: 'Queue ops',      render: renderVariantB },
   { key: 'C', name: 'Matrix progres', render: renderVariantC },
 ];
