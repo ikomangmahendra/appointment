@@ -9,36 +9,37 @@
 
   Question: what should the shared "dashboard" home screen look like across
   the roles who'd land on it — Admin Klinik, Resepsionis, Staf Layanan,
-  Dokter, and Super-Admin (see CONTEXT.md for these actors)? Three
-  structurally different LAYOUT variants, switchable via ?variant=A|B|C on
-  this single static file. Independent of the layout, an in-page ROLE
-  selector swaps the dashboard's content to that role's own view, so you can
-  compare "does this layout work for every role" as well as "what should
-  each role see". No backend — one shared canned Appointment list (mutable
-  in memory) drives every role's numbers, so actions like Check-In or
-  advancing Visit Status are visible across roles that touch the same data.
+  Dokter, and Super-Admin (see CONTEXT.md for these actors)? An in-page ROLE
+  selector swaps the dashboard's content to that role's own view. No
+  backend — one shared canned Appointment list (mutable in memory) drives
+  every role's numbers, so actions like Check-In or advancing Visit Status
+  are visible across roles that touch the same data.
 
-  Variants:
-    A — Grid widget (classic dashboard: stat cards + two-panel grid)
-    B — Fokus hari ini (single-column task feed, action-first)
-    C — Command center (nav rail + sections, kanban-style board for queues)
+  VERDICT: three structurally different layouts were tried — A (Grid
+  widget: stat cards + two-panel grid), B (Fokus hari ini: single-column
+  task feed), C (Command center: nav rail + kanban board for queues).
+  Variant A won on feedback: dense enough for overview-only roles (Admin
+  Klinik, Dokter, Super-Admin) without forcing extra navigation on them,
+  while still surfacing Resepsionis's Check-In queue and actions with no
+  extra clicks. B and C are removed; only A's layout remains, generalized
+  from a fixed two-panel shape into a per-role list of sections so each
+  role can carry a different number of panels (see buildModel/sectionPanel
+  below) — e.g. Admin Klinik's added "Perlu Dijadwal Ulang" and "Info
+  Klinik" panels, or Dokter's Info Lain panel mixing list items and
+  free-text notices (cuti, clinic closures).
 
   Run: open this file directly in a browser (double-click / File > Open).
 -->
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  .switcher-btn:focus { outline: none; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-  [data-anim="in"] { animation: fade-in .15s ease-out; }
-  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
 
 <div id="app"></div>
-<div id="switcher"></div>
 
 <script>
 // ---------------------------------------------------------------------------
@@ -69,8 +70,38 @@ const STAF = [
   { id: 2, name: 'Yusuf', layananIds: [3, 4] },
 ];
 
-const TOMORROW_COUNTS = { 1: 5, 2: 3, 3: 4, 4: 2 };
+const UPCOMING_COUNTS = {
+  1: { besok: 5, besokLusa: 3 },
+  2: { besok: 3, besokLusa: 4 },
+  3: { besok: 4, besokLusa: 2 },
+  4: { besok: 2, besokLusa: 1 },
+};
 const DUPLICATE_COUNT = 2;
+
+// Pengecualian Jadwal (cuti) per Dokter — CONTEXT.md
+const CUTI = [
+  { dokterId: 1, mulai: '2026-08-28', selesai: '2026-08-29', alasan: 'Cuti tahunan' },
+  { dokterId: 4, mulai: '2026-09-02', selesai: '2026-09-02', alasan: 'Keperluan keluarga' },
+];
+
+// Klinik-wide closures (Jam Operasional's holiday calendar) — hari libur nasional, force majeure, dll.
+const KLINIK_TUTUP = [
+  { tanggal: '2026-08-31', alasan: 'Cuti bersama Hari Kemerdekaan' },
+];
+
+function fmtTanggalPendek(iso) {
+  const bulan = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
+  const d = new Date(iso + 'T00:00:00');
+  return `${d.getDate()} ${bulan[d.getMonth()]} ${d.getFullYear()}`;
+}
+function cutiUntukDokter(dokterId) { return CUTI.filter(c => c.dokterId === dokterId); }
+function cutiLines(list) {
+  return list.map(c => {
+    const rentang = c.mulai === c.selesai ? fmtTanggalPendek(c.mulai) : `${fmtTanggalPendek(c.mulai)}–${fmtTanggalPendek(c.selesai)}`;
+    return c.dokterName ? `${c.dokterName} cuti ${rentang} (${c.alasan})` : `Cuti ${rentang} (${c.alasan})`;
+  });
+}
+function klinikTutupLines() { return KLINIK_TUTUP.map(k => `Klinik tutup ${fmtTanggalPendek(k.tanggal)} — ${k.alasan}`); }
 
 const KLINIK_LIST = [
   { name: 'Klinik Sehat Bahagia', kota: 'Bandung', dokterCount: 4, staffCount: 6, appointmentsToday: 9 },
@@ -88,7 +119,7 @@ let APPOINTMENTS_TODAY = [
   { id: 6, time: '09:30', patientName: 'Fajar Ramadhan', layananId: 2, dokterId: 1, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'phone' },
   { id: 7, time: '10:00', patientName: 'Gita Ayu', layananId: 3, dokterId: 2, appointmentStatus: 'confirmed', visitStatus: 'belum tiba', bookingSource: 'online' },
   { id: 8, time: '10:15', patientName: 'Hendra Saputra', layananId: 1, dokterId: 3, appointmentStatus: 'cancelled', visitStatus: 'belum tiba', bookingSource: 'phone' },
-  { id: 9, time: '10:30', patientName: 'Indah Lestari', layananId: 4, dokterId: 4, appointmentStatus: 'confirmed', visitStatus: 'belum tiba', bookingSource: 'online' },
+  { id: 9, time: '10:30', patientName: 'Indah Lestari', layananId: 4, dokterId: 4, appointmentStatus: 'perlu_dijadwal_ulang', visitStatus: 'belum tiba', bookingSource: 'online' },
   { id: 10, time: '11:00', patientName: 'Joko Widodo', layananId: 2, dokterId: 1, appointmentStatus: 'no-show', visitStatus: 'belum tiba', bookingSource: 'phone' },
 ];
 
@@ -109,13 +140,14 @@ function dokterName(id) { return DOKTER.find(d => d.id === id).name; }
 function timeSort(a, b) { return a.time.localeCompare(b.time); }
 function apptsForDokter(id) { return APPOINTMENTS_TODAY.filter(a => a.dokterId === id); }
 function apptsForLayananIds(ids) { return APPOINTMENTS_TODAY.filter(a => ids.includes(a.layananId) && a.appointmentStatus !== 'cancelled'); }
+function perluDijadwalUlangList() { return APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'perlu_dijadwal_ulang'); }
 
 function visitPill(stage) {
   const map = { 'belum tiba': 'bg-slate-100 text-slate-500', 'menunggu': 'bg-amber-100 text-amber-700', 'sedang dilayani': 'bg-indigo-100 text-indigo-700', 'selesai': 'bg-emerald-100 text-emerald-700' };
   return `<span class="text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${map[stage] || ''}">${esc(stage)}</span>`;
 }
 function apptPill(status) {
-  const map = { confirmed: 'bg-blue-100 text-blue-700', completed: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-slate-100 text-slate-400 line-through', 'no-show': 'bg-red-100 text-red-700', rescheduled: 'bg-amber-100 text-amber-700' };
+  const map = { confirmed: 'bg-blue-100 text-blue-700', completed: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-slate-100 text-slate-400 line-through', 'no-show': 'bg-red-100 text-red-700', rescheduled: 'bg-amber-100 text-amber-700', perlu_dijadwal_ulang: 'bg-orange-100 text-orange-700' };
   return `<span class="text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${map[status] || ''}">${esc(status)}</span>`;
 }
 function bookingPill(source) {
@@ -131,25 +163,39 @@ function toneClass(tone) {
 // stored directly on APPOINTMENTS_TODAY so switching layout variants keeps
 // comparing the SAME live data.
 // ---------------------------------------------------------------------------
-let ui = { role: 'admin_klinik', section: 'ringkasan' };
+let ui = { role: 'admin_klinik', apptPage: 1 };
+const APPT_PAGE_SIZE = 5;
 
 // ---------------------------------------------------------------------------
 // Per-role dashboard model — the content is role-owned; layout variants only
 // decide how to arrange {stats, primaryItems, secondaryItems}.
 // ---------------------------------------------------------------------------
+function perluDijadwalUlangItem(a, actionLabel) {
+  return {
+    id: a.id,
+    primaryText: `${a.time} · ${a.patientName}`,
+    secondaryText: `${layananName(a.layananId)} · ${dokterName(a.dokterId)}`,
+    meta: apptPill(a.appointmentStatus),
+    group: null,
+    action: { label: actionLabel, action: 'stub' },
+  };
+}
+
 function buildModel(role) {
   if (role === 'admin_klinik') {
     const active = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus !== 'cancelled');
     const selesai = active.filter(a => a.visitStatus === 'selesai').length;
     const berjalan = active.filter(a => ['menunggu', 'sedang dilayani'].includes(a.visitStatus)).length;
     const dokterAktif = new Set(active.map(a => a.dokterId)).size;
+    const perluUlang = perluDijadwalUlangList();
     const stats = [
       { label: 'Appointment Hari Ini', value: active.length, tone: 'neutral' },
       { label: 'Selesai', value: selesai, tone: 'good' },
       { label: 'Sedang Berjalan', value: berjalan, tone: 'warn' },
       { label: 'Dokter Aktif', value: dokterAktif, tone: 'neutral' },
+      { label: 'Perlu Dijadwal Ulang', value: perluUlang.length, tone: perluUlang.length ? 'bad' : 'neutral' },
     ];
-    const primaryItems = APPOINTMENTS_TODAY.slice().sort(timeSort).map(a => ({
+    const appointmentItems = APPOINTMENTS_TODAY.slice().sort(timeSort).map(a => ({
       id: a.id,
       primaryText: `${a.time} · ${a.patientName}`,
       secondaryText: `${layananName(a.layananId)} · ${dokterName(a.dokterId)}`,
@@ -157,24 +203,31 @@ function buildModel(role) {
       group: layananName(a.layananId),
       action: null,
     }));
-    const secondaryItems = [
+    const layananItems = [
       { id: 'dup', primaryText: '⚠ Kandidat Duplikat', secondaryText: `${DUPLICATE_COUNT} pasang menunggu tinjauan`, meta: '', action: { label: 'Tinjau →', action: 'stub' } },
       ...LAYANAN.map(l => ({ id: 'l' + l.id, primaryText: l.name, secondaryText: `${active.filter(a => a.layananId === l.id).length} appointment hari ini`, meta: '', action: null })),
     ];
-    return { roleLabel: 'Admin Klinik', roleDesc: 'Ringkasan operasional klinik hari ini', stats, primaryTitle: 'Appointment Hari Ini (Semua)', primaryItems, secondaryTitle: 'Ringkasan Layanan & Duplikat', secondaryItems };
+    const sections = [
+      { key: 'appointments', title: 'Appointment Hari Ini (Semua)', items: appointmentItems, paginate: true },
+      { key: 'perlu-ulang', title: 'Perlu Dijadwal Ulang', items: perluUlang.map(a => perluDijadwalUlangItem(a, 'Lihat →')) },
+      { key: 'layanan', title: 'Ringkasan Layanan & Duplikat', items: layananItems },
+      { key: 'info', title: 'Info Klinik', notices: klinikTutupLines() },
+    ];
+    return { roleLabel: 'Admin Klinik', roleDesc: 'Ringkasan operasional klinik hari ini', stats, sections };
   }
 
   if (role === 'resepsionis') {
     const belumTiba = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'confirmed' && a.visitStatus === 'belum tiba');
     const diKlinik = APPOINTMENTS_TODAY.filter(a => ['menunggu', 'sedang dilayani'].includes(a.visitStatus)).length;
     const noShow = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'no-show').length;
+    const perluUlang = perluDijadwalUlangList();
     const stats = [
       { label: 'Appointment Hari Ini', value: APPOINTMENTS_TODAY.filter(a => a.appointmentStatus !== 'cancelled').length, tone: 'neutral' },
       { label: 'Perlu Check-In', value: belumTiba.length, tone: 'warn' },
       { label: 'Sedang di Klinik', value: diKlinik, tone: 'good' },
       { label: 'No-show', value: noShow, tone: 'bad' },
     ];
-    const primaryItems = belumTiba.slice().sort(timeSort).map(a => ({
+    const checkinItems = belumTiba.slice().sort(timeSort).map(a => ({
       id: a.id,
       primaryText: `${a.time} · ${a.patientName}`,
       secondaryText: `${layananName(a.layananId)} · ${dokterName(a.dokterId)}`,
@@ -182,11 +235,18 @@ function buildModel(role) {
       group: null,
       action: { label: 'Check-In', action: 'checkin', id: a.id },
     }));
-    const secondaryItems = [
+    const aksiItems = [
       { id: 'newbooking', primaryText: '+ Booking via Telepon', secondaryText: 'Catat appointment dari panggilan masuk', meta: '', action: { label: 'Buka →', action: 'stub' } },
       { id: 'searchpatient', primaryText: 'Cari Pasien', secondaryText: 'Lihat profil & riwayat kunjungan', meta: '', action: { label: 'Buka →', action: 'stub' } },
     ];
-    return { roleLabel: 'Resepsionis', roleDesc: 'Check-in pasien & booking hari ini', stats, primaryTitle: 'Perlu Check-In', primaryItems, secondaryTitle: 'Aksi Cepat', secondaryItems };
+    const dokterCutiLines = cutiLines(CUTI.map(c => ({ ...c, dokterName: dokterName(c.dokterId) })));
+    const sections = [
+      { key: 'checkin', title: 'Perlu Check-In', items: checkinItems },
+      { key: 'perlu-ulang', title: 'Perlu Ditindaklanjuti (Reschedule/Cancel)', items: perluUlang.map(a => perluDijadwalUlangItem(a, 'Tindak Lanjuti')) },
+      { key: 'info', title: 'Info', notices: [...klinikTutupLines(), ...dokterCutiLines] },
+      { key: 'aksi', title: 'Aksi Cepat', items: aksiItems },
+    ];
+    return { roleLabel: 'Resepsionis', roleDesc: 'Check-in pasien & booking hari ini', stats, sections };
   }
 
   if (role === 'staf_layanan') {
@@ -200,7 +260,7 @@ function buildModel(role) {
       { label: 'Selesai Hari Ini', value: selesai.length, tone: 'neutral' },
       { label: 'Total Antrian', value: antrian.length, tone: 'neutral' },
     ];
-    const primaryItems = antrian.slice().sort(timeSort).map(a => ({
+    const antrianItems = antrian.slice().sort(timeSort).map(a => ({
       id: a.id,
       primaryText: a.patientName,
       secondaryText: `${layananName(a.layananId)} · ${a.time} · ${dokterName(a.dokterId)}`,
@@ -208,8 +268,12 @@ function buildModel(role) {
       group: a.visitStatus,
       action: nextStage(a.visitStatus) ? { label: `→ ${nextStage(a.visitStatus)}`, action: 'advance', id: a.id } : null,
     }));
-    const secondaryItems = selesai.map(a => ({ id: a.id, primaryText: a.patientName, secondaryText: `${layananName(a.layananId)} · ${a.time}`, meta: visitPill(a.visitStatus), action: null }));
-    return { roleLabel: `Staf Layanan (${staf.name})`, roleDesc: `Menangani: ${staf.layananIds.map(layananName).join(', ')}`, stats, primaryTitle: 'Antrian Pasien', primaryItems, secondaryTitle: 'Selesai Hari Ini', secondaryItems };
+    const selesaiItems = selesai.map(a => ({ id: a.id, primaryText: a.patientName, secondaryText: `${layananName(a.layananId)} · ${a.time}`, meta: visitPill(a.visitStatus), action: null }));
+    const sections = [
+      { key: 'antrian', title: 'Antrian Pasien', items: antrianItems },
+      { key: 'selesai', title: 'Selesai Hari Ini', items: selesaiItems },
+    ];
+    return { roleLabel: `Staf Layanan (${staf.name})`, roleDesc: `Menangani: ${staf.layananIds.map(layananName).join(', ')}`, stats, sections };
   }
 
   if (role === 'dokter') {
@@ -221,7 +285,7 @@ function buildModel(role) {
       { label: 'Selesai', value: selesai, tone: 'good' },
       { label: 'Sisa Jadwal', value: mine.length - selesai, tone: 'warn' },
     ];
-    const primaryItems = mine.slice().sort(timeSort).map(a => ({
+    const jadwalItems = mine.slice().sort(timeSort).map(a => ({
       id: a.id,
       primaryText: `${a.time} · ${a.patientName}`,
       secondaryText: layananName(a.layananId),
@@ -229,11 +293,18 @@ function buildModel(role) {
       group: null,
       action: null,
     }));
-    const secondaryItems = [
-      { id: 'besok', primaryText: 'Besok', secondaryText: `${TOMORROW_COUNTS[dok.id] || 0} appointment terjadwal`, meta: '', action: null },
+    const upcoming = UPCOMING_COUNTS[dok.id] || { besok: 0, besokLusa: 0 };
+    const infoItems = [
+      { id: 'besok', primaryText: 'Besok', secondaryText: `${upcoming.besok} appointment terjadwal`, meta: '', action: null },
+      { id: 'besok-lusa', primaryText: 'Besok Lusa', secondaryText: `${upcoming.besokLusa} appointment terjadwal`, meta: '', action: null },
       { id: 'jadwal', primaryText: 'Jadwal Rutin', secondaryText: 'Senin–Jumat 08:00–14:00', meta: '', action: null },
     ];
-    return { roleLabel: `Dokter (${dok.name})`, roleDesc: 'Jadwal praktik hari ini — Visit Status diubah oleh Resepsionis/Staf Layanan', stats, primaryTitle: 'Jadwal Hari Ini', primaryItems, secondaryTitle: 'Info Lain', secondaryItems };
+    const infoNotices = [...cutiLines(cutiUntukDokter(dok.id)), ...klinikTutupLines()];
+    const sections = [
+      { key: 'jadwal', title: 'Jadwal Hari Ini', items: jadwalItems },
+      { key: 'info', title: 'Info Lain', items: infoItems, notices: infoNotices },
+    ];
+    return { roleLabel: `Dokter (${dok.name})`, roleDesc: 'Jadwal praktik hari ini — Visit Status diubah oleh Resepsionis/Staf Layanan', stats, sections };
   }
 
   // super_admin
@@ -243,7 +314,7 @@ function buildModel(role) {
     { label: 'Appointment Hari Ini (Platform)', value: totalApptToday, tone: 'neutral' },
     { label: 'Klinik Baru Bulan Ini', value: 1, tone: 'good' },
   ];
-  const primaryItems = KLINIK_LIST.map(k => ({
+  const klinikItems = KLINIK_LIST.map(k => ({
     id: k.name,
     primaryText: k.name,
     secondaryText: `${k.dokterCount} dokter · ${k.staffCount} staf`,
@@ -251,11 +322,15 @@ function buildModel(role) {
     group: k.kota,
     action: null,
   }));
-  const secondaryItems = [
+  const provisioningItems = [
     { id: 'provision', primaryText: '+ Provisikan Klinik Baru', secondaryText: 'Buat tenant Klinik baru di Platform', meta: '', action: { label: 'Buka →', action: 'stub' } },
     { id: 'event1', primaryText: 'Klinik Sehat Bahagia diaktifkan', secondaryText: '12 Agu 2026', meta: '', action: null },
   ];
-  return { roleLabel: 'Super-Admin', roleDesc: 'Ringkasan seluruh Klinik di Platform (bukan operasional satu Klinik)', stats, primaryTitle: 'Daftar Klinik', primaryItems, secondaryTitle: 'Provisioning & Aktivitas', secondaryItems };
+  const sections = [
+    { key: 'klinik', title: 'Daftar Klinik', items: klinikItems },
+    { key: 'provisioning', title: 'Provisioning & Aktivitas', items: provisioningItems },
+  ];
+  return { roleLabel: 'Super-Admin', roleDesc: 'Ringkasan seluruh Klinik di Platform (bukan operasional satu Klinik)', stats, sections };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,137 +371,65 @@ function roleSelectorTabs() {
   return ROLES.map(r => `<button data-action="set-role" data-role="${r.key}" class="px-3 py-1.5 rounded-full text-xs font-medium border ${ui.role === r.key ? 'bg-slate-900 text-white border-slate-900' : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'}">${esc(r.label)}</button>`).join('');
 }
 
+function noticePanel(lines) {
+  if (!lines || !lines.length) return '';
+  return `<div class="space-y-1.5">${lines.map(l => `<div class="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-md px-2.5 py-1.5">⚠ ${esc(l)}</div>`).join('')}</div>`;
+}
+
+function sectionPanel(section, isMain) {
+  const items = section.items || [];
+  let body = '';
+  if (items.length) {
+    let shown = items;
+    let pager = '';
+    if (section.paginate) {
+      const totalPages = Math.max(1, Math.ceil(items.length / APPT_PAGE_SIZE));
+      const page = Math.min(ui.apptPage, totalPages);
+      shown = items.slice((page - 1) * APPT_PAGE_SIZE, page * APPT_PAGE_SIZE);
+      if (totalPages > 1) {
+        pager = `<div class="flex items-center justify-between mt-3 text-xs text-slate-500">
+          <button data-action="appt-prev" ${page <= 1 ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 ${page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">← Sebelumnya</button>
+          <span>Halaman ${page} dari ${totalPages}</span>
+          <button data-action="appt-next" ${page >= totalPages ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 ${page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">Berikutnya →</button>
+        </div>`;
+      }
+    }
+    body += `<div class="space-y-2${isMain ? ' max-h-[420px] overflow-y-auto pr-1' : ''}">${shown.map(i => itemRow(i, section.style)).join('')}</div>${pager}`;
+  }
+  if (section.notices && section.notices.length) {
+    body += (body ? '<div class="mt-3">' + noticePanel(section.notices) + '</div>' : noticePanel(section.notices));
+  }
+  if (!body) body = emptyNote();
+  return `<div class="bg-white rounded-xl border border-slate-200 p-4${isMain ? '' : ' h-fit'}">
+    <div class="text-sm font-medium mb-3">${esc(section.title)}</div>
+    ${body}
+  </div>`;
+}
+
 // ===========================================================================
-// Variant A — Grid widget (classic dashboard)
+// Dashboard layout — Grid widget (verdict: picked over "Fokus hari ini" and
+// "Command center" variants; see the comment at the top of this file)
 // ===========================================================================
-function renderVariantA() {
+function renderDashboard() {
   const m = buildModel(ui.role);
+  const [mainSection, ...restSections] = m.sections;
   return `<div class="max-w-6xl mx-auto pt-8 px-4">
-    <div class="mb-1"><div class="text-xs uppercase tracking-wide text-slate-400">${esc(KLINIK.name)} · ${esc(KLINIK.today)}</div><h1 class="text-lg font-semibold">Variant A — Grid widget</h1></div>
+    <div class="mb-1"><div class="text-xs uppercase tracking-wide text-slate-400">${esc(KLINIK.name)} · ${esc(KLINIK.today)}</div><h1 class="text-lg font-semibold">Dashboard</h1></div>
     <div class="flex flex-wrap gap-2 my-4">${roleSelectorTabs()}</div>
     <div class="mb-4"><div class="font-medium">${esc(m.roleLabel)}</div><div class="text-sm text-slate-500">${esc(m.roleDesc)}</div></div>
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">${m.stats.map(statCard).join('')}</div>
     <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-      <div class="bg-white rounded-xl border border-slate-200 p-4">
-        <div class="text-sm font-medium mb-3">${esc(m.primaryTitle)}</div>
-        <div class="space-y-2 max-h-[420px] overflow-y-auto pr-1">${m.primaryItems.length ? m.primaryItems.map(i => itemRow(i)).join('') : emptyNote()}</div>
-      </div>
-      <div class="bg-white rounded-xl border border-slate-200 p-4 h-fit">
-        <div class="text-sm font-medium mb-3">${esc(m.secondaryTitle)}</div>
-        <div class="space-y-2">${m.secondaryItems.map(i => itemRow(i)).join('')}</div>
-      </div>
-    </div>
-  </div>`;
-}
-
-// ===========================================================================
-// Variant B — Fokus hari ini (single-column, action-first task feed)
-// ===========================================================================
-function renderVariantB() {
-  const m = buildModel(ui.role);
-  return `<div class="max-w-2xl mx-auto pt-8 px-4">
-    <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">${esc(KLINIK.name)} · ${esc(KLINIK.today)}</div>
-    <h1 class="text-lg font-semibold mb-3">Variant B — Fokus hari ini</h1>
-    <div class="flex flex-wrap gap-1 border-b border-slate-200 mb-3">
-      ${ROLES.map(r => `<button data-action="set-role" data-role="${r.key}" class="px-3 py-2 text-sm border-b-2 -mb-px ${ui.role === r.key ? 'border-blue-600 text-blue-700 font-medium' : 'border-transparent text-slate-500'}">${esc(r.label)}</button>`).join('')}
-    </div>
-    <div class="text-sm text-slate-500 mb-3">${esc(m.roleDesc)}</div>
-    <div class="text-xs text-slate-500 mb-4">${m.stats.map(s => `<span class="font-semibold ${toneClass(s.tone)}">${s.value}</span> ${esc(s.label)}`).join(' <span class="text-slate-300">·</span> ')}</div>
-    <div class="text-sm font-medium mb-2">${esc(m.primaryTitle)}</div>
-    <div class="space-y-2 mb-6">${m.primaryItems.length ? m.primaryItems.map(i => itemRow(i, 'big')).join('') : emptyNote()}</div>
-    <div class="border-t border-slate-200 pt-3">
-      <div class="text-xs font-medium text-slate-400 mb-2">${esc(m.secondaryTitle)}</div>
-      <div class="space-y-1.5">${m.secondaryItems.map(i => itemRow(i)).join('')}</div>
-    </div>
-  </div>`;
-}
-
-// ===========================================================================
-// Variant C — Command center (nav rail + sections, board for queues)
-// ===========================================================================
-function renderVariantC() {
-  const m = buildModel(ui.role);
-  const sections = [
-    { key: 'ringkasan', label: 'Ringkasan', icon: '📊' },
-    { key: 'tugas', label: 'Tugas', icon: '✅' },
-    { key: 'info', label: 'Info', icon: 'ℹ️' },
-  ];
-
-  let main = '';
-  if (ui.section === 'ringkasan') {
-    main = `<div class="grid grid-cols-2 gap-3">${m.stats.map(statCard).join('')}</div>`;
-  } else if (ui.section === 'tugas') {
-    const groups = {};
-    m.primaryItems.forEach(i => { const g = i.group || 'Semua'; (groups[g] = groups[g] || []).push(i); });
-    const keys = Object.keys(groups);
-    main = keys.length ? `<div class="flex gap-3 overflow-x-auto pb-2">${keys.map(g => `
-      <div class="w-64 shrink-0">
-        <div class="text-xs font-medium text-slate-500 mb-2">${esc(g)} <span class="text-slate-300">(${groups[g].length})</span></div>
-        <div class="space-y-2">${groups[g].map(i => itemRow(i, 'board')).join('')}</div>
-      </div>`).join('')}</div>` : emptyNote();
-  } else {
-    main = `<div class="space-y-2">${m.secondaryItems.map(i => itemRow(i)).join('')}</div>`;
-  }
-
-  const mainTitle = ui.section === 'ringkasan' ? 'Ringkasan' : ui.section === 'tugas' ? m.primaryTitle : m.secondaryTitle;
-
-  return `<div class="max-w-6xl mx-auto pt-6 px-4">
-    <div class="mb-3"><div class="text-xs uppercase tracking-wide text-slate-400">${esc(KLINIK.name)} · ${esc(KLINIK.today)}</div><h1 class="text-lg font-semibold">Variant C — Command center</h1></div>
-    <div class="flex flex-wrap gap-2 mb-4">${roleSelectorTabs()}</div>
-    <div class="grid grid-cols-[160px_1fr] gap-4">
-      <div class="space-y-1">
-        <div class="text-xs text-slate-400 px-2 mb-1 truncate">${esc(m.roleLabel)}</div>
-        ${sections.map(s => `<button data-action="set-section" data-section="${s.key}" class="w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${ui.section === s.key ? 'bg-slate-900 text-white' : 'hover:bg-slate-200 text-slate-600'}">${s.icon} ${s.label}</button>`).join('')}
-      </div>
-      <div class="bg-white rounded-xl border border-slate-200 p-4 min-h-[300px]" data-anim="in">
-        <div class="text-sm font-medium mb-3">${esc(mainTitle)}</div>
-        ${main}
-      </div>
+      ${sectionPanel(mainSection, true)}
+      <div class="space-y-4">${restSections.map(s => sectionPanel(s, false)).join('')}</div>
     </div>
   </div>`;
 }
 
 // ---------------------------------------------------------------------------
-// Wiring: variant switch, delegated events, floating switcher bar
+// Wiring: delegated events
 // ---------------------------------------------------------------------------
-const VARIANTS = {
-  A: { name: 'Grid widget', render: renderVariantA },
-  B: { name: 'Fokus hari ini', render: renderVariantB },
-  C: { name: 'Command center', render: renderVariantC },
-};
-const ORDER = ['A', 'B', 'C'];
-
-function currentVariant() {
-  const v = new URLSearchParams(location.search).get('variant');
-  return VARIANTS[v] ? v : 'A';
-}
-
-function setVariant(v) {
-  const url = new URL(location.href);
-  url.searchParams.set('variant', v);
-  history.replaceState({}, '', url);
-  ui.section = 'ringkasan';
-  render();
-}
-
 function render() {
-  document.getElementById('app').innerHTML = VARIANTS[currentVariant()].render();
-  renderSwitcher();
-}
-
-function renderSwitcher() {
-  const v = currentVariant();
-  document.getElementById('switcher').innerHTML = `
-    <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-900 text-white rounded-full shadow-lg px-4 py-2.5">
-      <button data-action="switch-prev" class="switcher-btn w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center" aria-label="Variant sebelumnya">←</button>
-      <span class="text-sm font-medium px-1">${v} <span class="text-slate-300 font-normal">(${VARIANTS[v].name})</span></span>
-      <button data-action="switch-next" class="switcher-btn w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center" aria-label="Variant berikutnya">→</button>
-    </div>`;
-}
-
-function cycle(dir) {
-  const i = ORDER.indexOf(currentVariant());
-  setVariant(ORDER[(i + dir + ORDER.length) % ORDER.length]);
+  document.getElementById('app').innerHTML = renderDashboard();
 }
 
 document.addEventListener('click', (e) => {
@@ -434,10 +437,9 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   const action = t.dataset.action;
   switch (action) {
-    case 'switch-prev': return cycle(-1);
-    case 'switch-next': return cycle(1);
-    case 'set-role': ui.role = t.dataset.role; ui.section = 'ringkasan'; break;
-    case 'set-section': ui.section = t.dataset.section; break;
+    case 'set-role': ui.role = t.dataset.role; ui.apptPage = 1; break;
+    case 'appt-prev': ui.apptPage = Math.max(1, ui.apptPage - 1); break;
+    case 'appt-next': ui.apptPage = ui.apptPage + 1; break;
     case 'checkin': { const a = APPOINTMENTS_TODAY.find(x => x.id === Number(t.dataset.id)); if (a) a.visitStatus = 'menunggu'; break; }
     case 'advance': { const a = APPOINTMENTS_TODAY.find(x => x.id === Number(t.dataset.id)); if (a) { const nxt = nextStage(a.visitStatus); if (nxt) a.visitStatus = nxt; } break; }
     case 'stub': break; // prototype stub — this would navigate to that screen in the real app
@@ -445,14 +447,6 @@ document.addEventListener('click', (e) => {
   render();
 });
 
-document.addEventListener('keydown', (e) => {
-  const tag = document.activeElement.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement.isContentEditable) return;
-  if (e.key === 'ArrowLeft') cycle(-1);
-  if (e.key === 'ArrowRight') cycle(1);
-});
-
-window.addEventListener('popstate', render);
 render();
 </script>
 </body>
