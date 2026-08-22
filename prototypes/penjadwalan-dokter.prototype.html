@@ -56,6 +56,18 @@
   fed into ADR-0018; it's reused as-is here (see ScheduleModel below), not
   re-tested.
 
+  UPDATE (post ADR-0022): a Jadwal block now names the Layanan it's for
+  (a Dokter can be eligible for more than one Layanan, e.g. a pediatrician
+  who also does Konsultasi Umum). Adding a block is rejected outright —
+  no force-with-reason override, unlike ADR-0018's Appointment-orphaning
+  flow — in two cases: it overlaps one of the same Dokter's own blocks
+  (already existed), or it overlaps another Dokter's block for the *same*
+  Layanan (new: a Layanan is a single exclusive resource, so two Dokter
+  can never hold it at once). Only Jadwal blocks got this treatment here;
+  Jam Khusus overrides don't carry a Layanan yet in this prototype — a
+  known gap, not a re-litigation of ADR-0022 (which says Jam Khusus should
+  eventually get the same treatment).
+
   No backend, no persistence — state lives in memory and resets on reload.
   Run: open this file directly in a browser (double-click / File > Open),
   or serve the folder (python3 -m http.server) if your browser/extension
@@ -231,21 +243,33 @@ function seedAwal() {
       Rabu: { buka: '08:00', tutup: '17:00' }, Kamis: { buka: '08:00', tutup: '17:00' },
       Jumat: { buka: '08:00', tutup: '17:00' }, Sabtu: { buka: '08:00', tutup: '12:00' }, Minggu: null,
     },
+    // Setiap Layanan hanya untuk satu dokter dalam satu waktu (ADR-0022) — dokterIds di sini
+    // cuma daftar dokter yang ELIGIBLE, bukan jaminan mereka boleh praktik bersamaan.
+    layanan: [
+      { id: 'l1', nama: 'Konsultasi Umum', dokterIds: ['d1', 'd4'] },
+      { id: 'l2', nama: 'Gigi', dokterIds: ['d2'] },
+      { id: 'l3', nama: 'Fisioterapi', dokterIds: ['d3'] },
+      { id: 'l4', nama: 'Anak', dokterIds: ['d4'] },
+      { id: 'l5', nama: 'Mata', dokterIds: ['d5'] },
+      { id: 'l6', nama: 'THT', dokterIds: ['d6'] },
+      { id: 'l7', nama: 'Kulit & Kelamin', dokterIds: ['d7'] },
+      { id: 'l8', nama: 'Jantung', dokterIds: ['d8'] },
+    ],
     jadwal: {
       d1: [
-        { id: 'j1', hari: 'Senin', mulai: '08:00', selesai: '12:00' },
-        { id: 'j2', hari: 'Senin', mulai: '13:00', selesai: '16:00' },
-        { id: 'j3', hari: 'Rabu', mulai: '08:00', selesai: '12:00' },
-        { id: 'j4', hari: 'Jumat', mulai: '08:00', selesai: '12:00' },
+        { id: 'j1', hari: 'Senin', layananId: 'l1', mulai: '08:00', selesai: '12:00' },
+        { id: 'j2', hari: 'Senin', layananId: 'l1', mulai: '13:00', selesai: '16:00' },
+        { id: 'j3', hari: 'Rabu', layananId: 'l1', mulai: '08:00', selesai: '12:00' },
+        { id: 'j4', hari: 'Jumat', layananId: 'l1', mulai: '08:00', selesai: '12:00' },
       ],
       d2: [
-        { id: 'j5', hari: 'Selasa', mulai: '09:00', selesai: '15:00' },
-        { id: 'j6', hari: 'Kamis', mulai: '09:00', selesai: '15:00' },
+        { id: 'j5', hari: 'Selasa', layananId: 'l2', mulai: '09:00', selesai: '15:00' },
+        { id: 'j6', hari: 'Kamis', layananId: 'l2', mulai: '09:00', selesai: '15:00' },
       ],
       d3: [
-        { id: 'j7', hari: 'Senin', mulai: '13:00', selesai: '17:00' },
-        { id: 'j8', hari: 'Rabu', mulai: '13:00', selesai: '17:00' },
-        { id: 'j9', hari: 'Jumat', mulai: '13:00', selesai: '17:00' },
+        { id: 'j7', hari: 'Senin', layananId: 'l3', mulai: '13:00', selesai: '17:00' },
+        { id: 'j8', hari: 'Rabu', layananId: 'l3', mulai: '13:00', selesai: '17:00' },
+        { id: 'j9', hari: 'Jumat', layananId: 'l3', mulai: '13:00', selesai: '17:00' },
       ],
       d4: [], d5: [], d6: [], d7: [], d8: [],
     },
@@ -321,13 +345,19 @@ function reduce(state, action) {
       return { ...state, selectedDokter: action.dokterId };
 
     case 'TAMBAH_BLOK': {
-      const { dokterId, hari, mulai, selesai } = action;
+      const { dokterId, hari, layananId, mulai, selesai } = action;
       if (menit(mulai) >= menit(selesai)) return withLog(state, 'error', `Blok ${hari} ${mulai}–${selesai} ditolak: jam mulai harus sebelum jam selesai.`);
+      if (!layananId) return withLog(state, 'error', `Blok ${hari} ${mulai}–${selesai} ditolak: pilih Layanan untuk blok ini.`);
       const existing = state.jadwal[dokterId] || [];
-      const tumpang = existing.find(b => b.hari === hari && menit(b.mulai) < menit(selesai) && menit(mulai) < menit(b.selesai));
-      if (tumpang) return withLog(state, 'error', `Blok ${hari} ${mulai}–${selesai} ditolak: tumpang tindih dengan blok yang sudah ada (${tumpang.mulai}–${tumpang.selesai}).`);
-      const blok = { id: 'j' + Math.random().toString(36).slice(2, 8), hari, mulai, selesai };
-      return withLog({ ...state, jadwal: { ...state.jadwal, [dokterId]: [...existing, blok] } }, 'info', `Blok jadwal ditambahkan: ${hari} ${mulai}–${selesai}.`);
+      const tumpangSendiri = existing.find(b => b.hari === hari && menit(b.mulai) < menit(selesai) && menit(mulai) < menit(b.selesai));
+      if (tumpangSendiri) return withLog(state, 'error', `Blok ${hari} ${mulai}–${selesai} ditolak: tumpang tindih dengan blok ${dokterById(dokterId).nama} sendiri yang sudah ada (${tumpangSendiri.mulai}–${tumpangSendiri.selesai}).`);
+      const tumpangLayanan = cariBlokLayananTumpang(state, dokterId, layananId, hari, mulai, selesai);
+      if (tumpangLayanan) {
+        const dokterLain = dokterById(tumpangLayanan.dokterId);
+        return withLog(state, 'error', `Blok ${hari} ${mulai}–${selesai} ditolak: ${layananById(layananId).nama} sudah dipakai ${dokterLain.nama} pada jam yang sama (${tumpangLayanan.mulai}–${tumpangLayanan.selesai}) — satu Layanan hanya untuk satu dokter dalam satu waktu (ADR-0022), tidak bisa dipaksakan.`);
+      }
+      const blok = { id: 'j' + Math.random().toString(36).slice(2, 8), hari, layananId, mulai, selesai };
+      return withLog({ ...state, jadwal: { ...state.jadwal, [dokterId]: [...existing, blok] } }, 'info', `Blok jadwal ditambahkan: ${hari} ${mulai}–${selesai} (${layananById(layananId).nama}).`);
     }
 
     case 'HAPUS_BLOK': {
@@ -452,6 +482,21 @@ function dispatch(action) {
 // ---------- shared helpers ----------
 
 function dokterById(id) { return state.dokter.find(d => d.id === id); }
+function layananById(id) { return state.layanan.find(l => l.id === id); }
+function layananUntukDokter(dokterId) { return state.layanan.filter(l => l.dokterIds.includes(dokterId)); }
+
+// ADR-0022: satu Layanan cuma untuk satu dokter dalam satu waktu — cari apakah dokter LAIN
+// sudah punya blok jadwal untuk Layanan yang sama, di hari & jam yang tumpang tindih.
+function cariBlokLayananTumpang(state, dokterId, layananId, hari, mulai, selesai) {
+  for (const d of state.dokter) {
+    if (d.id === dokterId) continue;
+    const bentrok = (state.jadwal[d.id] || []).find(
+      b => b.layananId === layananId && b.hari === hari && menit(b.mulai) < menit(selesai) && menit(mulai) < menit(b.selesai)
+    );
+    if (bentrok) return { dokterId: d.id, ...bentrok };
+  }
+  return null;
+}
 
 function badgeStatus(status) {
   return status === 'confirmed'
@@ -543,21 +588,31 @@ function htmlJadwalMinggu(dokterId) {
     <div class="flex flex-wrap gap-1.5 mb-3">
       ${blocks.length === 0 ? '<span class="text-xs text-slate-400 italic">Belum ada blok jadwal.</span>' : blocks.map(b => {
         const lewat = pastWeekdays.includes(b.hari);
+        const layananNama = (layananById(b.layananId) || {}).nama || '—';
         return `<span class="inline-flex items-center gap-1 text-xs rounded-full px-2 py-1 border ${lewat ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-teal-50 text-teal-700 border-teal-200'}">
-          ${b.hari} ${b.mulai}–${b.selesai}
+          ${b.hari} ${b.mulai}–${b.selesai} <span class="opacity-70">· ${escapeHtml(layananNama)}</span>
           ${lewat ? '<span class="text-[10px] italic">(lewat)</span>' : `<button data-hapus-blok="${b.id}" class="font-bold ml-0.5">&times;</button>`}
         </span>`;
       }).join('')}
     </div>
-    ${seluruhMingguLewat
-      ? `<div class="text-xs text-slate-400 italic bg-slate-50 rounded-lg p-3">Minggu ini sudah lewat — jadwal hanya bisa diubah untuk minggu berjalan atau mendatang. Gunakan tombol "Hari ini" atau navigasi ›.</div>`
-      : `<div class="flex gap-2 items-end bg-slate-50 rounded-xl p-3">
-          <div class="flex-1"><label class="block text-[11px] text-slate-500 mb-1">Hari</label>
+    ${(() => {
+      const layananDokter = layananUntukDokter(dokterId);
+      if (seluruhMingguLewat) {
+        return `<div class="text-xs text-slate-400 italic bg-slate-50 rounded-lg p-3">Minggu ini sudah lewat — jadwal hanya bisa diubah untuk minggu berjalan atau mendatang. Gunakan tombol "Hari ini" atau navigasi ›.</div>`;
+      }
+      if (layananDokter.length === 0) {
+        return `<div class="text-xs text-slate-400 italic bg-slate-50 rounded-lg p-3">Dokter ini belum eligible untuk Layanan apa pun — atur eligibilitas Layanan dulu sebelum menambah blok jadwal.</div>`;
+      }
+      return `<div class="flex gap-2 items-end bg-slate-50 rounded-xl p-3 flex-wrap">
+          <div class="flex-1 min-w-[110px]"><label class="block text-[11px] text-slate-500 mb-1">Hari</label>
             <select id="b-new-hari" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">${HARI_TAMPIL.map(h => `<option ${pastWeekdays.includes(h) ? 'disabled' : ''}>${h}</option>`).join('')}</select></div>
+          <div class="flex-1 min-w-[140px]"><label class="block text-[11px] text-slate-500 mb-1">Layanan</label>
+            <select id="b-new-layanan" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">${layananDokter.map(l => `<option value="${l.id}">${escapeHtml(l.nama)}</option>`).join('')}</select></div>
           <div><label class="block text-[11px] text-slate-500 mb-1">Mulai</label><input type="time" id="b-new-mulai" value="08:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
           <div><label class="block text-[11px] text-slate-500 mb-1">Selesai</label><input type="time" id="b-new-selesai" value="12:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
           <button id="b-add-blok" class="text-sm font-semibold px-3 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700">+ Tambah</button>
-        </div>`}
+        </div>`;
+    })()}
   </div>`;
 }
 
@@ -566,7 +621,13 @@ function wireJadwalMinggu(root, dokterId) {
   const btnAdd = document.getElementById('b-add-blok');
   if (btnAdd) {
     btnAdd.onclick = () => {
-      dispatch({ type: 'TAMBAH_BLOK', dokterId, hari: document.getElementById('b-new-hari').value, mulai: document.getElementById('b-new-mulai').value, selesai: document.getElementById('b-new-selesai').value });
+      dispatch({
+        type: 'TAMBAH_BLOK', dokterId,
+        hari: document.getElementById('b-new-hari').value,
+        layananId: document.getElementById('b-new-layanan').value,
+        mulai: document.getElementById('b-new-mulai').value,
+        selesai: document.getElementById('b-new-selesai').value,
+      });
     };
   }
 }
