@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Penjadwalan Dokter</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this directly.
+
+  Question: what should the Admin Klinik screen for managing a Dokter's
+  Penjadwalan (weekly Jadwal template + one-off Pengecualian Jadwal, story
+  #12/#13 on issue #1) actually look like? Three structurally different
+  layouts, switchable via ?variant=A|B|C using the floating bottom bar.
+
+  Assumption stated up front: the surrounding prompt ("buat prototype
+  management penjadwalan dokter") didn't say whether this should test logic
+  or UI. This repo is greenfield (no Angular/Spring app exists yet — see
+  CLAUDE.md / docs/prototypes), and the *logic* half of this exact question
+  (Jadwal + Pengecualian Jadwal + Jam Operasional intersection, and what
+  happens to a confirmed Appointment orphaned by an edit) was already built
+  and validated as docs/prototypes/jadwal-dokter.prototype.html, which fed
+  directly into ADR-0018. That model is reused here as-is (see
+  ScheduleModel below) rather than re-litigated. What's still open is the
+  UI question — "what should the admin's screen for this look like" — so
+  this prototype answers that instead, per the "page/component -> UI
+  branch" default in .claude/skills/prototype/SKILL.md.
+
+  Variant A — "Kalender Efektif": a month calendar is the primary object;
+  click a day to see/edit that date's Pengecualian in a side drawer. Good
+  for "what's happening around this date" thinking (a cuti request, a
+  holiday).
+  Variant B — "Grid Mingguan + Daftar": the recurring weekly template is
+  the primary object, rendered as an hour x day grid, with Pengecualian as
+  a secondary list alongside it. Good for "what does a normal week look
+  like" thinking.
+  Variant C — "Roster + Tabel Padat": a dokter roster sidebar for jumping
+  between doctors fast, a dense per-day table that puts Jam Operasional
+  and Jadwal side by side, and a distinct bulk "Ajukan Cuti (rentang
+  tanggal)" control for multi-day leave. Denser, power-user oriented.
+
+  All three read/write the same in-memory ScheduleModel state, including
+  the ADR-0018 conflict flow (edit orphans a confirmed Appointment -> held
+  pending -> admin sees affected Appointments and must force-with-reason,
+  or is refused outright if the patient already arrived) — presented
+  differently per variant (side drawer / inline banner / bottom sheet) to
+  see which presentation reads best, not to re-test whether the rule
+  itself is right.
+
+  No backend, no persistence — state lives in memory and resets on reload.
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  .switcher-btn { transition: transform 0.1s ease; }
+  .switcher-btn:active { transform: scale(0.92); }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-28">
+
+<div class="bg-slate-900 text-amber-300 text-center text-[11px] font-semibold uppercase tracking-wider py-1">
+  PROTOTYPE — bukan untuk produksi &middot; tiga tampilan halaman "Penjadwalan Dokter"
+</div>
+
+<div id="variant-root"></div>
+
+<!-- Riwayat aksi: kecil, bisa dilipat, supaya jelas apa yang berubah setiap ada aksi -->
+<div id="log-strip" class="fixed left-3 bottom-24 z-40 w-80 max-w-[calc(100vw-1.5rem)]">
+  <button id="log-toggle" class="w-full text-left text-[11px] font-semibold text-slate-500 bg-white/90 border border-slate-200 rounded-t-lg px-3 py-1.5 shadow-sm">
+    Riwayat aksi ▾
+  </button>
+  <div id="log-body" class="hidden bg-slate-900 text-slate-200 text-[11px] font-mono rounded-b-lg shadow-lg max-h-40 overflow-y-auto px-3 py-2"></div>
+</div>
+
+<!-- Floating variant switcher, per .claude/skills/prototype/UI.md -->
+<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50">
+  <div class="flex items-center gap-2 bg-slate-900 text-white rounded-full shadow-xl px-2 py-2">
+    <button id="switcher-prev" class="switcher-btn w-8 h-8 rounded-full bg-slate-700 hover:bg-slate-600 flex items-center justify-center">←</button>
+    <div id="switcher-label" class="text-sm font-semibold px-2 min-w-[220px] text-center"></div>
+    <button id="switcher-next" class="switcher-btn w-8 h-8 rounded-full bg-slate-700 hover:bg-slate-600 flex items-center justify-center">→</button>
+  </div>
+</div>
+
+<script id="schedule-model">
+/* ---- LOGIC MURNI (dipakai ulang dari docs/prototypes/jadwal-dokter.prototype.html / ADR-0018) ----
+   Tidak ada DOM di sini. Ini bagian yang sudah tervalidasi; prototype ini
+   TIDAK menguji ulang model ini, hanya menguji tampilannya. */
+const ScheduleModel = (() => {
+  const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const HARI_TAMPIL = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+  const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
+  function menit(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
+  function hhmm(t) { const h = Math.floor(t / 60).toString().padStart(2, '0'); const m = (t % 60).toString().padStart(2, '0'); return `${h}:${m}`; }
+
+  function keTanggalISOLokal(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  function nextWeekday(targetDay, fromISO) {
+    const d = fromISO ? new Date(fromISO + 'T00:00:00') : new Date();
+    const diff = (targetDay - d.getDay() + 7) % 7 || 7;
+    d.setDate(d.getDate() + diff);
+    return keTanggalISOLokal(d);
+  }
+  function addDays(iso, n) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return keTanggalISOLokal(d);
+  }
+  function hariDariTanggal(iso) {
+    return HARI[new Date(iso + 'T00:00:00').getDay()];
+  }
+  function formatTanggalIndo(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return `${HARI[d.getDay()]}, ${d.getDate()} ${BULAN[d.getMonth()]} ${d.getFullYear()}`;
+  }
+  function bulanKe(monthStr, delta) {
+    const [y, m] = monthStr.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  function labelBulan(monthStr) {
+    const [y, m] = monthStr.split('-').map(Number);
+    return `${BULAN[m - 1]} ${y}`;
+  }
+  function selDalamBulan(monthStr) {
+    const [y, m] = monthStr.split('-').map(Number);
+    const first = new Date(y, m - 1, 1);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const offset = (first.getDay() + 6) % 7; // Monday-start
+    const cells = [];
+    for (let i = 0; i < offset; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    return cells;
+  }
+
+  function jendelaEfektif(state, dokterId, tanggalISO) {
+    const hari = hariDariTanggal(tanggalISO);
+    const jamOp = state.jamOperasional[hari];
+    const pengecualian = (state.pengecualian[dokterId] || []).find(p => p.tanggal === tanggalISO);
+
+    if (pengecualian && pengecualian.tipe === 'cuti') {
+      return { jendela: [], alasanKosong: 'Dokter cuti (Pengecualian Jadwal) pada tanggal ini.' };
+    }
+    if (!jamOp) {
+      return { jendela: [], alasanKosong: `Klinik tutup pada hari ${hari} (Jam Operasional).` };
+    }
+    let mentah;
+    if (pengecualian && pengecualian.tipe === 'jam_khusus') {
+      mentah = [{ mulai: pengecualian.mulai, selesai: pengecualian.selesai }];
+    } else {
+      mentah = (state.jadwal[dokterId] || []).filter(b => b.hari === hari).map(b => ({ mulai: b.mulai, selesai: b.selesai }));
+    }
+    const jendela = mentah
+      .map(w => ({
+        mulai: hhmm(Math.max(menit(w.mulai), menit(jamOp.buka))),
+        selesai: hhmm(Math.min(menit(w.selesai), menit(jamOp.tutup))),
+      }))
+      .filter(w => menit(w.mulai) < menit(w.selesai));
+    if (jendela.length === 0) {
+      return { jendela: [], alasanKosong: 'Tidak ada jam dokter yang tumpang tindih dengan jam operasional klinik pada tanggal ini.' };
+    }
+    return { jendela, alasanKosong: null };
+  }
+
+  function waktuMasihTersedia(state, dokterId, tanggalISO, mulai, selesai) {
+    const { jendela } = jendelaEfektif(state, dokterId, tanggalISO);
+    return jendela.some(w => menit(w.mulai) <= menit(mulai) && menit(selesai) <= menit(w.selesai));
+  }
+
+  function cariAppointmentBentrok(stateBaru, stateLama, dokterId) {
+    return (stateLama.appointments[dokterId] || []).filter(
+      a => a.status === 'confirmed' && !waktuMasihTersedia(stateBaru, dokterId, a.tanggal, a.mulai, a.selesai)
+    );
+  }
+
+  return {
+    HARI, HARI_TAMPIL, menit, hhmm, keTanggalISOLokal, nextWeekday, addDays,
+    hariDariTanggal, formatTanggalIndo, bulanKe, labelBulan, selDalamBulan,
+    jendelaEfektif, waktuMasihTersedia, cariAppointmentBentrok,
+  };
+})();
+</script>
+
+<script>
+/* ---- Halaman (throwaway): seed data, reducer, dan tiga render variant ---- */
+const { HARI, HARI_TAMPIL, menit, hhmm, addDays, nextWeekday, hariDariTanggal, formatTanggalIndo, bulanKe, labelBulan, selDalamBulan, jendelaEfektif, cariAppointmentBentrok } = ScheduleModel;
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const TGL_SENIN = nextWeekday(1);
+const TGL_SELASA = nextWeekday(2);
+const TGL_RABU = nextWeekday(3);
+const TGL_JUMAT = nextWeekday(5);
+
+function seedAwal() {
+  return {
+    dokter: [
+      { id: 'd1', nama: 'dr. Amelia Putri', spesialisasi: 'Umum' },
+      { id: 'd2', nama: 'dr. Bagus Santoso', spesialisasi: 'Gigi' },
+      { id: 'd3', nama: 'dr. Citra Dewi', spesialisasi: 'Fisioterapi' },
+    ],
+    jamOperasional: {
+      Senin: { buka: '08:00', tutup: '17:00' }, Selasa: { buka: '08:00', tutup: '17:00' },
+      Rabu: { buka: '08:00', tutup: '17:00' }, Kamis: { buka: '08:00', tutup: '17:00' },
+      Jumat: { buka: '08:00', tutup: '17:00' }, Sabtu: { buka: '08:00', tutup: '12:00' }, Minggu: null,
+    },
+    jadwal: {
+      d1: [
+        { id: 'j1', hari: 'Senin', mulai: '08:00', selesai: '12:00' },
+        { id: 'j2', hari: 'Senin', mulai: '13:00', selesai: '16:00' },
+        { id: 'j3', hari: 'Rabu', mulai: '08:00', selesai: '12:00' },
+        { id: 'j4', hari: 'Jumat', mulai: '08:00', selesai: '12:00' },
+      ],
+      d2: [
+        { id: 'j5', hari: 'Selasa', mulai: '09:00', selesai: '15:00' },
+        { id: 'j6', hari: 'Kamis', mulai: '09:00', selesai: '15:00' },
+      ],
+      d3: [
+        { id: 'j7', hari: 'Senin', mulai: '13:00', selesai: '17:00' },
+        { id: 'j8', hari: 'Rabu', mulai: '13:00', selesai: '17:00' },
+        { id: 'j9', hari: 'Jumat', mulai: '13:00', selesai: '17:00' },
+      ],
+    },
+    pengecualian: { d1: [], d2: [], d3: [] },
+    appointments: {
+      d1: [
+        { id: 'a1', tanggal: TGL_SENIN, mulai: '09:00', selesai: '09:30', pasien: 'Budi Santoso', status: 'confirmed', visitStatus: 'belum-tiba' },
+        { id: 'a2', tanggal: TGL_RABU, mulai: '09:00', selesai: '09:30', pasien: 'Sari Amalia', status: 'confirmed', visitStatus: 'menunggu' },
+      ],
+      d2: [
+        { id: 'a3', tanggal: TGL_SELASA, mulai: '10:00', selesai: '10:30', pasien: 'Joko Prasetyo', status: 'confirmed', visitStatus: 'belum-tiba' },
+      ],
+      d3: [
+        { id: 'a4', tanggal: TGL_JUMAT, mulai: '14:00', selesai: '14:30', pasien: 'Nina Kartika', status: 'confirmed', visitStatus: 'belum-tiba' },
+      ],
+    },
+    selectedDokter: 'd1',
+    pendingKonflik: null,
+    log: [{ level: 'info', text: 'Kondisi awal dimuat: 3 dokter, masing-masing dengan jadwal rutin dan beberapa appointment terkonfirmasi.' }],
+  };
+}
+
+function withLog(state, level, text) {
+  return { ...state, log: [...state.log, { level, text }] };
+}
+
+function terapkanDenganCekKonflik(state, dokterId, aksiLabel, buatStateHipotesis, action) {
+  const { paksa, alasan } = action;
+  const hipotesis = buatStateHipotesis(state);
+  const konflik = cariAppointmentBentrok(hipotesis, state, dokterId);
+  const terblokir = konflik.filter(a => a.visitStatus !== 'belum-tiba');
+
+  if (terblokir.length > 0) {
+    return withLog(
+      { ...state, pendingKonflik: { dokterId, aksiLabel, appointments: konflik, blocked: true, rawAction: action } },
+      'error',
+      `✗ "${aksiLabel}" ditolak total — pasien sudah tiba (${terblokir.map(a => `${a.pasien}: ${a.visitStatus}`).join(', ')}). Ubah lewat back-office tidak masuk akal lagi, tangani langsung di klinik.`
+    );
+  }
+  if (konflik.length > 0 && !paksa) {
+    return withLog(
+      { ...state, pendingKonflik: { dokterId, aksiLabel, appointments: konflik, blocked: false, rawAction: action } },
+      'warn',
+      `⚠️ "${aksiLabel}" ditunda — ${konflik.length} appointment akan kehilangan slotnya. Menunggu keputusan admin.`
+    );
+  }
+  if (konflik.length > 0 && paksa && !(alasan || '').trim()) {
+    return { ...state, pendingKonflik: { dokterId, aksiLabel, appointments: konflik, blocked: false, rawAction: action } };
+  }
+  let hasil = hipotesis;
+  if (konflik.length > 0) {
+    const idSet = new Set(konflik.map(a => a.id));
+    hasil = { ...hipotesis, appointments: { ...hipotesis.appointments, [dokterId]: hipotesis.appointments[dokterId].map(a => idSet.has(a.id) ? { ...a, status: 'perlu_dijadwal_ulang' } : a) } };
+  }
+  return withLog(
+    { ...hasil, pendingKonflik: null },
+    'info',
+    konflik.length > 0
+      ? `✓ ${aksiLabel}. ${konflik.length} appointment ditandai "perlu dijadwal ulang" (tidak dihapus diam-diam) — alasan: "${alasan.trim()}".`
+      : `✓ ${aksiLabel}`
+  );
+}
+
+function reduce(state, action) {
+  switch (action.type) {
+    case 'SELECT_DOKTER':
+      uiA.drawer = null; uiA.weeklyModalOpen = false;
+      return { ...state, selectedDokter: action.dokterId, pendingKonflik: null };
+
+    case 'TAMBAH_BLOK': {
+      const { dokterId, hari, mulai, selesai } = action;
+      if (menit(mulai) >= menit(selesai)) return withLog(state, 'error', `Blok ${hari} ${mulai}–${selesai} ditolak: jam mulai harus sebelum jam selesai.`);
+      const existing = state.jadwal[dokterId] || [];
+      const tumpang = existing.find(b => b.hari === hari && menit(b.mulai) < menit(selesai) && menit(mulai) < menit(b.selesai));
+      if (tumpang) return withLog(state, 'error', `Blok ${hari} ${mulai}–${selesai} ditolak: tumpang tindih dengan blok yang sudah ada (${tumpang.mulai}–${tumpang.selesai}).`);
+      const blok = { id: 'j' + Math.random().toString(36).slice(2, 8), hari, mulai, selesai };
+      return withLog({ ...state, jadwal: { ...state.jadwal, [dokterId]: [...existing, blok] } }, 'info', `Blok jadwal ditambahkan: ${hari} ${mulai}–${selesai}.`);
+    }
+
+    case 'HAPUS_BLOK': {
+      const { dokterId, blokId } = action;
+      const blok = (state.jadwal[dokterId] || []).find(b => b.id === blokId);
+      if (!blok) return state;
+      return terapkanDenganCekKonflik(state, dokterId, `Hapus blok jadwal ${blok.hari} ${blok.mulai}–${blok.selesai}`,
+        s => ({ ...s, jadwal: { ...s.jadwal, [dokterId]: s.jadwal[dokterId].filter(b => b.id !== blokId) } }), action);
+    }
+
+    case 'TAMBAH_PENGECUALIAN': {
+      const { dokterId, tanggal, tipe, mulai, selesai } = action;
+      const existing = state.pengecualian[dokterId] || [];
+      if (existing.some(p => p.tanggal === tanggal)) return withLog(state, 'error', `Pengecualian untuk ${tanggal} ditolak: sudah ada pengecualian pada tanggal ini.`);
+      if (tipe === 'jam_khusus' && menit(mulai) >= menit(selesai)) return withLog(state, 'error', 'Pengecualian jam khusus ditolak: jam mulai harus sebelum jam selesai.');
+      const label = tipe === 'cuti' ? `Tambah cuti ${tanggal}` : `Tambah jam khusus ${tanggal} (${mulai}–${selesai})`;
+      return terapkanDenganCekKonflik(state, dokterId, label,
+        s => ({ ...s, pengecualian: { ...s.pengecualian, [dokterId]: [...(s.pengecualian[dokterId] || []), { id: 'p' + Math.random().toString(36).slice(2, 8), tanggal, tipe, mulai: tipe === 'jam_khusus' ? mulai : null, selesai: tipe === 'jam_khusus' ? selesai : null }] } }), action);
+    }
+
+    case 'HAPUS_PENGECUALIAN': {
+      const { dokterId, id } = action;
+      const p = (state.pengecualian[dokterId] || []).find(x => x.id === id);
+      if (!p) return state;
+      return terapkanDenganCekKonflik(state, dokterId, `Hapus pengecualian ${p.tanggal}`,
+        s => ({ ...s, pengecualian: { ...s.pengecualian, [dokterId]: s.pengecualian[dokterId].filter(x => x.id !== id) } }), action);
+    }
+
+    case 'TAMBAH_CUTI_RENTANG': {
+      const { dokterId, dari, sampai } = action;
+      if (!dari || !sampai) return withLog(state, 'error', 'Tanggal mulai dan selesai cuti wajib diisi.');
+      if (dari > sampai) return withLog(state, 'error', 'Tanggal mulai cuti harus sebelum atau sama dengan tanggal selesai.');
+      const list = [];
+      for (let cur = dari; cur <= sampai; cur = addDays(cur, 1)) { list.push(cur); if (list.length > 31) break; }
+      if (list.length > 31) return withLog(state, 'error', 'Rentang cuti maksimum 31 hari untuk prototype ini.');
+      const existing = state.pengecualian[dokterId] || [];
+      const dilewati = list.filter(t => existing.some(p => p.tanggal === t));
+      const label = `Ajukan cuti ${dari} s/d ${sampai} (${list.length} hari${dilewati.length ? `, ${dilewati.length} tanggal dilewati karena sudah ada pengecualian` : ''})`;
+      return terapkanDenganCekKonflik(state, dokterId, label,
+        s => ({
+          ...s,
+          pengecualian: {
+            ...s.pengecualian,
+            [dokterId]: [
+              ...existing,
+              ...list.filter(t => !existing.some(p => p.tanggal === t)).map(t => ({ id: 'p' + Math.random().toString(36).slice(2, 8), tanggal: t, tipe: 'cuti', mulai: null, selesai: null })),
+            ],
+          },
+        }), action);
+    }
+
+    case 'LANJUTKAN_PAKSA': {
+      if (!state.pendingKonflik) return state;
+      return reduce(state, { ...state.pendingKonflik.rawAction, paksa: true, alasan: action.alasan });
+    }
+
+    case 'BATALKAN_KONFLIK':
+      return withLog({ ...state, pendingKonflik: null }, 'info', '↩ Perubahan dibatalkan oleh admin, tidak ada appointment yang terdampak.');
+
+    case 'TANDAI_TIBA_DEMO': {
+      const { dokterId, apptId } = action;
+      const appt = (state.appointments[dokterId] || []).find(a => a.id === apptId);
+      if (!appt) return state;
+      return withLog(
+        { ...state, appointments: { ...state.appointments, [dokterId]: state.appointments[dokterId].map(a => a.id === apptId ? { ...a, visitStatus: 'menunggu' } : a) } },
+        'info', `(demo) ${appt.pasien} ditandai sudah tiba di klinik — coba edit jadwal yang mengenai slot ini sekarang.`
+      );
+    }
+
+    default:
+      return state;
+  }
+}
+
+let state = seedAwal();
+let uiA = { month: TGL_SENIN.slice(0, 7), drawer: null, weeklyModalOpen: false };
+
+function dispatch(action) {
+  state = reduce(state, action);
+  render();
+}
+
+// ---------- shared helpers ----------
+
+function dokterById(id) { return state.dokter.find(d => d.id === id); }
+
+function badgeStatus(status) {
+  return status === 'confirmed'
+    ? '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">confirmed</span>'
+    : '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">perlu dijadwal ulang</span>';
+}
+function badgeVisit(vs) {
+  const map = { 'belum-tiba': 'bg-slate-100 text-slate-600', 'menunggu': 'bg-sky-100 text-sky-700', 'sedang-dilayani': 'bg-indigo-100 text-indigo-700', 'selesai': 'bg-slate-200 text-slate-500' };
+  return `<span class="text-[11px] font-medium px-2 py-0.5 rounded-full ${map[vs] || 'bg-slate-100 text-slate-600'}">${vs}</span>`;
+}
+function wireTandaiTiba(root, dokterId) {
+  root.querySelectorAll('[data-tandai-tiba]').forEach(btn => {
+    btn.onclick = () => dispatch({ type: 'TANDAI_TIBA_DEMO', dokterId, apptId: btn.getAttribute('data-tandai-tiba') });
+  });
+}
+function daftarAppointmentDokter(dokterId) {
+  return [...(state.appointments[dokterId] || [])].sort((a, b) => (a.tanggal + a.mulai).localeCompare(b.tanggal + b.mulai));
+}
+
+// =====================================================================
+// VARIANT A — Kalender Efektif
+// =====================================================================
+function renderVariantA(root) {
+  const dokterId = state.selectedDokter;
+  const dokter = dokterById(dokterId);
+  const cells = selDalamBulan(uiA.month);
+  const konflikAktif = state.pendingKonflik && state.pendingKonflik.dokterId === dokterId ? state.pendingKonflik : null;
+  // Konflik dari HAPUS_BLOK berasal dari modal jadwal rutin (bukan tanggal tertentu di kalender),
+  // jadi ditampilkan di modal itu, bukan di drawer tanggal — drawer tersembunyi di belakang modal saat modal terbuka.
+  const konflikWeekly = konflikAktif && konflikAktif.rawAction.type === 'HAPUS_BLOK' ? konflikAktif : null;
+  const konflikDrawer = konflikAktif && !konflikWeekly ? konflikAktif : null;
+
+  function statusHari(iso) {
+    const { jendela, alasanKosong } = jendelaEfektif(state, dokterId, iso);
+    const p = (state.pengecualian[dokterId] || []).find(x => x.tanggal === iso);
+    const apptCount = (state.appointments[dokterId] || []).filter(a => a.tanggal === iso).length;
+    if (p && p.tipe === 'cuti') return { cls: 'bg-rose-50 border-rose-200 text-rose-700', label: 'Cuti', apptCount };
+    if (jendela.length === 0) return { cls: 'bg-slate-50 border-slate-200 text-slate-400', label: hariDariTanggal(iso) === 'Minggu' ? 'Tutup' : '—', apptCount };
+    if (p && p.tipe === 'jam_khusus') return { cls: 'bg-amber-50 border-amber-200 text-amber-700', label: jendela.map(w => `${w.mulai}–${w.selesai}`).join(', '), apptCount };
+    return { cls: 'bg-emerald-50 border-emerald-200 text-emerald-700', label: jendela.map(w => `${w.mulai}–${w.selesai}`).join(', '), apptCount };
+  }
+
+  root.innerHTML = `
+  <div class="max-w-6xl mx-auto px-6 py-6 flex gap-6">
+    <div class="flex-1">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h1 class="text-xl font-bold text-slate-900">Penjadwalan Dokter</h1>
+          <p class="text-sm text-slate-500">Variant A — Kalender Efektif</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select id="a-dokter" class="text-sm border border-slate-300 rounded-lg px-3 py-2 bg-white">
+            ${state.dokter.map(d => `<option value="${d.id}" ${d.id === dokterId ? 'selected' : ''}>${escapeHtml(d.nama)} — ${escapeHtml(d.spesialisasi)}</option>`).join('')}
+          </select>
+          <button id="a-weekly-btn" class="text-sm font-semibold px-3 py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50">Atur Jadwal Rutin</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+        <div class="flex items-center justify-between mb-3">
+          <button id="a-prev-month" class="w-8 h-8 rounded-lg border border-slate-200 hover:bg-slate-50">‹</button>
+          <div class="font-semibold text-slate-700">${labelBulan(uiA.month)}</div>
+          <button id="a-next-month" class="w-8 h-8 rounded-lg border border-slate-200 hover:bg-slate-50">›</button>
+        </div>
+        <div class="grid grid-cols-7 gap-1.5 text-center text-[11px] font-semibold text-slate-400 mb-1">
+          ${HARI_TAMPIL.map(h => `<div>${h.slice(0, 3)}</div>`).join('')}
+        </div>
+        <div class="grid grid-cols-7 gap-1.5">
+          ${cells.map(iso => {
+            if (!iso) return `<div></div>`;
+            const s = statusHari(iso);
+            const isSelected = uiA.drawer === iso;
+            return `<button data-day="${iso}" class="text-left rounded-lg border ${s.cls} px-2 py-2 h-20 flex flex-col justify-between hover:shadow-md transition ${isSelected ? 'ring-2 ring-teal-500' : ''}">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold">${iso.slice(-2)}</span>
+                ${s.apptCount ? `<span class="text-[10px] bg-white/70 rounded-full px-1.5">${s.apptCount}</span>` : ''}
+              </div>
+              <div class="text-[10.5px] leading-tight">${s.label}</div>
+            </button>`;
+          }).join('')}
+        </div>
+        <div class="flex gap-4 mt-3 text-[11px] text-slate-500">
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-200"></span> Jadwal rutin</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-amber-200"></span> Jam khusus</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-rose-200"></span> Cuti</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-slate-200"></span> Tidak praktik / tutup</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="a-drawer" class="w-96 shrink-0"></div>
+  </div>
+
+  <div id="a-weekly-modal"></div>
+  `;
+
+  document.getElementById('a-dokter').onchange = e => dispatch({ type: 'SELECT_DOKTER', dokterId: e.target.value });
+  document.getElementById('a-prev-month').onclick = () => { uiA.month = bulanKe(uiA.month, -1); render(); };
+  document.getElementById('a-next-month').onclick = () => { uiA.month = bulanKe(uiA.month, 1); render(); };
+  document.getElementById('a-weekly-btn').onclick = () => {
+    if (konflikDrawer) state = { ...state, pendingKonflik: null };
+    uiA.weeklyModalOpen = true; render();
+  };
+  root.querySelectorAll('[data-day]').forEach(btn => {
+    btn.onclick = () => {
+      if (konflikDrawer) state = { ...state, pendingKonflik: null };
+      uiA.drawer = btn.getAttribute('data-day'); render();
+    };
+  });
+
+  renderDrawerA(document.getElementById('a-drawer'), dokterId, konflikDrawer);
+  if (uiA.weeklyModalOpen) renderWeeklyModalA(document.getElementById('a-weekly-modal'), dokterId, konflikWeekly);
+}
+
+function renderDrawerA(el, dokterId, konflik) {
+  if (!uiA.drawer) {
+    el.innerHTML = `<div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 text-sm text-slate-400 h-full flex items-center justify-center text-center">Klik salah satu tanggal di kalender untuk melihat atau mengubah Pengecualian Jadwal pada tanggal itu.</div>`;
+    return;
+  }
+  const iso = uiA.drawer;
+  const { jendela, alasanKosong } = jendelaEfektif(state, dokterId, iso);
+  const p = (state.pengecualian[dokterId] || []).find(x => x.tanggal === iso);
+  const appts = (state.appointments[dokterId] || []).filter(a => a.tanggal === iso);
+
+  let konflikHtml = '';
+  if (konflik) {
+    if (konflik.blocked) {
+      konflikHtml = `<div class="bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-700 mb-4">
+        <div class="font-semibold mb-1">Ditolak total</div>
+        Pasien berikut sudah tiba di klinik, perubahan tidak bisa dipaksakan:
+        <ul class="list-disc ml-4 mt-1">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} (${a.visitStatus})</li>`).join('')}</ul>
+        <button id="a-dismiss-konflik" class="mt-2 text-xs font-semibold underline">Tutup</button>
+      </div>`;
+    } else {
+      konflikHtml = `<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 mb-4">
+        <div class="font-semibold mb-1">Perubahan ini akan memengaruhi appointment terkonfirmasi</div>
+        <ul class="list-disc ml-4 mb-2">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}–${a.selesai}</li>`).join('')}</ul>
+        <label class="block text-xs font-medium mb-1">Alasan (wajib, untuk audit log)</label>
+        <input id="a-alasan" class="w-full border border-amber-300 rounded-lg px-2 py-1.5 text-sm mb-2" placeholder="mis. dokter cuti mendadak, sudah dikonfirmasi via telepon">
+        <div class="flex gap-2">
+          <button id="a-batal-konflik" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300">Batalkan</button>
+          <button id="a-paksa-konflik" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white">Tetap lanjutkan &amp; tandai "perlu dijadwal ulang"</button>
+        </div>
+      </div>`;
+    }
+  }
+
+  el.innerHTML = `
+  <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+    <div class="text-xs text-slate-400 mb-1">Detail tanggal</div>
+    <div class="font-bold text-slate-900 mb-3">${formatTanggalIndo(iso)}</div>
+
+    ${konflikHtml}
+
+    <div class="text-xs font-semibold text-slate-500 uppercase mb-1">Jam efektif</div>
+    <div class="text-sm mb-4 ${jendela.length ? 'text-slate-700' : 'text-slate-400 italic'}">
+      ${jendela.length ? jendela.map(w => `${w.mulai}–${w.selesai}`).join(', ') : alasanKosong}
+    </div>
+
+    <div class="text-xs font-semibold text-slate-500 uppercase mb-1">Appointment tanggal ini</div>
+    ${appts.length === 0 ? '<div class="text-sm text-slate-400 italic mb-4">Tidak ada.</div>' : `
+      <div class="space-y-1.5 mb-4">
+        ${appts.map(a => `<div class="flex items-center justify-between text-sm border border-slate-100 rounded-lg px-2.5 py-1.5">
+          <div>
+            <div class="font-medium text-slate-700">${escapeHtml(a.pasien)} <span class="text-slate-400">${a.mulai}–${a.selesai}</span></div>
+            <div class="flex gap-1 mt-0.5">${badgeStatus(a.status)}${badgeVisit(a.visitStatus)}</div>
+          </div>
+          ${a.visitStatus === 'belum-tiba' ? `<button data-tandai-tiba="${a.id}" class="text-[10px] text-slate-400 underline shrink-0">tandai tiba (demo)</button>` : ''}
+        </div>`).join('')}
+      </div>`}
+
+    <div class="text-xs font-semibold text-slate-500 uppercase mb-1">Pengecualian Jadwal</div>
+    ${p ? `
+      <div class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-sm">
+        <span>${p.tipe === 'cuti' ? 'Cuti sehari' : `Jam khusus ${p.mulai}–${p.selesai}`}</span>
+        <button id="a-hapus-pengecualian" class="text-xs font-semibold text-rose-600">Hapus</button>
+      </div>` : `
+      <div class="space-y-2">
+        <select id="a-p-tipe" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+          <option value="cuti">Cuti (libur sehari)</option>
+          <option value="jam_khusus">Jam khusus</option>
+        </select>
+        <div id="a-p-jam" class="flex gap-2">
+          <input type="time" id="a-p-mulai" value="08:00" class="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+          <input type="time" id="a-p-selesai" value="12:00" class="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+        </div>
+        <button id="a-tambah-pengecualian" class="w-full text-sm font-semibold py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700">+ Tambah pengecualian</button>
+      </div>`}
+  </div>`;
+
+  wireTandaiTiba(el, dokterId);
+  if (konflik) {
+    if (konflik.blocked) {
+      document.getElementById('a-dismiss-konflik').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+    } else {
+      document.getElementById('a-batal-konflik').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+      document.getElementById('a-paksa-konflik').onclick = () => dispatch({ type: 'LANJUTKAN_PAKSA', alasan: document.getElementById('a-alasan').value });
+    }
+  }
+  if (p) {
+    document.getElementById('a-hapus-pengecualian').onclick = () => dispatch({ type: 'HAPUS_PENGECUALIAN', dokterId, id: p.id });
+  } else if (document.getElementById('a-p-tipe')) {
+    const tipeSel = document.getElementById('a-p-tipe');
+    tipeSel.onchange = () => { document.getElementById('a-p-jam').style.display = tipeSel.value === 'jam_khusus' ? 'flex' : 'none'; };
+    tipeSel.onchange();
+    document.getElementById('a-tambah-pengecualian').onclick = () => {
+      const tipe = tipeSel.value;
+      dispatch({ type: 'TAMBAH_PENGECUALIAN', dokterId, tanggal: iso, tipe, mulai: document.getElementById('a-p-mulai').value, selesai: document.getElementById('a-p-selesai').value });
+    };
+  }
+}
+
+function renderWeeklyModalA(el, dokterId, konflik) {
+  const blocks = state.jadwal[dokterId] || [];
+
+  let konflikHtml = '';
+  if (konflik) {
+    if (konflik.blocked) {
+      konflikHtml = `<div class="bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-700 mb-4">
+        <div class="font-semibold mb-1">Ditolak total</div>
+        Pasien berikut sudah tiba di klinik, perubahan tidak bisa dipaksakan:
+        <ul class="list-disc ml-4 mt-1">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} (${a.visitStatus})</li>`).join('')}</ul>
+        <button id="a-weekly-dismiss-konflik" class="mt-2 text-xs font-semibold underline">Tutup</button>
+      </div>`;
+    } else {
+      konflikHtml = `<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 mb-4">
+        <div class="font-semibold mb-1">Perubahan ini akan memengaruhi appointment terkonfirmasi</div>
+        <ul class="list-disc ml-4 mb-2">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}–${a.selesai}</li>`).join('')}</ul>
+        <label class="block text-xs font-medium mb-1">Alasan (wajib, untuk audit log)</label>
+        <input id="a-weekly-alasan" class="w-full border border-amber-300 rounded-lg px-2 py-1.5 text-sm mb-2" placeholder="mis. dokter cuti mendadak, sudah dikonfirmasi via telepon">
+        <div class="flex gap-2">
+          <button id="a-weekly-batal-konflik" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300">Batalkan</button>
+          <button id="a-weekly-paksa-konflik" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white">Tetap lanjutkan &amp; tandai "perlu dijadwal ulang"</button>
+        </div>
+      </div>`;
+    }
+  }
+
+  el.innerHTML = `
+  <div class="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-bold text-slate-900">Jadwal Rutin Mingguan — ${escapeHtml(dokterById(dokterId).nama)}</h2>
+        <button id="a-close-weekly" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+      </div>
+      ${konflikHtml}
+      <div class="space-y-2 mb-4 max-h-64 overflow-y-auto">
+        ${HARI_TAMPIL.map(hari => {
+          const dayBlocks = blocks.filter(b => b.hari === hari);
+          return `<div class="flex items-start gap-3 border-b border-slate-100 pb-2">
+            <div class="w-20 text-sm font-semibold text-slate-600 pt-1">${hari}</div>
+            <div class="flex-1 flex flex-wrap gap-1.5">
+              ${dayBlocks.length === 0 ? '<span class="text-xs text-slate-400 italic pt-1">tidak praktik</span>' : dayBlocks.map(b => `
+                <span class="inline-flex items-center gap-1 text-xs bg-teal-50 text-teal-700 border border-teal-200 rounded-full px-2 py-1">
+                  ${b.mulai}–${b.selesai} <button data-hapus-blok="${b.id}" class="font-bold ml-0.5">&times;</button>
+                </span>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="flex gap-2 items-end bg-slate-50 rounded-xl p-3">
+        <div class="flex-1">
+          <label class="block text-[11px] text-slate-500 mb-1">Hari</label>
+          <select id="a-new-hari" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">${HARI_TAMPIL.map(h => `<option>${h}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="block text-[11px] text-slate-500 mb-1">Mulai</label>
+          <input type="time" id="a-new-mulai" value="08:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+        </div>
+        <div>
+          <label class="block text-[11px] text-slate-500 mb-1">Selesai</label>
+          <input type="time" id="a-new-selesai" value="12:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+        </div>
+        <button id="a-add-blok" class="text-sm font-semibold px-3 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700">+ Tambah</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('a-close-weekly').onclick = () => { uiA.weeklyModalOpen = false; render(); };
+  el.querySelectorAll('[data-hapus-blok]').forEach(btn => {
+    btn.onclick = () => dispatch({ type: 'HAPUS_BLOK', dokterId, blokId: btn.getAttribute('data-hapus-blok') });
+  });
+  document.getElementById('a-add-blok').onclick = () => {
+    dispatch({ type: 'TAMBAH_BLOK', dokterId, hari: document.getElementById('a-new-hari').value, mulai: document.getElementById('a-new-mulai').value, selesai: document.getElementById('a-new-selesai').value });
+  };
+  if (konflik) {
+    if (konflik.blocked) {
+      document.getElementById('a-weekly-dismiss-konflik').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+    } else {
+      document.getElementById('a-weekly-batal-konflik').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+      document.getElementById('a-weekly-paksa-konflik').onclick = () => dispatch({ type: 'LANJUTKAN_PAKSA', alasan: document.getElementById('a-weekly-alasan').value });
+    }
+  }
+}
+
+// =====================================================================
+// VARIANT B — Grid Mingguan + Daftar
+// =====================================================================
+function renderVariantB(root) {
+  const dokterId = state.selectedDokter;
+  const blocks = state.jadwal[dokterId] || [];
+  const pengecualian = [...(state.pengecualian[dokterId] || [])].sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+  const konflik = state.pendingKonflik && state.pendingKonflik.dokterId === dokterId ? state.pendingKonflik : null;
+  const jamMulaiGrid = 7, jamSelesaiGrid = 19;
+
+  function cellShaded(hari, jam) {
+    return blocks.some(b => b.hari === hari && menit(b.mulai) <= jam * 60 && jam * 60 < menit(b.selesai));
+  }
+
+  let konflikBanner = '';
+  if (konflik) {
+    if (konflik.blocked) {
+      konflikBanner = `<div class="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-4">
+        <div class="font-semibold text-rose-700 mb-1">✗ "${escapeHtml(konflik.aksiLabel)}" ditolak total</div>
+        <div class="text-sm text-rose-700 mb-2">Pasien berikut sudah tiba di klinik — perubahan lewat back-office tidak bisa dipaksakan:</div>
+        <ul class="list-disc ml-5 text-sm text-rose-700 mb-2">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}–${a.selesai} (${a.visitStatus})</li>`).join('')}</ul>
+        <button id="b-dismiss" class="text-xs font-semibold underline text-rose-700">Tutup</button>
+      </div>`;
+    } else {
+      konflikBanner = `<div class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4">
+        <div class="font-semibold text-amber-800 mb-1">⚠️ "${escapeHtml(konflik.aksiLabel)}" akan memengaruhi appointment terkonfirmasi</div>
+        <ul class="list-disc ml-5 text-sm text-amber-800 mb-2">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}–${a.selesai}</li>`).join('')}</ul>
+        <label class="block text-xs font-medium text-amber-800 mb-1">Alasan (wajib, untuk audit log)</label>
+        <input id="b-alasan" class="w-full border border-amber-300 rounded-lg px-2 py-1.5 text-sm mb-2" placeholder="mis. dokter cuti mendadak">
+        <div class="flex gap-2">
+          <button id="b-batal" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300 bg-white">Batalkan</button>
+          <button id="b-paksa" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white">Lanjutkan &amp; tandai "perlu dijadwal ulang"</button>
+        </div>
+      </div>`;
+    }
+  }
+
+  root.innerHTML = `
+  <div class="max-w-6xl mx-auto px-6 py-6">
+    <div class="mb-4">
+      <h1 class="text-xl font-bold text-slate-900">Penjadwalan Dokter</h1>
+      <p class="text-sm text-slate-500">Variant B — Grid Mingguan + Daftar</p>
+    </div>
+
+    <div class="flex gap-2 mb-4">
+      ${state.dokter.map(d => `<button data-dokter="${d.id}" class="text-sm font-semibold px-4 py-2 rounded-full border ${d.id === dokterId ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}">${escapeHtml(d.nama)}</button>`).join('')}
+    </div>
+
+    ${konflikBanner}
+
+    <div class="grid grid-cols-3 gap-5">
+      <div class="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+        <h3 class="text-sm font-bold text-slate-700 mb-3">Jadwal Rutin Mingguan</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[11px] border-collapse">
+            <thead><tr><th class="w-10"></th>${HARI_TAMPIL.map(h => `<th class="font-semibold text-slate-500 pb-1">${h.slice(0, 3)}</th>`).join('')}</tr></thead>
+            <tbody>
+              ${Array.from({ length: jamSelesaiGrid - jamMulaiGrid }, (_, i) => jamMulaiGrid + i).map(jam => `
+                <tr>
+                  <td class="text-slate-400 text-right pr-1 align-top">${String(jam).padStart(2, '0')}</td>
+                  ${HARI_TAMPIL.map(hari => `<td class="h-4 border border-slate-100 ${cellShaded(hari, jam) ? 'bg-teal-200' : 'bg-slate-50'}"></td>`).join('')}
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <h4 class="text-xs font-semibold text-slate-500 uppercase mt-4 mb-2">Blok jadwal</h4>
+        <div class="flex flex-wrap gap-1.5 mb-3">
+          ${blocks.length === 0 ? '<span class="text-xs text-slate-400 italic">Belum ada blok jadwal.</span>' : blocks.map(b => `
+            <span class="inline-flex items-center gap-1 text-xs bg-teal-50 text-teal-700 border border-teal-200 rounded-full px-2 py-1">
+              ${b.hari} ${b.mulai}–${b.selesai} <button data-hapus-blok="${b.id}" class="font-bold ml-0.5">&times;</button>
+            </span>`).join('')}
+        </div>
+        <div class="flex gap-2 items-end bg-slate-50 rounded-xl p-3">
+          <div class="flex-1"><label class="block text-[11px] text-slate-500 mb-1">Hari</label>
+            <select id="b-new-hari" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">${HARI_TAMPIL.map(h => `<option>${h}</option>`).join('')}</select></div>
+          <div><label class="block text-[11px] text-slate-500 mb-1">Mulai</label><input type="time" id="b-new-mulai" value="08:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
+          <div><label class="block text-[11px] text-slate-500 mb-1">Selesai</label><input type="time" id="b-new-selesai" value="12:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
+          <button id="b-add-blok" class="text-sm font-semibold px-3 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700">+ Tambah</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+        <h3 class="text-sm font-bold text-slate-700 mb-3">Pengecualian Jadwal</h3>
+        <div class="space-y-1.5 mb-3 max-h-40 overflow-y-auto">
+          ${pengecualian.length === 0 ? '<div class="text-xs text-slate-400 italic">Belum ada pengecualian.</div>' : pengecualian.map(p => `
+            <div class="flex items-center justify-between text-sm border border-slate-100 rounded-lg px-2.5 py-1.5">
+              <span>${p.tanggal} — ${p.tipe === 'cuti' ? 'Cuti' : `Jam khusus ${p.mulai}–${p.selesai}`}</span>
+              <button data-hapus-pengecualian="${p.id}" class="text-xs font-semibold text-rose-600">Hapus</button>
+            </div>`).join('')}
+        </div>
+        <div class="space-y-2 bg-slate-50 rounded-xl p-3">
+          <input type="date" id="b-p-tanggal" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+          <select id="b-p-tipe" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            <option value="cuti">Cuti (libur sehari)</option>
+            <option value="jam_khusus">Jam khusus</option>
+          </select>
+          <div id="b-p-jam" class="flex gap-2">
+            <input type="time" id="b-p-mulai" value="08:00" class="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+            <input type="time" id="b-p-selesai" value="12:00" class="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
+          </div>
+          <button id="b-add-pengecualian" class="w-full text-sm font-semibold py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700">+ Tambah pengecualian</button>
+        </div>
+
+        <h3 class="text-sm font-bold text-slate-700 mt-5 mb-2">Appointment mendatang</h3>
+        <div class="space-y-1.5 max-h-40 overflow-y-auto">
+          ${daftarAppointmentDokter(dokterId).map(a => `
+            <div class="text-sm border border-slate-100 rounded-lg px-2.5 py-1.5">
+              <div class="flex justify-between"><span class="font-medium">${escapeHtml(a.pasien)}</span><span class="text-slate-400">${a.tanggal}</span></div>
+              <div class="flex gap-1 mt-0.5 items-center justify-between">
+                <span class="text-slate-500">${a.mulai}–${a.selesai}</span>
+                <div class="flex gap-1">${badgeStatus(a.status)}${badgeVisit(a.visitStatus)}</div>
+              </div>
+              ${a.visitStatus === 'belum-tiba' ? `<button data-tandai-tiba="${a.id}" class="text-[10px] text-slate-400 underline mt-1">tandai tiba (demo)</button>` : ''}
+            </div>`).join('') || '<div class="text-xs text-slate-400 italic">Tidak ada.</div>'}
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  root.querySelectorAll('[data-dokter]').forEach(btn => { btn.onclick = () => dispatch({ type: 'SELECT_DOKTER', dokterId: btn.getAttribute('data-dokter') }); });
+  root.querySelectorAll('[data-hapus-blok]').forEach(btn => { btn.onclick = () => dispatch({ type: 'HAPUS_BLOK', dokterId, blokId: btn.getAttribute('data-hapus-blok') }); });
+  root.querySelectorAll('[data-hapus-pengecualian]').forEach(btn => { btn.onclick = () => dispatch({ type: 'HAPUS_PENGECUALIAN', dokterId, id: btn.getAttribute('data-hapus-pengecualian') }); });
+  wireTandaiTiba(root, dokterId);
+
+  document.getElementById('b-add-blok').onclick = () => {
+    dispatch({ type: 'TAMBAH_BLOK', dokterId, hari: document.getElementById('b-new-hari').value, mulai: document.getElementById('b-new-mulai').value, selesai: document.getElementById('b-new-selesai').value });
+  };
+  const bTipe = document.getElementById('b-p-tipe');
+  bTipe.onchange = () => { document.getElementById('b-p-jam').style.display = bTipe.value === 'jam_khusus' ? 'flex' : 'none'; };
+  bTipe.onchange();
+  document.getElementById('b-add-pengecualian').onclick = () => {
+    const tanggal = document.getElementById('b-p-tanggal').value;
+    if (!tanggal) return;
+    dispatch({ type: 'TAMBAH_PENGECUALIAN', dokterId, tanggal, tipe: bTipe.value, mulai: document.getElementById('b-p-mulai').value, selesai: document.getElementById('b-p-selesai').value });
+  };
+  if (konflik) {
+    if (konflik.blocked) document.getElementById('b-dismiss').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+    else {
+      document.getElementById('b-batal').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+      document.getElementById('b-paksa').onclick = () => dispatch({ type: 'LANJUTKAN_PAKSA', alasan: document.getElementById('b-alasan').value });
+    }
+  }
+}
+
+// =====================================================================
+// VARIANT C — Roster + Tabel Padat
+// =====================================================================
+function renderVariantC(root) {
+  const dokterId = state.selectedDokter;
+  const dokter = dokterById(dokterId);
+  const blocks = state.jadwal[dokterId] || [];
+  const pengecualian = [...(state.pengecualian[dokterId] || [])].sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+  const konflik = state.pendingKonflik && state.pendingKonflik.dokterId === dokterId ? state.pendingKonflik : null;
+
+  root.innerHTML = `
+  <div class="flex max-w-6xl mx-auto">
+    <div class="w-56 shrink-0 bg-white border-r border-slate-200 min-h-[calc(100vh-2rem)] py-4">
+      <div class="text-xs font-semibold text-slate-400 uppercase px-4 mb-2">Dokter</div>
+      ${state.dokter.map(d => {
+        const nPengecualian = (state.pengecualian[d.id] || []).length;
+        return `<button data-dokter="${d.id}" class="w-full text-left px-4 py-3 flex items-center gap-2.5 ${d.id === dokterId ? 'bg-teal-50 border-r-2 border-teal-600' : 'hover:bg-slate-50'}">
+          <div class="w-8 h-8 rounded-full bg-slate-200 text-slate-600 text-xs font-bold flex items-center justify-center shrink-0">${d.nama.replace('dr. ', '').slice(0, 1)}</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800 truncate">${escapeHtml(d.nama)}</div>
+            <div class="text-[11px] text-slate-400">${escapeHtml(d.spesialisasi)}${nPengecualian ? ` · ${nPengecualian} pengecualian` : ''}</div>
+          </div>
+        </button>`;
+      }).join('')}
+    </div>
+
+    <div class="flex-1 px-6 py-6">
+      <div class="mb-4">
+        <h1 class="text-xl font-bold text-slate-900">${escapeHtml(dokter.nama)}</h1>
+        <p class="text-sm text-slate-500">${escapeHtml(dokter.spesialisasi)} — Variant C — Roster + Tabel Padat</p>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-5">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-[11px] uppercase text-slate-500">
+            <tr><th class="text-left px-3 py-2">Hari</th><th class="text-left px-3 py-2">Jam Operasional Klinik</th><th class="text-left px-3 py-2">Jadwal Dokter</th></tr>
+          </thead>
+          <tbody>
+            ${HARI_TAMPIL.map(hari => {
+              const jo = state.jamOperasional[hari];
+              const dayBlocks = blocks.filter(b => b.hari === hari);
+              return `<tr class="border-t border-slate-100">
+                <td class="px-3 py-2 font-medium text-slate-600">${hari}</td>
+                <td class="px-3 py-2 text-slate-500">${jo ? `${jo.buka}–${jo.tutup}` : '<span class="text-rose-500">tutup</span>'}</td>
+                <td class="px-3 py-2">
+                  <div class="flex flex-wrap gap-1 items-center">
+                    ${dayBlocks.length === 0 ? '<span class="text-xs text-slate-400 italic">tidak praktik</span>' : dayBlocks.map(b => `
+                      <span class="inline-flex items-center gap-1 text-xs bg-teal-50 text-teal-700 border border-teal-200 rounded-full px-2 py-0.5">
+                        ${b.mulai}–${b.selesai} <button data-hapus-blok="${b.id}" class="font-bold ml-0.5">&times;</button>
+                      </span>`).join('')}
+                    <button data-quick-add="${hari}" class="text-xs text-teal-600 font-semibold ml-1">+ tambah</button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div id="c-quick-add-form" class="hidden bg-slate-50 border-t border-slate-200 p-3 flex gap-2 items-end">
+          <div class="flex-1"><label class="block text-[11px] text-slate-500 mb-1">Hari</label>
+            <select id="c-new-hari" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">${HARI_TAMPIL.map(h => `<option>${h}</option>`).join('')}</select></div>
+          <div><label class="block text-[11px] text-slate-500 mb-1">Mulai</label><input type="time" id="c-new-mulai" value="08:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
+          <div><label class="block text-[11px] text-slate-500 mb-1">Selesai</label><input type="time" id="c-new-selesai" value="12:00" class="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
+          <button id="c-add-blok" class="text-sm font-semibold px-3 py-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700">Simpan</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-5 mb-5">
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+          <h3 class="text-sm font-bold text-slate-700 mb-2">Pengecualian &amp; Cuti</h3>
+          <table class="w-full text-sm mb-3">
+            <tbody>
+              ${pengecualian.length === 0 ? '<tr><td class="text-xs text-slate-400 italic py-1">Belum ada pengecualian.</td></tr>' : pengecualian.map(p => `
+                <tr class="border-t border-slate-100">
+                  <td class="py-1.5">${p.tanggal}</td>
+                  <td class="py-1.5">${p.tipe === 'cuti' ? 'Cuti' : `Jam khusus ${p.mulai}–${p.selesai}`}</td>
+                  <td class="py-1.5 text-right"><button data-hapus-pengecualian="${p.id}" class="text-xs font-semibold text-rose-600">Hapus</button></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="bg-slate-50 rounded-xl p-3">
+            <div class="text-xs font-semibold text-slate-600 mb-2">Ajukan Cuti (rentang tanggal)</div>
+            <div class="flex gap-2 items-end">
+              <div class="flex-1"><label class="block text-[11px] text-slate-500 mb-1">Dari</label><input type="date" id="c-cuti-dari" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
+              <div class="flex-1"><label class="block text-[11px] text-slate-500 mb-1">Sampai</label><input type="date" id="c-cuti-sampai" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
+              <button id="c-add-cuti-rentang" class="text-sm font-semibold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700">Ajukan</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+          <h3 class="text-sm font-bold text-slate-700 mb-2">Appointment mendatang</h3>
+          <table class="w-full text-sm">
+            <thead class="text-[11px] uppercase text-slate-400"><tr><th class="text-left py-1">Tanggal</th><th class="text-left py-1">Jam</th><th class="text-left py-1">Pasien</th><th class="text-left py-1">Status</th><th></th></tr></thead>
+            <tbody>
+              ${daftarAppointmentDokter(dokterId).map(a => `
+                <tr class="border-t border-slate-100">
+                  <td class="py-1.5">${a.tanggal}</td>
+                  <td class="py-1.5">${a.mulai}–${a.selesai}</td>
+                  <td class="py-1.5">${escapeHtml(a.pasien)}</td>
+                  <td class="py-1.5">${badgeStatus(a.status)} ${badgeVisit(a.visitStatus)}</td>
+                  <td class="py-1.5 text-right">${a.visitStatus === 'belum-tiba' ? `<button data-tandai-tiba="${a.id}" class="text-[10px] text-slate-400 underline">tandai tiba</button>` : ''}</td>
+                </tr>`).join('') || '<tr><td class="text-xs text-slate-400 italic py-1">Tidak ada.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="c-konflik-sheet"></div>
+  `;
+
+  root.querySelectorAll('[data-dokter]').forEach(btn => { btn.onclick = () => dispatch({ type: 'SELECT_DOKTER', dokterId: btn.getAttribute('data-dokter') }); });
+  root.querySelectorAll('[data-hapus-blok]').forEach(btn => { btn.onclick = () => dispatch({ type: 'HAPUS_BLOK', dokterId, blokId: btn.getAttribute('data-hapus-blok') }); });
+  root.querySelectorAll('[data-hapus-pengecualian]').forEach(btn => { btn.onclick = () => dispatch({ type: 'HAPUS_PENGECUALIAN', dokterId, id: btn.getAttribute('data-hapus-pengecualian') }); });
+  wireTandaiTiba(root, dokterId);
+
+  root.querySelectorAll('[data-quick-add]').forEach(btn => {
+    btn.onclick = () => {
+      const form = document.getElementById('c-quick-add-form');
+      form.classList.remove('hidden');
+      document.getElementById('c-new-hari').value = btn.getAttribute('data-quick-add');
+    };
+  });
+  document.getElementById('c-add-blok').onclick = () => {
+    dispatch({ type: 'TAMBAH_BLOK', dokterId, hari: document.getElementById('c-new-hari').value, mulai: document.getElementById('c-new-mulai').value, selesai: document.getElementById('c-new-selesai').value });
+  };
+  document.getElementById('c-add-cuti-rentang').onclick = () => {
+    dispatch({ type: 'TAMBAH_CUTI_RENTANG', dokterId, dari: document.getElementById('c-cuti-dari').value, sampai: document.getElementById('c-cuti-sampai').value });
+  };
+
+  const sheet = document.getElementById('c-konflik-sheet');
+  if (konflik) {
+    if (konflik.blocked) {
+      sheet.innerHTML = `<div class="fixed bottom-24 left-1/2 -translate-x-1/2 w-[520px] max-w-[calc(100vw-2rem)] bg-white border border-rose-300 rounded-2xl shadow-2xl p-4 z-50">
+        <div class="font-semibold text-rose-700 mb-1">✗ "${escapeHtml(konflik.aksiLabel)}" ditolak total</div>
+        <div class="text-sm text-slate-600 mb-2">Pasien berikut sudah tiba di klinik — tidak bisa dipaksakan dari sini:</div>
+        <ul class="text-sm text-slate-700 list-disc ml-5 mb-3">${konflik.appointments.filter(a => a.visitStatus !== 'belum-tiba').map(a => `<li>${escapeHtml(a.pasien)} (${a.visitStatus})</li>`).join('')}</ul>
+        <button id="c-dismiss" class="text-xs font-semibold underline text-rose-700">Tutup</button>
+      </div>`;
+      document.getElementById('c-dismiss').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+    } else {
+      sheet.innerHTML = `<div class="fixed bottom-24 left-1/2 -translate-x-1/2 w-[520px] max-w-[calc(100vw-2rem)] bg-white border border-amber-300 rounded-2xl shadow-2xl p-4 z-50">
+        <div class="font-semibold text-amber-800 mb-1">⚠️ "${escapeHtml(konflik.aksiLabel)}" memengaruhi ${konflik.appointments.length} appointment</div>
+        <ul class="text-sm text-slate-700 list-disc ml-5 mb-2 max-h-24 overflow-y-auto">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}–${a.selesai}</li>`).join('')}</ul>
+        <label class="block text-xs font-medium text-slate-600 mb-1">Alasan (wajib, untuk audit log)</label>
+        <input id="c-alasan" class="w-full border border-amber-300 rounded-lg px-2 py-1.5 text-sm mb-2" placeholder="mis. dokter cuti mendadak">
+        <div class="flex gap-2">
+          <button id="c-batal" class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300">Batalkan</button>
+          <button id="c-paksa" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white">Lanjutkan &amp; tandai "perlu dijadwal ulang"</button>
+        </div>
+      </div>`;
+      document.getElementById('c-batal').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+      document.getElementById('c-paksa').onclick = () => dispatch({ type: 'LANJUTKAN_PAKSA', alasan: document.getElementById('c-alasan').value });
+    }
+  } else {
+    sheet.innerHTML = '';
+  }
+}
+
+// =====================================================================
+// Switcher + log + orchestration
+// =====================================================================
+const VARIANTS = [
+  { key: 'A', label: 'Kalender Efektif', render: renderVariantA },
+  { key: 'B', label: 'Grid Mingguan + Daftar', render: renderVariantB },
+  { key: 'C', label: 'Roster + Tabel Padat', render: renderVariantC },
+];
+
+function getVariantKey() {
+  const v = new URLSearchParams(location.search).get('variant');
+  return VARIANTS.some(x => x.key === v) ? v : 'A';
+}
+function setVariantKey(key) {
+  const url = new URL(location.href);
+  url.searchParams.set('variant', key);
+  history.replaceState(null, '', url);
+  render();
+}
+function cycleVariant(delta) {
+  const idx = VARIANTS.findIndex(v => v.key === getVariantKey());
+  const next = VARIANTS[(idx + delta + VARIANTS.length) % VARIANTS.length];
+  setVariantKey(next.key);
+}
+
+function renderSwitcher() {
+  const key = getVariantKey();
+  const v = VARIANTS.find(x => x.key === key);
+  document.getElementById('switcher-label').textContent = `${v.key} — ${v.label}`;
+}
+function renderLog() {
+  const body = document.getElementById('log-body');
+  body.innerHTML = state.log.slice(-30).map((l, i) => `<div>${String(i + 1).padStart(2, '0')} ${escapeHtml(l.text)}</div>`).join('');
+  body.scrollTop = body.scrollHeight;
+}
+
+function render() {
+  const key = getVariantKey();
+  const v = VARIANTS.find(x => x.key === key);
+  v.render(document.getElementById('variant-root'));
+  renderSwitcher();
+  renderLog();
+}
+
+document.getElementById('switcher-prev').onclick = () => cycleVariant(-1);
+document.getElementById('switcher-next').onclick = () => cycleVariant(1);
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycleVariant(-1);
+  if (e.key === 'ArrowRight') cycleVariant(1);
+});
+document.getElementById('log-toggle').onclick = () => {
+  const body = document.getElementById('log-body');
+  const collapsed = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  document.getElementById('log-toggle').textContent = `Riwayat aksi ${collapsed ? '▴' : '▾'}`;
+};
+
+render();
+</script>
+</body>
+</html>
