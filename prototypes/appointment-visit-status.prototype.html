@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>[PROTOTYPE] Visit Status × Appointment Status</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --panel: #ffffff;
+    --border: #e5e3df;
+    --text: #1c1b1a;
+    --muted: #6b6862;
+    --accent: #b45309;
+    --accent-soft: #fef3e2;
+    --ok: #15803d;
+    --ok-soft: #ecfdf3;
+    --bad: #b91c1c;
+    --bad-soft: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1.5rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .prototype-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid #f3d9ae;
+    border-radius: 999px;
+    padding: 0.2rem 0.7rem;
+    margin-bottom: 0.75rem;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+  .intro {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    color: #3a3833;
+  }
+  .intro strong { color: var(--text); }
+  section { margin-bottom: 2rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 0.75rem; color: #3a3833; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+  }
+  .state-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+  }
+  .badge-field { flex: 1; min-width: 220px; }
+  .badge-field .field-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+  }
+  .badge {
+    display: inline-block;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .badge.appt-confirmed { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+  .badge.appt-completed { background: var(--ok-soft); border-color: #bbf7d0; color: var(--ok); }
+  .badge.appt-no-show { background: var(--bad-soft); border-color: #fecaca; color: var(--bad); }
+  .badge.appt-cancelled { background: #f4f4f5; border-color: #d4d4d8; color: #52525b; }
+  .badge.appt-rescheduled { background: #fdf4ff; border-color: #f5d0fe; color: #a21caf; }
+
+  .kanban-strip {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .kanban-col {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.4rem;
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--muted);
+    background: #fbfbfa;
+  }
+  .kanban-col.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .kanban-col.frozen {
+    background: #f4f4f5;
+    color: #a1a1aa;
+    text-decoration: line-through;
+  }
+
+  .btn-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.6rem;
+  }
+  button {
+    font: inherit;
+    font-size: 0.88rem;
+    font-weight: 600;
+    padding: 0.65rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.1s, transform 0.05s;
+  }
+  button:hover { background: var(--accent-soft); border-color: #f3d9ae; }
+  button:active { transform: scale(0.98); }
+  button.danger:hover { background: var(--bad-soft); border-color: #fecaca; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:disabled:hover { background: white; border-color: var(--border); }
+
+  .tabs { display: flex; gap: 0.4rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .tab-btn {
+    background: #f4f4f5;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 0.45rem 0.9rem;
+  }
+  .tab-btn.selected { background: var(--accent); border-color: var(--accent); color: white; }
+  .scenario-desc {
+    background: #fbfbfa;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    color: #3a3833;
+  }
+  .step-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .step-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    text-align: left;
+    justify-content: flex-start;
+  }
+  .step-btn .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: white;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+  }
+  .step-btn.done { opacity: 0.45; }
+  .step-btn.done .step-num { background: var(--ok); }
+
+  .reset-row { margin-top: 1rem; }
+  .reset-row button { background: #f4f4f5; }
+
+  .log {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.4rem;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .log-entry {
+    border-radius: 8px;
+    padding: 0.55rem 0.8rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+  }
+  .log-entry.ok { background: var(--ok-soft); border-color: #bbf7d0; color: #14532d; }
+  .log-entry.bad { background: var(--bad-soft); border-color: #fecaca; color: #7f1d1d; }
+  .log-entry .log-action { font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="prototype-badge">Prototype — throwaway, jangan dipakai di production</span>
+  <h1>Visit Status × Appointment Status</h1>
+
+  <div class="intro">
+    <strong>Pertanyaan yang dijawab demo ini:</strong> ADR-0002 memisahkan <em>Appointment Status</em>
+    (confirmed / completed / no-show / cancelled / rescheduled) dari <em>Visit Status</em>
+    (belum tiba → telah tiba → menunggu → sedang dilayani → selesai). Apakah aturan transisinya
+    benar-benar masuk akal kalau didorong lewat kasus-kasus nyata — termasuk kasus yang jarang
+    dibahas seperti "pasien check-in lalu pergi tanpa dilayani", atau "coba pindahkan status pasien
+    yang appointment-nya sudah dibatalkan"? Klik tombol di bawah, atau jalankan skenario terpandu,
+    lalu lihat apakah ada transisi yang seharusnya boleh tapi ditolak, atau seharusnya ditolak tapi malah lolos.
+  </div>
+
+  <section>
+    <h2>Status Saat Ini</h2>
+    <div class="panel">
+      <div class="state-row">
+        <div class="badge-field">
+          <div class="field-label">Appointment Status</div>
+          <div id="appt-badge" class="badge">—</div>
+        </div>
+        <div class="badge-field">
+          <div class="field-label">Visit Status</div>
+          <div id="visit-badge" class="badge">—</div>
+        </div>
+      </div>
+      <div id="kanban-strip" class="kanban-strip"></div>
+      <div id="last-event" style="font-size: 0.85rem; color: var(--muted);"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Free-play — coba aksi apa saja, urutan apa saja</h2>
+    <div class="panel">
+      <div id="btn-grid" class="btn-grid"></div>
+      <div class="reset-row">
+        <button id="reset-btn">↺ Reset ke appointment baru (confirmed / belum tiba)</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Skenario Terpandu</h2>
+    <div class="tabs" id="tabs"></div>
+    <div class="panel">
+      <div class="scenario-desc" id="scenario-desc"></div>
+      <div class="step-list" id="step-list"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Log Kejadian</h2>
+    <div class="panel">
+      <div class="log" id="log"></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+// ============================================================================
+// PURE LOGIC MODULE — no DOM access below this line until the marker.
+// This is the part meant to be lifted into the real backend (e.g. an
+// AppointmentVisitStatusPolicy / state machine in the Appointment service).
+// ============================================================================
+
+const ACTIONS = {
+  CHECK_IN: 'CHECK_IN',
+  MOVE_TO_WAITING: 'MOVE_TO_WAITING',
+  START_SERVICE: 'START_SERVICE',
+  COMPLETE_SERVICE: 'COMPLETE_SERVICE',
+  MARK_NO_SHOW: 'MARK_NO_SHOW',
+  CANCEL: 'CANCEL',
+  RESCHEDULE: 'RESCHEDULE',
+};
+
+const VISIT_STATUS_LABEL = {
+  'belum-tiba': 'Belum Tiba',
+  'telah-tiba': 'Telah Tiba',
+  'menunggu': 'Menunggu',
+  'sedang-dilayani': 'Sedang Dilayani',
+  'selesai': 'Selesai',
+};
+
+const APPOINTMENT_STATUS_LABEL = {
+  'confirmed': 'Confirmed',
+  'completed': 'Completed',
+  'no-show': 'No-Show',
+  'cancelled': 'Cancelled',
+  'rescheduled': 'Rescheduled',
+};
+
+const VISIT_STATUS_ORDER = ['belum-tiba', 'telah-tiba', 'menunggu', 'sedang-dilayani', 'selesai'];
+
+const TERMINAL_APPOINTMENT_STATUSES = ['completed', 'no-show', 'cancelled', 'rescheduled'];
+
+function createInitialAppointment() {
+  return { appointmentStatus: 'confirmed', visitStatus: 'belum-tiba' };
+}
+
+function isTerminal(appointment) {
+  return TERMINAL_APPOINTMENT_STATUSES.includes(appointment.appointmentStatus);
+}
+
+function accept(nextAppointment, message) {
+  return { appointment: nextAppointment, ok: true, message };
+}
+
+function reject(appointment, message) {
+  return { appointment, ok: false, message };
+}
+
+/**
+ * Pure transition function: (appointment, action) => { appointment, ok, message }
+ * Encodes the ADR-0002 rules for how Visit Status and Appointment Status interact.
+ */
+function transition(appointment, action) {
+  if (action === ACTIONS.CHECK_IN) {
+    if (isTerminal(appointment)) {
+      return reject(appointment, `Tidak bisa check-in — appointment sudah berstatus akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}".`);
+    }
+    if (appointment.visitStatus !== 'belum-tiba') {
+      return reject(appointment, `Tidak bisa check-in — pasien sudah "${VISIT_STATUS_LABEL[appointment.visitStatus]}".`);
+    }
+    return accept({ ...appointment, visitStatus: 'telah-tiba' },
+      'Resepsionis check-in pasien: Belum Tiba → Telah Tiba.');
+  }
+
+  if (action === ACTIONS.MOVE_TO_WAITING) {
+    if (isTerminal(appointment)) {
+      return reject(appointment, `Tidak bisa lanjut — appointment sudah berstatus akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}".`);
+    }
+    if (appointment.visitStatus !== 'telah-tiba') {
+      return reject(appointment, `Hanya bisa pindah ke "Menunggu" dari "Telah Tiba" (posisi sekarang: "${VISIT_STATUS_LABEL[appointment.visitStatus]}").`);
+    }
+    return accept({ ...appointment, visitStatus: 'menunggu' },
+      'Staf Layanan pindahkan pasien: Telah Tiba → Menunggu.');
+  }
+
+  if (action === ACTIONS.START_SERVICE) {
+    if (isTerminal(appointment)) {
+      return reject(appointment, `Tidak bisa mulai layanan — appointment sudah berstatus akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}".`);
+    }
+    if (appointment.visitStatus !== 'menunggu') {
+      return reject(appointment, `Hanya bisa mulai layanan dari "Menunggu" (posisi sekarang: "${VISIT_STATUS_LABEL[appointment.visitStatus]}").`);
+    }
+    return accept({ ...appointment, visitStatus: 'sedang-dilayani' },
+      'Dokter/Staf Layanan mulai layani pasien: Menunggu → Sedang Dilayani.');
+  }
+
+  if (action === ACTIONS.COMPLETE_SERVICE) {
+    if (isTerminal(appointment)) {
+      return reject(appointment, `Tidak bisa selesaikan — appointment sudah berstatus akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}".`);
+    }
+    if (appointment.visitStatus !== 'sedang-dilayani') {
+      return reject(appointment, `Hanya bisa tandai "Selesai" dari "Sedang Dilayani" (posisi sekarang: "${VISIT_STATUS_LABEL[appointment.visitStatus]}").`);
+    }
+    return accept({ ...appointment, visitStatus: 'selesai', appointmentStatus: 'completed' },
+      'Staf tandai kunjungan selesai: Visit Status → Selesai, DAN Appointment Status otomatis → Completed (ADR-0002).');
+  }
+
+  if (action === ACTIONS.MARK_NO_SHOW) {
+    if (isTerminal(appointment)) {
+      return reject(appointment, `Tidak bisa tandai no-show — appointment sudah berstatus akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}".`);
+    }
+    if (appointment.visitStatus !== 'belum-tiba') {
+      return reject(appointment, `No-show hanya berlaku selama pasien belum check-in. Pasien ini sudah "${VISIT_STATUS_LABEL[appointment.visitStatus]}" — pakai "Cancel" kalau pasien datang lalu pergi.`);
+    }
+    return accept({ ...appointment, appointmentStatus: 'no-show' },
+      'Staf tandai no-show SECARA MANUAL — sistem tidak pernah menandai no-show otomatis (ADR-0002).');
+  }
+
+  if (action === ACTIONS.CANCEL) {
+    if (isTerminal(appointment)) {
+      return reject(appointment, `Tidak bisa cancel — appointment sudah berstatus akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}".`);
+    }
+    if (['sedang-dilayani', 'selesai'].includes(appointment.visitStatus)) {
+      return reject(appointment, `Tidak bisa cancel — layanan sudah "${VISIT_STATUS_LABEL[appointment.visitStatus]}".`);
+    }
+    return accept({ ...appointment, appointmentStatus: 'cancelled' },
+      'Appointment dibatalkan. (Catatan: ini legal walau pasien sudah "Telah Tiba"/"Menunggu" — kasus pasien datang lalu pergi sebelum dilayani.)');
+  }
+
+  if (action === ACTIONS.RESCHEDULE) {
+    if (isTerminal(appointment)) {
+      return reject(appointment, `Tidak bisa reschedule — appointment sudah berstatus akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}".`);
+    }
+    if (appointment.visitStatus !== 'belum-tiba') {
+      return reject(appointment, `Reschedule hanya bisa sebelum pasien tiba di klinik (posisi sekarang: "${VISIT_STATUS_LABEL[appointment.visitStatus]}").`);
+    }
+    return accept({ ...appointment, appointmentStatus: 'rescheduled' },
+      'Appointment ini ditandai "Rescheduled". Appointment BARU dibuat mereferensikan appointment ini (ADR-0003) — tidak disimulasikan di demo ini.');
+  }
+
+  return reject(appointment, `Aksi tidak dikenal: ${action}`);
+}
+
+function legalActions(appointment) {
+  return Object.values(ACTIONS).filter(a => transition(appointment, a).ok);
+}
+
+// ============================================================================
+// END PURE LOGIC MODULE
+// Everything below is throwaway page wiring: DOM, buttons, walkthroughs.
+// ============================================================================
+
+const ACTION_LABEL = {
+  CHECK_IN: 'Check-In (tiba di klinik)',
+  MOVE_TO_WAITING: 'Pindah ke Menunggu',
+  START_SERVICE: 'Mulai Dilayani',
+  COMPLETE_SERVICE: 'Tandai Selesai',
+  MARK_NO_SHOW: 'Tandai No-Show',
+  CANCEL: 'Cancel Appointment',
+  RESCHEDULE: 'Reschedule',
+};
+
+let appointment = createInitialAppointment();
+let eventLog = [];
+let activeWalkthrough = null;
+let walkthroughStepIndex = 0;
+
+function dispatch(action) {
+  const result = transition(appointment, action);
+  appointment = result.appointment;
+  eventLog.push({ action, ok: result.ok, message: result.message });
+  render();
+  return result.ok;
+}
+
+function resetAppointment() {
+  appointment = createInitialAppointment();
+  eventLog.push({ action: null, ok: true, message: 'Direset ke appointment baru: Confirmed / Belum Tiba.' });
+  activeWalkthrough = null;
+  walkthroughStepIndex = 0;
+  render();
+}
+
+function renderStatePanel() {
+  const apptBadge = document.getElementById('appt-badge');
+  apptBadge.textContent = APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus];
+  apptBadge.className = 'badge appt-' + appointment.appointmentStatus;
+
+  const visitBadge = document.getElementById('visit-badge');
+  visitBadge.textContent = VISIT_STATUS_LABEL[appointment.visitStatus];
+  visitBadge.className = 'badge';
+
+  const strip = document.getElementById('kanban-strip');
+  strip.innerHTML = '';
+  const frozen = isTerminal(appointment);
+  VISIT_STATUS_ORDER.forEach(vs => {
+    const col = document.createElement('div');
+    col.className = 'kanban-col';
+    if (vs === appointment.visitStatus) {
+      col.className += frozen ? ' frozen' : ' active';
+    }
+    col.textContent = VISIT_STATUS_LABEL[vs];
+    strip.appendChild(col);
+  });
+
+  const lastEvent = document.getElementById('last-event');
+  if (frozen) {
+    lastEvent.textContent = `Appointment berhenti di status akhir "${APPOINTMENT_STATUS_LABEL[appointment.appointmentStatus]}" — Visit Status dibekukan di "${VISIT_STATUS_LABEL[appointment.visitStatus]}".`;
+  } else {
+    lastEvent.textContent = '';
+  }
+}
+
+function renderButtonGrid() {
+  const grid = document.getElementById('btn-grid');
+  grid.innerHTML = '';
+  const legal = new Set(legalActions(appointment));
+  Object.values(ACTIONS).forEach(action => {
+    const btn = document.createElement('button');
+    btn.textContent = ACTION_LABEL[action];
+    if (action === ACTIONS.CANCEL || action === ACTIONS.MARK_NO_SHOW) btn.classList.add('danger');
+    btn.disabled = !legal.has(action);
+    btn.title = legal.has(action) ? '' : 'Tidak legal dari state saat ini — klik untuk lihat kenapa.';
+    btn.addEventListener('click', () => dispatch(action));
+    grid.appendChild(btn);
+  });
+}
+
+function renderLog() {
+  const log = document.getElementById('log');
+  log.innerHTML = '';
+  eventLog.forEach(entry => {
+    const div = document.createElement('div');
+    div.className = 'log-entry ' + (entry.ok ? 'ok' : 'bad');
+    const actionPart = entry.action ? `<span class="log-action">[${entry.ok ? 'OK' : 'DITOLAK'} · ${ACTION_LABEL[entry.action]}]</span> ` : '';
+    div.innerHTML = actionPart + entry.message;
+    log.appendChild(div);
+  });
+  log.scrollTop = 0;
+}
+
+// --- Guided walkthroughs -----------------------------------------------
+
+const SCENARIOS = [
+  {
+    id: 'happy-path',
+    title: 'Alur Normal',
+    description: 'Pasien datang tepat waktu dan semuanya berjalan mulus, sampai Appointment Status otomatis jadi "Completed".',
+    steps: [ACTIONS.CHECK_IN, ACTIONS.MOVE_TO_WAITING, ACTIONS.START_SERVICE, ACTIONS.COMPLETE_SERVICE],
+  },
+  {
+    id: 'no-show',
+    title: 'Pasien Tidak Datang',
+    description: 'Pasien tidak pernah check-in. Staf menunggu lewat jam appointment, lalu menandai no-show secara manual — sistem tidak pernah melakukan ini otomatis.',
+    steps: [ACTIONS.MARK_NO_SHOW],
+  },
+  {
+    id: 'arrive-then-leave',
+    title: 'Pasien Datang Lalu Pergi',
+    description: 'Kasus yang gampang terlewat di kertas: pasien sudah check-in (bahkan sudah masuk antrian menunggu), tapi lalu pergi sebelum dilayani. Ini BUKAN no-show (dia sempat datang) — cancel tetap harus bisa dilakukan dari sini.',
+    steps: [ACTIONS.CHECK_IN, ACTIONS.MOVE_TO_WAITING, ACTIONS.CANCEL],
+  },
+  {
+    id: 'illegal-attempts',
+    title: 'Percobaan yang Seharusnya Ditolak',
+    description: 'Setelah pasien check-in, coba beberapa aksi yang seharusnya tidak boleh terjadi: reschedule sesudah tiba, no-show sesudah tiba, dan lompat langsung ke "Selesai" tanpa lewat "Sedang Dilayani". Perhatikan log — semua harus DITOLAK dengan alasan yang jelas.',
+    steps: [ACTIONS.CHECK_IN, ACTIONS.RESCHEDULE, ACTIONS.MARK_NO_SHOW, ACTIONS.COMPLETE_SERVICE],
+  },
+  {
+    id: 'reschedule-before-arrival',
+    title: 'Reschedule Sebelum Datang',
+    description: 'Pasien telepon minta ganti jadwal sebelum hari-H. Appointment ini dibekukan sebagai "Rescheduled"; appointment baru (di luar demo ini) akan dibuat mereferensikan appointment ini.',
+    steps: [ACTIONS.RESCHEDULE],
+  },
+];
+
+function renderTabs() {
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = '';
+  SCENARIOS.forEach(scenario => {
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn' + (activeWalkthrough === scenario.id ? ' selected' : '');
+    btn.textContent = scenario.title;
+    btn.addEventListener('click', () => {
+      activeWalkthrough = scenario.id;
+      walkthroughStepIndex = 0;
+      resetAppointmentSilently();
+      render();
+    });
+    tabs.appendChild(btn);
+  });
+}
+
+function resetAppointmentSilently() {
+  appointment = createInitialAppointment();
+  eventLog.push({ action: null, ok: true, message: `Skenario "${SCENARIOS.find(s => s.id === activeWalkthrough).title}" dimulai dari appointment baru (Confirmed / Belum Tiba).` });
+}
+
+function renderScenarioPanel() {
+  const descEl = document.getElementById('scenario-desc');
+  const stepsEl = document.getElementById('step-list');
+  stepsEl.innerHTML = '';
+
+  if (!activeWalkthrough) {
+    descEl.textContent = 'Pilih salah satu tab skenario di atas untuk memulai walkthrough terpandu.';
+    return;
+  }
+
+  const scenario = SCENARIOS.find(s => s.id === activeWalkthrough);
+  descEl.textContent = scenario.description;
+
+  scenario.steps.forEach((action, index) => {
+    const btn = document.createElement('button');
+    btn.className = 'step-btn' + (index < walkthroughStepIndex ? ' done' : '');
+    btn.innerHTML = `<span class="step-num">${index + 1}</span> ${ACTION_LABEL[action]}`;
+    btn.disabled = index !== walkthroughStepIndex;
+    btn.addEventListener('click', () => {
+      dispatch(action);
+      walkthroughStepIndex++;
+      render();
+    });
+    stepsEl.appendChild(btn);
+  });
+}
+
+function render() {
+  renderStatePanel();
+  renderButtonGrid();
+  renderTabs();
+  renderScenarioPanel();
+  renderLog();
+}
+
+document.getElementById('reset-btn').addEventListener('click', () => {
+  activeWalkthrough = null;
+  walkthroughStepIndex = 0;
+  resetAppointment();
+});
+
+// initial render
+eventLog.push({ action: null, ok: true, message: 'Appointment baru dibuat: Confirmed / Belum Tiba.' });
+render();
+</script>
+</body>
+</html>

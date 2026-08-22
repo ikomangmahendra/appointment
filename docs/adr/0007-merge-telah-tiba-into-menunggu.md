@@ -1,0 +1,5 @@
+# Merge `telah tiba` into `menunggu`; Visit Status has four stages, not five
+
+The kanban prototype (`prototypes/kanban-visit-status.prototype.html`) modeled Visit Status with a distinct `telah tiba` stage between `belum tiba` and `menunggu`, with patients resting there and accruing wait time before a separate move into `menunggu`. On review, this stage was rejected: for this clinic's workflow, arrival and being queued are the same actionable moment from staff's perspective — there's no separate staff action, decision point, or meaningfully distinct duration that justifies a limbo state between "arrived" and "waiting to be served." Resepsionis's Check-In now writes Visit Status directly to `menunggu`; Visit Status is `belum tiba` → `menunggu` → `sedang dilayani` → `selesai`.
+
+This amends [ADR 0002](0002-appointment-status-vs-visit-status.md), which had recorded the five-stage version. The prototype's dummy data (patients shown resting in `telah tiba`) does not reflect this corrected model and should not be used as a reference for that part of the board's behavior.
