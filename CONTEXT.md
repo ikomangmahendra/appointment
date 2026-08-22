@@ -77,10 +77,49 @@ Changing an Appointment's time by marking the original Appointment `rescheduled`
 ### Visit Tracking
 
 **Visit Status**:
-The real-time stage of a Patient's presence at the Klinik on the day of their Appointment: `belum tiba` → `telah tiba` → `menunggu` → `sedang dilayani` → `selesai`. Distinct from Appointment Status.
+The real-time stage of a Patient's presence at the Klinik on the day of their Appointment: `belum tiba` → `menunggu` → `sedang dilayani` → `selesai`. Distinct from Appointment Status. (An earlier design considered a `telah tiba` stage between `belum tiba` and `menunggu`; see [ADR 0007](docs/adr/0007-merge-telah-tiba-into-menunggu.md) for why it was merged away.)
 
 **Check-In**:
-A Resepsionis marking a Patient's Visit Status as `telah tiba` on arrival at the Klinik.
+A Patient's Visit Status being marked as `menunggu` on arrival at the Klinik — either manually by a Resepsionis, or by the Patient themselves via **Self Check-In** at a Kios. See [ADR 0012](docs/adr/0012-self-check-in-via-kios.md).
+
+**Self Check-In**:
+A Patient performing their own Check-In by scanning their Kode Check-In at a Kios, with no Resepsionis involved. Writes Visit Status directly to `menunggu` — the same single-step transition a Resepsionis's Check-In performs, so [ADR 0007](docs/adr/0007-merge-telah-tiba-into-menunggu.md)'s reasoning still holds; Self Check-In is a second way to trigger that transition, not a new stage. Only available when the Appointment needs no exception handling (e.g. nothing has changed since booking) — anything else is routed to a Resepsionis instead. Assumes the Appointment already exists: a Patient without one (walk-in) must be registered by a Resepsionis first, since a Kios never creates an Appointment. A Kode Check-In identifies exactly one Appointment — a Patient with two Appointments the same day has two separate codes and scans once per Appointment, mirroring the Visit Status Board's one-card-per-Appointment rule. Valid any time within the Klinik's Jam Operasional that day, with no "too early" cutoff, matching a Resepsionis's own unrestricted timing. If the Appointment is no longer eligible (already resolved away by Tutup Layanan, or already past `menunggu`), the Kios shows an error and directs the Patient to a Resepsionis — it never reverts or overrides Visit Status itself.
+_Avoid_: Kiosk Check-In (Kios is the device; Self Check-In is the act)
+
+**Kode Check-In**:
+A QR code generated for an Appointment at the moment it's created, used to perform Self Check-In. Delivered via WhatsApp (extending the Deep Link delivery channel) when the Appointment's Booking Source is `phone`, or shown in Akun Pasien when Booking Source is `online`.
+
+**Kios**:
+A self-service device at a Klinik where a Patient scans their Kode Check-In to perform Self Check-In. Bound to exactly one Klinik. Confirms a scan by showing the Patient's name for the Patient to confirm — no further identity input is required. On success, shows the Patient's name, the Layanan they're checked in for, and an estimated Waktu Tunggu — nothing is printed or sent elsewhere; it's a live screen, not a ticket.
+
+**Kanal Check-In**:
+Which path performed a given Check-In: `resepsionis` or `kios` (Self Check-In). Recorded on the Appointment for audit and board display only — it doesn't change [ADR 0009](docs/adr/0009-visit-status-revert-requires-dokter-pin.md): reverting a Check-In is always a Resepsionis action, regardless of which Kanal Check-In performed it.
+
+**Visit Status Board**:
+The kanban view of an Appointment's Visit Status, scoped to the viewing staff's own Klinik and its current operating day (per Jam Operasional). One card represents one Appointment, not one Patient — a Patient with two Appointments the same day appears as two independent cards. `cancelled` and `rescheduled` Appointments never appear on the board; an Appointment marked `no-show` is removed from it immediately. A Resepsionis sees one combined board across all of the Klinik's Layanan; a Staf Layanan sees only the board for their own Layanan. Each Layanan's board header shows: the Layanan's name, its on-duty Staf Layanan (one assigned per shift, not per-Appointment), the Dokter(s) currently on duty for that Layanan today, and the Klinik's current local date/time with its timezone label (WIB/WITA/WIT).
+_Avoid_: Papan Pasien, Patient board (the board tracks Appointments, not Patients — a Patient can appear more than once)
+
+**Durasi Layanan**:
+The elapsed time since an Appointment entered `sedang dilayani`, stopping once it reaches `selesai`. Shown per card, in that column only — unlike Waktu Tunggu, it is not part of the Visit Status Board's KPI bar.
+
+**Kapasitas Dokter**:
+A Dokter may have at most one Appointment in `sedang dilayani` at any moment — a Dokter is a person, not a queue slot. Checked across the whole Klinik, not just one Layanan, since a Dokter could in principle serve more than one Layanan the same day. "Mulai Layani" is blocked for any other Appointment booked with a Dokter who is already serving someone else. A booked Dokter who isn't actually on duty (sick, covered by a substitute) is a known gap — reassigning an Appointment to a different Dokter isn't supported yet.
+
+**Interval Pembaruan Papan**:
+A per-Klinik setting controlling how often the Visit Status Board polls for updates. Configured by Admin Klinik; defaults to 15 seconds, bounded to 5–60 seconds.
+
+**Target Waktu Tunggu**:
+A per-Klinik setting for the wait considered reasonable before a `menunggu` card is flagged (shown in red). Configured by Admin Klinik; a fixed target, not the board's live-computed average — comparing against the live average would make the flag move whenever the average did, regardless of whether that patient's own wait changed.
+
+**Pembatalan Visit Status**:
+A single-step revert of an Appointment's Visit Status to the immediately previous stage. Reverting among the Dokter-owned stages (`menunggu` ↔ `sedang dilayani` ↔ `selesai`) requires the assigned Dokter's PIN, entered on the acting Staf Layanan's screen. Reverting a Check-In (`menunggu` → `belum tiba`) is a Resepsionis action and needs no Dokter involvement — it corrects a front-desk entry, not a clinical record.
+
+**Tutup Layanan**:
+An end-of-day action performed by a Layanan's own Staf Layanan, closing that Layanan's queue for the day. Refuses to run while any Appointment in that Layanan is still `sedang dilayani` (must first be moved to `selesai` or reverted). On success, sets Appointment Status to `no-show` for any Appointment still `belum tiba`, and to `cancelled` for any Appointment still `menunggu` — removing both from the Visit Status Board. The Klinik-wide daily board reset only happens once every Layanan at that Klinik has run Tutup Layanan.
+
+**Waktu Tunggu**:
+The duration since an Appointment's Check-In (i.e. since it entered `menunggu`), frozen the moment Visit Status reaches `sedang dilayani`. Drives both the per-card wait display and the Visit Status Board's average-wait KPI.
+_Avoid_: Wait time counted through service — it measures pre-service waiting only.
 
 ### Patient Identity & Data
 

@@ -1,0 +1,246 @@
+<!--
+  PROTOTYPE — throwaway. Not wired to any backend, no persistence, no build step.
+  Question was: "What should the Kios Self Check-In screen look like — happy path plus the
+  two error cases — for an unattended device?"
+
+  History: three structurally different variants were tried (A - Kartu Tunggal, a single
+  centred card; B - Panel Split, a persistent branding panel beside a dynamic content panel;
+  C - Full-Bleed Warna, full-screen colour-by-state with edge-to-edge tap zones). Variant A
+  won and now has Klinik branding (logo placeholder + address) added on top of it; B and C
+  have been deleted — this file only contains the chosen shape.
+
+  Scope is the three states the grill-with-docs session settled (see CONTEXT.md's
+  Self Check-In / Kode Check-In / Kios / Kanal Check-In entries and docs/adr/0012):
+    - idle:              Kios waiting for a scan.
+    - confirm/success:   happy path — scan shows the Patient's name for them to confirm,
+                          then writes Visit Status to `menunggu` directly (no new stage,
+                          ADR 0007 still holds) and shows Layanan + estimated Waktu Tunggu.
+                          No ticket number, nothing printed — it's a live screen, not a document.
+    - error (resolved):  the Appointment was already resolved away (Tutup Layanan already ran,
+                          or it was rescheduled) — Kios shows an error and points to a
+                          Resepsionis. It never mutates Visit Status itself.
+    - error (already):   the Appointment is already past `menunggu` (sedang dilayani/selesai —
+                          e.g. scanned twice, or a Resepsionis already checked them in
+                          manually) — same rule: error screen, no mutation.
+
+  There's no real QR scanner here, so the top strip ("PROTOTYPE — Simulasi Scan") stands in
+  for a scan event and lets you pick which of the three outcomes to preview. That strip is
+  not part of the design being evaluated — only the phone-shaped frame below it is the actual
+  Kios screen. The logo is a plain CSS placeholder mark, not the Klinik's real artwork.
+
+  Run: open this file directly in a browser (no server needed).
+-->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Prototype: Kios Self Check-In</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #dfe3ea;
+    color: #1c1f26;
+  }
+
+  /* ---------- prototype-only simulation strip (not part of the Kios design) ---------- */
+  .proto-bar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: repeating-linear-gradient(135deg, #111 0 14px, #000 14px 28px);
+    color: #fde68a;
+    padding: 10px 16px;
+    font-size: 12px;
+  }
+  .proto-bar .proto-label { font-weight: 700; letter-spacing: .03em; margin-right: 4px; }
+  .proto-bar button {
+    font-size: 12px; padding: 6px 10px; border-radius: 6px; border: 1px solid #4b5563;
+    background: #1f2937; color: #f9fafb; cursor: pointer; font-weight: 600;
+  }
+  .proto-bar button:hover { background: #374151; }
+  .proto-bar button.reset { margin-left: auto; border-color: #fde68a; color: #fde68a; background: transparent; }
+
+  /* ---------- stage holding the simulated device ---------- */
+  .stage { display: flex; justify-content: center; padding: 40px 20px; }
+  .kiosk-frame {
+    width: 380px;
+    height: 700px;
+    border-radius: 32px;
+    overflow: hidden;
+    position: relative;
+    background: #000;
+    border: 10px solid #0b0d12;
+    box-shadow: 0 24px 60px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.04) inset;
+  }
+  .kiosk-frame > div { width: 100%; height: 100%; }
+
+  /* =========================================================================
+     Kartu Tunggal — the winning shape
+     ========================================================================= */
+  .vA-root {
+    background: linear-gradient(160deg, #0f172a, #1e293b);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .vA-card {
+    background: #fff; border-radius: 20px; padding: 24px 22px; width: 100%;
+    text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,.25);
+  }
+
+  /* Klinik branding header — logo placeholder + name + address, shown on every state */
+  .vA-brand {
+    display: flex; align-items: center; gap: 10px; text-align: left;
+    padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid #f1f5f9;
+  }
+  .vA-logo {
+    flex: 0 0 40px; width: 40px; height: 40px; border-radius: 50%; background: #2563eb;
+    color: #fff; font-weight: 800; font-size: 20px; display: flex; align-items: center; justify-content: center;
+  }
+  .vA-brand-text { min-width: 0; }
+  .vA-klinik-name { font-size: 13px; font-weight: 700; line-height: 1.3; }
+  .vA-klinik-address { font-size: 11px; color: #6b7280; line-height: 1.3; }
+
+  .vA-qr-icon {
+    width: 84px; height: 84px; margin: 0 auto 16px; border-radius: 14px;
+    border: 3px dashed #cbd5e1; display: flex; align-items: center; justify-content: center;
+    font-size: 34px; color: #94a3b8;
+  }
+  .vA-card h2 { font-size: 19px; margin: 0 0 8px; }
+  .vA-card p { font-size: 13px; color: #6b7280; line-height: 1.5; margin: 0 0 4px; }
+  .vA-avatar {
+    width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 50%; background: #2563eb;
+    color: #fff; font-weight: 700; font-size: 22px; display: flex; align-items: center; justify-content: center;
+  }
+  .vA-info { margin: 16px 0; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+  .vA-info div { display: flex; justify-content: space-between; font-size: 13px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; }
+  .vA-info span { color: #6b7280; }
+  .vA-actions { display: flex; gap: 10px; margin-top: 18px; }
+  .vA-btn { flex: 1; padding: 12px; border-radius: 12px; font-size: 14px; font-weight: 700; border: none; cursor: pointer; }
+  .vA-btn.primary { background: #2563eb; color: #fff; }
+  .vA-btn.secondary { background: #f1f5f9; color: #334155; }
+  .vA-check {
+    width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 50%; background: #059669;
+    color: #fff; font-size: 30px; display: flex; align-items: center; justify-content: center;
+  }
+  .vA-warn {
+    width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 50%; background: #b3261e;
+    color: #fff; font-size: 30px; font-weight: 800; display: flex; align-items: center; justify-content: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-bar">
+  <span class="proto-label">PROTOTYPE — Simulasi Scan</span>
+  <button onclick="simulateScan('happy')">✅ Scan berhasil</button>
+  <button onclick="simulateScan('resolved')">🚫 Scan: sudah ditutup / reschedule</button>
+  <button onclick="simulateScan('already')">🔁 Scan: sudah check-in / dilayani</button>
+  <button class="reset" onclick="backToIdle()">↺ Reset ke Idle</button>
+</div>
+
+<div class="stage">
+  <div class="kiosk-frame" id="kiosk-frame"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Mock data — reuses "Made Wirawan" (Konsultasi Gizi / dr. Sari) from
+// prototypes/kanban-visit-status.prototype.html for continuity.
+// ---------------------------------------------------------------------------
+const MOCK = {
+  patientName: 'Made Wirawan',
+  initials: 'MW',
+  layanan: 'Konsultasi Gizi',
+  dokter: 'dr. Sari',
+  waitEstimateMin: 12,
+  klinikName: 'Klinik Sehat Bersama',
+  klinikAddress: 'Jl. Merdeka No. 45, Denpasar, Bali',
+};
+
+// state: 'idle' | 'confirm' | 'success' | 'error_resolved' | 'error_already'
+let currentState = 'idle';
+
+function simulateScan(scenario) {
+  if (scenario === 'happy') currentState = 'confirm';
+  else if (scenario === 'resolved') currentState = 'error_resolved';
+  else if (scenario === 'already') currentState = 'error_already';
+  render();
+}
+window.confirmYes = function () { currentState = 'success'; render(); };
+window.confirmNo = function () { currentState = 'idle'; render(); };
+window.backToIdle = function () { currentState = 'idle'; render(); };
+window.simulateScan = simulateScan;
+
+// ---------------------------------------------------------------------------
+// Klinik branding header — logo placeholder + name + address, on every state.
+// Swap the "+" mark and these two fields for the Klinik's real logo/address
+// when this leaves prototype status.
+// ---------------------------------------------------------------------------
+function brandHtml() {
+  return `
+    <div class="vA-brand">
+      <div class="vA-logo" aria-hidden="true">+</div>
+      <div class="vA-brand-text">
+        <div class="vA-klinik-name">${MOCK.klinikName}</div>
+        <div class="vA-klinik-address">${MOCK.klinikAddress}</div>
+      </div>
+    </div>`;
+}
+
+function renderCard(state) {
+  let body = '';
+  if (state === 'idle') {
+    body = `
+      <div class="vA-qr-icon">▢</div>
+      <h2>Pindai Kode Check-In Anda</h2>
+      <p>Tunjukkan QR code dari WhatsApp atau Akun Pasien ke pemindai di bawah layar ini.</p>`;
+  } else if (state === 'confirm') {
+    body = `
+      <div class="vA-avatar">${MOCK.initials}</div>
+      <h2>${MOCK.patientName}</h2>
+      <p>Apakah ini Anda?</p>
+      <div class="vA-info">
+        <div><span>Layanan</span><b>${MOCK.layanan}</b></div>
+        <div><span>Estimasi Tunggu</span><b>~${MOCK.waitEstimateMin} menit</b></div>
+      </div>
+      <div class="vA-actions">
+        <button class="vA-btn secondary" onclick="confirmNo()">Bukan Saya</button>
+        <button class="vA-btn primary" onclick="confirmYes()">Ya, Ini Saya</button>
+      </div>`;
+  } else if (state === 'success') {
+    body = `
+      <div class="vA-check">✓</div>
+      <h2>Check-In Berhasil</h2>
+      <p>${MOCK.patientName} · ${MOCK.layanan}</p>
+      <p>Estimasi tunggu ~${MOCK.waitEstimateMin} menit. Silakan tunggu, nama Anda akan dipanggil.</p>
+      <div class="vA-actions"><button class="vA-btn primary" onclick="backToIdle()">Selesai</button></div>`;
+  } else if (state === 'error_resolved') {
+    body = `
+      <div class="vA-warn">!</div>
+      <h2>Appointment Sudah Ditutup</h2>
+      <p>Antrian untuk appointment ini sudah ditutup hari ini. Silakan ke meja Resepsionis.</p>
+      <div class="vA-actions"><button class="vA-btn primary" onclick="backToIdle()">Kembali</button></div>`;
+  } else if (state === 'error_already') {
+    body = `
+      <div class="vA-warn">!</div>
+      <h2>Anda Sudah Check-In</h2>
+      <p>Appointment ini sudah sedang dilayani atau selesai. Silakan ke meja Resepsionis jika ada pertanyaan.</p>
+      <div class="vA-actions"><button class="vA-btn primary" onclick="backToIdle()">Kembali</button></div>`;
+  }
+  return `<div class="vA-root"><div class="vA-card">${brandHtml()}${body}</div></div>`;
+}
+
+function render() {
+  document.getElementById('kiosk-frame').innerHTML = renderCard(currentState);
+}
+
+render();
+</script>
+
+</body>
+</html>
