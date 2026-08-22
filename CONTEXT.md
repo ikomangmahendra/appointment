@@ -138,7 +138,7 @@ _Avoid_: Wait time counted through service — it measures pre-service waiting o
 Nomor Induk Kependudukan — Indonesia's national ID number. An optional Patient field, used as the highest-confidence identifier for Patient Matching when present. Storing it requires the Patient's explicit consent, captured at the same point NIK is entered — see [ADR 0013](docs/adr/0013-nik-consent-at-point-of-entry.md).
 
 **Patient Matching**:
-The process of determining whether two Patient records represent the same real person: an exact NIK match is treated as certain; otherwise a fuzzy match on phone number, name, and date of birth produces a Duplicate Candidate.
+The process of determining whether two Patient records represent the same real person. When both records have a NIK: an exact match is certain (auto-merge), a differing NIK is certain proof of two different people — no Duplicate Candidate is raised, even if every other signal matches. Otherwise, at least 2 of 3 fuzzy signals (phone number, name allowing small typos, date of birth) must match to raise a Duplicate Candidate. See [ADR 0019](docs/adr/0019-patient-matching-fuzzy-threshold-and-nik-mismatch.md), extending [ADR 0004](docs/adr/0004-patient-dedup-auto-merge-only-on-nik.md).
 
 **Duplicate Candidate**:
 A pair of Patient records flagged by Patient Matching as possibly the same person, pending manual review by a Resepsionis or Admin Klinik. Never merged automatically unless the match was on NIK.
