@@ -193,7 +193,7 @@ function buildModel(role) {
       { label: 'Selesai', value: selesai, tone: 'good' },
       { label: 'Sedang Berjalan', value: berjalan, tone: 'warn' },
       { label: 'Dokter Aktif', value: dokterAktif, tone: 'neutral' },
-      { label: 'Perlu Dijadwal Ulang', value: perluUlang.length, tone: perluUlang.length ? 'bad' : 'neutral', narrow: true },
+      { label: 'Perlu Dijadwal Ulang', value: perluUlang.length, tone: perluUlang.length ? 'bad' : 'neutral' },
     ];
     const appointmentItems = APPOINTMENTS_TODAY.slice().sort(timeSort).map(a => ({
       id: a.id,
@@ -337,8 +337,7 @@ function buildModel(role) {
 // Shared leaf renderers (small, intentionally reused — not full layouts)
 // ---------------------------------------------------------------------------
 function statCard(s) {
-  const width = s.narrow ? 'flex-none w-[120px]' : 'flex-none w-[180px]';
-  return `<div class="${width} bg-white rounded-xl border border-slate-200 p-4">
+  return `<div class="flex-none w-[180px] bg-white rounded-xl border border-slate-200 p-4">
     <div class="text-xs text-slate-400 mb-1">${esc(s.label)}</div>
     <div class="text-2xl font-semibold ${toneClass(s.tone)}">${s.value}</div>
   </div>`;
