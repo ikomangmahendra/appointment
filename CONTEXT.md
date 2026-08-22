@@ -55,6 +55,9 @@ A Klinik's own opening hours and holiday calendar, independent of any single Dok
 **Slot**:
 A discrete, bookable unit of time for one Dokter, sized to the duration of a specific Layanan.
 
+**Slot Hold**:
+A temporary claim on a Slot from the moment a Patient selects it in the booking flow, preventing another Patient from booking the same Slot while this one finishes identity entry and OTP verification. Expires after a per-Klinik-configurable duration (default 5 minutes, bounded 2-15 minutes) if the booking isn't completed first; an expired hold releases the Slot and the Patient must pick another. See [ADR 0014](docs/adr/0014-slot-hold-during-booking.md).
+
 **Appointment**:
 A Patient's reservation of one Slot with one Dokter for one Layanan.
 _Avoid_: Booking (use only as the verb for creating an Appointment, not as the noun for the record), Reservation
@@ -73,6 +76,10 @@ The lifecycle disposition of an Appointment: `confirmed`, `completed`, `no-show`
 
 **Reschedule**:
 Changing an Appointment's time by marking the original Appointment `rescheduled` and creating a new Appointment that references it — never a mutation of the original Appointment's time in place.
+
+**Keluhan**:
+An optional free-text description of the Patient's reason for visit, captured alongside identity at booking time so the Dokter can prepare ahead of the Appointment.
+_Avoid_: Chief complaint, alasan kunjungan
 
 ### Visit Tracking
 
@@ -124,7 +131,7 @@ _Avoid_: Wait time counted through service — it measures pre-service waiting o
 ### Patient Identity & Data
 
 **NIK**:
-Nomor Induk Kependudukan — Indonesia's national ID number. An optional Patient field, used as the highest-confidence identifier for Patient Matching when present.
+Nomor Induk Kependudukan — Indonesia's national ID number. An optional Patient field, used as the highest-confidence identifier for Patient Matching when present. Storing it requires the Patient's explicit consent, captured at the same point NIK is entered — see [ADR 0013](docs/adr/0013-nik-consent-at-point-of-entry.md).
 
 **Patient Matching**:
 The process of determining whether two Patient records represent the same real person: an exact NIK match is treated as certain; otherwise a fuzzy match on phone number, name, and date of birth produces a Duplicate Candidate.
