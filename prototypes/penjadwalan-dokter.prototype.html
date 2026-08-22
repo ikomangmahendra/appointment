@@ -63,10 +63,18 @@
   flow — in two cases: it overlaps one of the same Dokter's own blocks
   (already existed), or it overlaps another Dokter's block for the *same*
   Layanan (new: a Layanan is a single exclusive resource, so two Dokter
-  can never hold it at once). Only Jadwal blocks got this treatment here;
-  Jam Khusus overrides don't carry a Layanan yet in this prototype — a
-  known gap, not a re-litigation of ADR-0022 (which says Jam Khusus should
-  eventually get the same treatment).
+  can never hold it at once).
+
+  UPDATE 2: Jam Khusus overrides now carry a Layanan too, and are checked
+  for the same cross-Dokter/same-Layanan exclusivity — but only against
+  each *other* Dokter's own effective window for that Layanan on that
+  date (their own Jam Khusus for that Layanan if they have one that date,
+  else their regular Jadwal block for that weekday). No same-Dokter
+  self-overlap check was needed here, unlike Jadwal blocks — a Dokter can
+  only hold one Pengecualian Jadwal per date at all (see CONTEXT.md), so
+  two Jam Khusus entries for the same Dokter/date can't exist to overlap
+  in the first place. Cuti still has no Layanan — it's whole-day, for
+  every Layanan the Dokter performs, not one at a time.
 
   No backend, no persistence — state lives in memory and resets on reload.
   Run: open this file directly in a browser (double-click / File > Open),
@@ -369,14 +377,22 @@ function reduce(state, action) {
     }
 
     case 'TAMBAH_PENGECUALIAN': {
-      const { dokterId, tanggal, tipe, mulai, selesai } = action;
+      const { dokterId, tanggal, tipe, layananId, mulai, selesai } = action;
       if (tanggal < TODAY_ISO) return withLog(state, 'error', `Pengecualian untuk ${tanggal} ditolak: tanggal sudah lewat, hanya bisa untuk hari ini atau setelahnya.`);
       const existing = state.pengecualian[dokterId] || [];
       if (existing.some(p => p.tanggal === tanggal)) return withLog(state, 'error', `Pengecualian untuk ${tanggal} ditolak: sudah ada pengecualian pada tanggal ini.`);
-      if (tipe === 'jam_khusus' && menit(mulai) >= menit(selesai)) return withLog(state, 'error', 'Pengecualian jam khusus ditolak: jam mulai harus sebelum jam selesai.');
-      const label = tipe === 'cuti' ? `Tambah cuti ${tanggal}` : `Tambah jam khusus ${tanggal} (${mulai}–${selesai})`;
+      if (tipe === 'jam_khusus') {
+        if (menit(mulai) >= menit(selesai)) return withLog(state, 'error', 'Pengecualian jam khusus ditolak: jam mulai harus sebelum jam selesai.');
+        if (!layananId) return withLog(state, 'error', 'Pengecualian jam khusus ditolak: pilih Layanan untuk override ini.');
+        const tumpangLayanan = cariPengecualianLayananTumpang(state, dokterId, layananId, tanggal, mulai, selesai);
+        if (tumpangLayanan) {
+          const dokterLain = dokterById(tumpangLayanan.dokterId);
+          return withLog(state, 'error', `Jam khusus ${tanggal} (${mulai}–${selesai}) ditolak: ${layananById(layananId).nama} sudah dipakai ${dokterLain.nama} pada jam yang sama (${tumpangLayanan.mulai}–${tumpangLayanan.selesai}) — satu Layanan hanya untuk satu dokter dalam satu waktu (ADR-0022), tidak bisa dipaksakan.`);
+        }
+      }
+      const label = tipe === 'cuti' ? `Tambah cuti ${tanggal}` : `Tambah jam khusus ${tanggal} (${mulai}–${selesai}, ${layananById(layananId).nama})`;
       return terapkanDenganCekKonflik(state, dokterId, label,
-        s => ({ ...s, pengecualian: { ...s.pengecualian, [dokterId]: [...(s.pengecualian[dokterId] || []), { id: 'p' + Math.random().toString(36).slice(2, 8), tanggal, tipe, mulai: tipe === 'jam_khusus' ? mulai : null, selesai: tipe === 'jam_khusus' ? selesai : null }] } }), action);
+        s => ({ ...s, pengecualian: { ...s.pengecualian, [dokterId]: [...(s.pengecualian[dokterId] || []), { id: 'p' + Math.random().toString(36).slice(2, 8), tanggal, tipe, layananId: tipe === 'jam_khusus' ? layananId : null, mulai: tipe === 'jam_khusus' ? mulai : null, selesai: tipe === 'jam_khusus' ? selesai : null }] } }), action);
     }
 
     case 'HAPUS_PENGECUALIAN': {
@@ -493,6 +509,30 @@ function cariBlokLayananTumpang(state, dokterId, layananId, hari, mulai, selesai
     const bentrok = (state.jadwal[d.id] || []).find(
       b => b.layananId === layananId && b.hari === hari && menit(b.mulai) < menit(selesai) && menit(mulai) < menit(b.selesai)
     );
+    if (bentrok) return { dokterId: d.id, ...bentrok };
+  }
+  return null;
+}
+
+// Jendela efektif SATU dokter untuk SATU Layanan pada satu tanggal (bukan seluruh jadwalnya
+// hari itu) — dipakai untuk mengecek eksklusivitas Layanan saat menambah Jam Khusus.
+// Cuti mengosongkan seluruh hari itu; Jam Khusus untuk Layanan LAIN tidak berpengaruh di sini,
+// karena override itu tidak menyentuh Layanan yang sedang dicek.
+function jendelaLayananDokterPadaTanggal(state, dokterId, layananId, tanggalISO) {
+  const hari = hariDariTanggal(tanggalISO);
+  const p = (state.pengecualian[dokterId] || []).find(x => x.tanggal === tanggalISO);
+  if (p && p.tipe === 'cuti') return [];
+  if (p && p.tipe === 'jam_khusus' && p.layananId === layananId) return [{ mulai: p.mulai, selesai: p.selesai }];
+  return (state.jadwal[dokterId] || []).filter(b => b.hari === hari && b.layananId === layananId).map(b => ({ mulai: b.mulai, selesai: b.selesai }));
+}
+
+// ADR-0022, sama seperti cariBlokLayananTumpang tapi untuk Jam Khusus: cari apakah dokter LAIN
+// punya jendela efektif untuk Layanan yang sama, pada tanggal & jam yang tumpang tindih.
+function cariPengecualianLayananTumpang(state, dokterId, layananId, tanggalISO, mulai, selesai) {
+  for (const d of state.dokter) {
+    if (d.id === dokterId) continue;
+    const bentrok = jendelaLayananDokterPadaTanggal(state, d.id, layananId, tanggalISO)
+      .find(w => menit(w.mulai) < menit(selesai) && menit(mulai) < menit(w.selesai));
     if (bentrok) return { dokterId: d.id, ...bentrok };
   }
   return null;
@@ -830,16 +870,17 @@ function renderPagePengecualian(root, dokterId, konflik) {
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="text-[11px] uppercase text-slate-400">
-              <tr><th class="text-left py-1.5 px-2">Dokter</th><th class="text-left py-1.5 px-2">Tanggal</th><th class="text-left py-1.5 px-2">Hari</th><th class="text-left py-1.5 px-2">Tipe</th><th class="text-left py-1.5 px-2">Jam</th><th class="text-left py-1.5 px-2">Status</th><th class="px-2"></th></tr>
+              <tr><th class="text-left py-1.5 px-2">Dokter</th><th class="text-left py-1.5 px-2">Tanggal</th><th class="text-left py-1.5 px-2">Hari</th><th class="text-left py-1.5 px-2">Tipe</th><th class="text-left py-1.5 px-2">Layanan</th><th class="text-left py-1.5 px-2">Jam</th><th class="text-left py-1.5 px-2">Status</th><th class="px-2"></th></tr>
             </thead>
             <tbody>
-              ${filtered.length === 0 ? '<tr><td colspan="7" class="text-xs text-slate-400 italic py-3 px-2">Tidak ada data untuk filter ini.</td></tr>' : filtered.map(p => {
+              ${filtered.length === 0 ? '<tr><td colspan="8" class="text-xs text-slate-400 italic py-3 px-2">Tidak ada data untuk filter ini.</td></tr>' : filtered.map(p => {
                 const lewat = p.tanggal < TODAY_ISO;
                 return `<tr class="border-t border-slate-100 ${lewat ? 'text-slate-400' : ''}">
                   <td class="py-1.5 px-2 font-medium ${lewat ? '' : 'text-slate-700'}">${escapeHtml(p.dokterNama)}</td>
                   <td class="py-1.5 px-2">${p.tanggal}</td>
                   <td class="py-1.5 px-2">${hariDariTanggal(p.tanggal)}</td>
                   <td class="py-1.5 px-2">${p.tipe === 'cuti' ? 'Cuti' : 'Jam khusus'}</td>
+                  <td class="py-1.5 px-2">${p.tipe === 'jam_khusus' ? escapeHtml((layananById(p.layananId) || {}).nama || '—') : '—'}</td>
                   <td class="py-1.5 px-2">${p.tipe === 'jam_khusus' ? `${p.mulai}–${p.selesai}` : '—'}</td>
                   <td class="py-1.5 px-2">${lewat ? '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Riwayat</span>' : '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Akan datang</span>'}</td>
                   <td class="py-1.5 px-2 text-right">${lewat ? '' : `<button data-hapus-pengecualian="${p.id}" data-dokter-id="${p.dokterId}" class="text-xs font-semibold text-rose-600">Hapus</button>`}</td>
@@ -863,6 +904,9 @@ function renderPagePengecualian(root, dokterId, konflik) {
             <div class="flex-1"><label class="block text-[11px] text-slate-500 mb-1">Sampai</label><input type="date" id="p-sampai" min="${TODAY_ISO}" value="${ui.prefillSampai || ''}" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm"></div>
           </div>
           <div id="p-jam-khusus" class="hidden space-y-2">
+            ${layananUntukDokter(dokterId).length === 0
+              ? `<div class="text-xs text-slate-400 italic">Dokter ini belum eligible untuk Layanan apa pun.</div>`
+              : `<select id="p-layanan-khusus" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">${layananUntukDokter(dokterId).map(l => `<option value="${l.id}">${escapeHtml(l.nama)}</option>`).join('')}</select>`}
             <input type="date" id="p-tanggal" min="${TODAY_ISO}" value="${ui.prefillDari || ''}" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
             <div class="flex gap-2">
               <input type="time" id="p-mulai" value="08:00" class="flex-1 border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
@@ -898,7 +942,8 @@ function renderPagePengecualian(root, dokterId, konflik) {
     } else {
       const tanggal = document.getElementById('p-tanggal').value;
       if (!tanggal) return;
-      dispatch({ type: 'TAMBAH_PENGECUALIAN', dokterId, tanggal, tipe: 'jam_khusus', mulai: document.getElementById('p-mulai').value, selesai: document.getElementById('p-selesai').value });
+      const layananSel = document.getElementById('p-layanan-khusus');
+      dispatch({ type: 'TAMBAH_PENGECUALIAN', dokterId, tanggal, tipe: 'jam_khusus', layananId: layananSel ? layananSel.value : null, mulai: document.getElementById('p-mulai').value, selesai: document.getElementById('p-selesai').value });
     }
   };
 
