@@ -77,10 +77,33 @@ Changing an Appointment's time by marking the original Appointment `rescheduled`
 ### Visit Tracking
 
 **Visit Status**:
-The real-time stage of a Patient's presence at the Klinik on the day of their Appointment: `belum tiba` → `telah tiba` → `menunggu` → `sedang dilayani` → `selesai`. Distinct from Appointment Status.
+The real-time stage of a Patient's presence at the Klinik on the day of their Appointment: `belum tiba` → `menunggu` → `sedang dilayani` → `selesai`. Distinct from Appointment Status. (An earlier design considered a `telah tiba` stage between `belum tiba` and `menunggu`; see [ADR 0007](docs/adr/0007-merge-telah-tiba-into-menunggu.md) for why it was merged away.)
 
 **Check-In**:
-A Resepsionis marking a Patient's Visit Status as `telah tiba` on arrival at the Klinik.
+A Resepsionis marking a Patient's Visit Status as `menunggu` on arrival at the Klinik.
+
+**Visit Status Board**:
+The kanban view of an Appointment's Visit Status, scoped to the viewing staff's own Klinik and its current operating day (per Jam Operasional). One card represents one Appointment, not one Patient — a Patient with two Appointments the same day appears as two independent cards. `cancelled` and `rescheduled` Appointments never appear on the board; an Appointment marked `no-show` is removed from it immediately. A Resepsionis sees one combined board across all of the Klinik's Layanan; a Staf Layanan sees only the board for their own Layanan. Each Layanan's board header shows: the Layanan's name, its on-duty Staf Layanan (one assigned per shift, not per-Appointment), the Dokter(s) currently on duty for that Layanan today, and the Klinik's current local date/time with its timezone label (WIB/WITA/WIT).
+_Avoid_: Papan Pasien, Patient board (the board tracks Appointments, not Patients — a Patient can appear more than once)
+
+**Durasi Layanan**:
+The elapsed time since an Appointment entered `sedang dilayani`, stopping once it reaches `selesai`. Shown per card, in that column only — unlike Waktu Tunggu, it is not part of the Visit Status Board's KPI bar.
+
+**Interval Pembaruan Papan**:
+A per-Klinik setting controlling how often the Visit Status Board polls for updates. Configured by Admin Klinik; defaults to 15 seconds, bounded to 5–60 seconds.
+
+**Target Waktu Tunggu**:
+A per-Klinik setting for the wait considered reasonable before a `menunggu` card is flagged (shown in red). Configured by Admin Klinik; a fixed target, not the board's live-computed average — comparing against the live average would make the flag move whenever the average did, regardless of whether that patient's own wait changed.
+
+**Pembatalan Visit Status**:
+A single-step revert of an Appointment's Visit Status to the immediately previous stage. Reverting among the Dokter-owned stages (`menunggu` ↔ `sedang dilayani` ↔ `selesai`) requires the assigned Dokter's PIN, entered on the acting Staf Layanan's screen. Reverting a Check-In (`menunggu` → `belum tiba`) is a Resepsionis action and needs no Dokter involvement — it corrects a front-desk entry, not a clinical record.
+
+**Tutup Layanan**:
+An end-of-day action performed by a Layanan's own Staf Layanan, closing that Layanan's queue for the day. Refuses to run while any Appointment in that Layanan is still `sedang dilayani` (must first be moved to `selesai` or reverted). On success, sets Appointment Status to `no-show` for any Appointment still `belum tiba`, and to `cancelled` for any Appointment still `menunggu` — removing both from the Visit Status Board. The Klinik-wide daily board reset only happens once every Layanan at that Klinik has run Tutup Layanan.
+
+**Waktu Tunggu**:
+The duration since an Appointment's Check-In (i.e. since it entered `menunggu`), frozen the moment Visit Status reaches `sedang dilayani`. Drives both the per-card wait display and the Visit Status Board's average-wait KPI.
+_Avoid_: Wait time counted through service — it measures pre-service waiting only.
 
 ### Patient Identity & Data
 
