@@ -1,0 +1,615 @@
+<!--
+  PROTOTYPE — throwaway. Not wired to any backend, no persistence, no build step.
+  Question: "What should a status-column kanban board of patients look like?"
+
+  History: three structurally different variants were tried (classic card columns, a dense
+  queue-ops dashboard, and a patient x stage matrix). The classic card-column shape won, then
+  was refined with the queue-ops variant's KPI summary bar pulled on top (see renderKpiBar).
+  The other two variants have since been deleted — this file now only contains the chosen shape.
+
+  This revision layers in the decisions from the grill-with-docs session that followed
+  (see CONTEXT.md and docs/adr/0002, 0007–0011):
+    - Visit Status is FOUR stages, not five: belum_tiba -> menunggu -> sedang_dilayani -> selesai.
+      (telah_tiba was merged into menunggu — ADR 0007. The old 5-stage data is gone; do not
+      reintroduce a telah_tiba resting stage.)
+    - The board is scoped by role: Resepsionis sees all Layanan combined; Staf Layanan sees only
+      their own Layanan, with a header (Layanan name, on-duty Staf Layanan, on-duty Dokter,
+      Klinik local clock + WIB/WITA/WIT) — ADR 0008.
+    - Transitions are explicit role-scoped action buttons, never drag-and-drop — ADR 0008.
+    - Reverting menunggu<->sedang_dilayani<->selesai requires a Dokter PIN; reverting a Check-In
+      (menunggu -> belum_tiba) is a Resepsionis action with no PIN — ADR 0009.
+    - Tutup Layanan (Staf Layanan, per-Layanan) force-resolves belum_tiba -> no-show and
+      menunggu -> cancelled, but refuses while any sedang_dilayani is unresolved — ADR 0010.
+    - Waktu Tunggu (menunggu) freezes at sedang_dilayani; Durasi Layanan (sedang_dilayani) is a
+      separate timer, shown per-card only, not folded into the KPI bar.
+    - A menunggu card's wait turns red past Target Waktu Tunggu — a fixed, Admin Klinik-configurable
+      threshold (TARGET_WAKTU_TUNGGU_MNT), not the live-computed "rata-rata tunggu" KPI itself —
+      see ADR 0008.
+    - Kapasitas Dokter: a Dokter can have at most one Appointment sedang_dilayani at a time,
+      checked Klinik-wide (dokterAlreadyServing), not just within the current Layanan — ADR 0011.
+      Reassigning an Appointment to a substitute Dokter is a known, deliberately deferred gap.
+
+  Run: open this file directly in a browser (no server needed).
+-->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Prototype: Kanban Visit Status</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #e2e4e9;
+    --text: #1c1f26;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --c-belum: #6b7280;
+    --c-menunggu: #d97706;
+    --c-dilayani: #7c3aed;
+    --c-selesai: #059669;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header.app {
+    padding: 14px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header.app h1 { font-size: 16px; margin: 0; }
+  header.app .badge {
+    font-size: 11px;
+    color: #92400e;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    letter-spacing: .02em;
+  }
+  header.app .sub { font-size: 12px; color: var(--muted); }
+  main { padding: 20px; padding-bottom: 90px; }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-belum_tiba { background: var(--c-belum); }
+  .dot-menunggu { background: var(--c-menunggu); }
+  .dot-sedang_dilayani { background: var(--c-dilayani); }
+  .dot-selesai { background: var(--c-selesai); }
+
+  /* ---------- role / scope bar ---------- */
+  .role-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    font-size: 12px;
+  }
+  .role-bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .role-bar select {
+    font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: #fff;
+  }
+  .role-bar button.tutup {
+    margin-left: auto;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    color: #b3261e;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .role-bar button.tutup:disabled { opacity: .5; cursor: not-allowed; }
+  .role-bar button.reset {
+    font-size: 12px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); cursor: pointer; font-weight: 600;
+  }
+  .closed-tracker { font-size: 11px; color: var(--muted); }
+
+  .banner {
+    font-size: 12px;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 14px;
+    border: 1px solid;
+  }
+  .banner.ok { background: #ecfdf5; border-color: #a7f3d0; color: #047857; }
+  .banner.warn { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+
+  /* ---------- board meta header (per-Layanan) ---------- */
+  .board-meta { margin-bottom: 14px; }
+  .layanan-info { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .layanan-info b { color: var(--text); }
+  .layanan-info .badge-closed {
+    display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 700;
+    background: #fee2e2; color: #b3261e; border-radius: 999px; padding: 1px 8px;
+  }
+  .kpi.clock-kpi .v { white-space: nowrap; }
+
+  /* ---------- board columns ---------- */
+  .board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; }
+  .col { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: 260px; flex: 0 0 260px; }
+  .col-head { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .col-head .name { font-size: 13px; font-weight: 700; }
+  .col-head .count { font-size: 11px; color: var(--muted); background: var(--bg); border-radius: 999px; padding: 1px 8px; }
+  .col-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 40px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    padding: 8px 10px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  }
+  .card .clickable { cursor: pointer; }
+  .card:hover { border-color: #c7cbd4; }
+  .card .name { font-size: 13px; font-weight: 600; }
+  .card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .card .row2 { display: flex; justify-content: space-between; margin-top: 6px; align-items: center; }
+  .tag { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: var(--bg); color: var(--muted); }
+  .tag.timer { font-weight: 700; }
+  .tag.timer.over-target { color: #b3261e; background: #fee2e2; }
+  .empty-col { font-size: 11px; color: var(--muted); text-align: center; padding: 14px 0; }
+  .card-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .card-actions button {
+    font-size: 11px; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); cursor: pointer; font-weight: 600;
+  }
+  .card-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .card-actions button.revert { color: var(--muted); }
+  .card-actions button.disabled { color: var(--muted); cursor: not-allowed; opacity: .7; }
+
+  /* modal */
+  .overlay { position: fixed; inset: 0; background: rgba(15,18,25,.4); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--panel); border-radius: 12px; padding: 20px; width: 320px; box-shadow: 0 10px 40px rgba(0,0,0,.2); }
+  .modal h3 { margin: 0 0 4px; font-size: 15px; }
+  .modal .line { font-size: 13px; margin-top: 8px; color: var(--text); }
+  .modal .line span { color: var(--muted); }
+  .modal button { margin-top: 16px; border: 1px solid var(--border); background: var(--bg); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .modal button.primary { background: var(--accent); border-color: var(--accent); color: #fff; margin-right: 8px; }
+  .modal input[type="password"] {
+    width: 100%; margin-top: 6px; padding: 8px 10px; font-size: 16px; letter-spacing: 4px;
+    border-radius: 8px; border: 1px solid var(--border); text-align: center;
+  }
+  .modal .hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+  /* ---------- KPI summary bar ---------- */
+  .kpis { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; min-width: 140px; }
+  .kpi .v { font-size: 22px; font-weight: 700; }
+  .kpi .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <h1>Papan Visit Status</h1>
+  <span class="badge">PROTOTYPE</span>
+  <span class="sub">Data dummy · tidak terhubung ke backend · kolom berdasarkan Visit Status</span>
+</header>
+
+<main id="app-root"></main>
+
+<div class="overlay" id="overlay">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Dummy data
+// ---------------------------------------------------------------------------
+const STATUSES = [
+  { key: 'belum_tiba',      label: 'Belum Tiba' },
+  { key: 'menunggu',        label: 'Menunggu' },
+  { key: 'sedang_dilayani', label: 'Sedang Dilayani' },
+  { key: 'selesai',         label: 'Selesai' },
+];
+const STATUS_COLOR = {
+  belum_tiba: '#6b7280',
+  menunggu: '#d97706',
+  sedang_dilayani: '#7c3aed',
+  selesai: '#059669',
+};
+
+const LAYANAN_LIST = ['Pemeriksaan Umum', 'Vaksinasi', 'Konsultasi Gizi', 'Gigi'];
+
+const STAF_ON_DUTY = {
+  'Pemeriksaan Umum': 'Ns. Ayu Kartika',
+  'Vaksinasi':        'Ns. Bagus Prasetyo',
+  'Konsultasi Gizi':  'Ns. Dian Permatasari',
+  'Gigi':             'Ns. Eka Wirawan',
+};
+const DOKTER_ON_DUTY = {
+  'Pemeriksaan Umum': ['dr. Rina'],
+  'Vaksinasi':        ['dr. Andi'],
+  'Konsultasi Gizi':  ['dr. Sari'],
+  'Gigi':             ['dr. Fajar'],
+};
+const KLINIK_TIMEZONE_LABEL = 'WIB';
+// Target Waktu Tunggu: a fixed, Admin Klinik-configurable threshold (not the live KPI average —
+// that would be circular and unstable). A menunggu card's wait turns red once it exceeds this.
+const TARGET_WAKTU_TUNGGU_MNT = 15;
+
+// Visit Status is 4 stages (telah_tiba merged into menunggu — ADR 0007).
+// waitMin = Waktu Tunggu, counted since entering `menunggu`, frozen at `sedang_dilayani`.
+// serviceMin = Durasi Layanan, counted since entering `sedang_dilayani`, frozen at `selesai`.
+const PATIENTS = [
+  { id: 1,  name: 'Siti Aminah',        time: '09:00', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'online', status: 'belum_tiba' },
+  { id: 2,  name: 'Budi Santoso',       time: '09:15', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'phone',  status: 'belum_tiba' },
+  { id: 3,  name: 'Made Wirawan',       time: '09:30', layanan: 'Konsultasi Gizi',  dokter: 'dr. Sari',   source: 'online', status: 'belum_tiba' },
+
+  { id: 4,  name: 'Dewi Lestari',       time: '08:30', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'phone',  status: 'menunggu', waitMin: 4 },
+  { id: 5,  name: 'Agus Purnomo',       time: '08:45', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'online', status: 'menunggu', waitMin: 2 },
+  { id: 6,  name: 'Rina Kurniawati',    time: '08:50', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'phone',  status: 'menunggu', waitMin: 6 },
+  { id: 7,  name: 'Yusuf Hidayat',      time: '09:00', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'online', status: 'menunggu', waitMin: 1 },
+  { id: 8,  name: 'Nur Halimah',        time: '08:00', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'online', status: 'menunggu', waitMin: 26 },
+  { id: 9,  name: 'Eko Prasetyo',       time: '08:15', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'phone',  status: 'menunggu', waitMin: 18 },
+  { id: 10, name: 'Wulan Sari',         time: '08:20', layanan: 'Konsultasi Gizi',  dokter: 'dr. Sari',   source: 'online', status: 'menunggu', waitMin: 9 },
+
+  { id: 11, name: 'Hendra Gunawan',     time: '07:45', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'phone',  status: 'sedang_dilayani', waitMin: 5, serviceMin: 3 },
+  { id: 12, name: 'Putri Ayu',          time: '08:00', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'online', status: 'sedang_dilayani', waitMin: 2, serviceMin: 1 },
+
+  { id: 13, name: 'Bambang Sutrisno',   time: '07:00', layanan: 'Pemeriksaan Umum', dokter: 'dr. Rina',   source: 'online', status: 'selesai' },
+  { id: 14, name: 'Fitriani',           time: '07:15', layanan: 'Konsultasi Gizi',  dokter: 'dr. Sari',   source: 'phone',  status: 'selesai' },
+  { id: 15, name: 'Joko Widodo S.',     time: '07:20', layanan: 'Vaksinasi',        dokter: 'dr. Andi',   source: 'online', status: 'selesai' },
+  { id: 16, name: 'Anisa Rahmawati',    time: '07:30', layanan: 'Gigi',             dokter: 'dr. Fajar',  source: 'online', status: 'selesai' },
+];
+
+// ---------------------------------------------------------------------------
+// Role / scope state (ADR 0008: Resepsionis = all Layanan; Staf Layanan = one Layanan)
+// ---------------------------------------------------------------------------
+let currentRole = 'resepsionis'; // 'resepsionis' | 'staf'
+let currentLayanan = LAYANAN_LIST[0];
+const closedLayanan = new Set(); // Layanan already Tutup Layanan'd today (ADR 0010)
+
+function visiblePatients() {
+  const list = PATIENTS.filter(p => !p.removed); // no-show/cancelled leave the board immediately
+  return currentRole === 'resepsionis' ? list : list.filter(p => p.layanan === currentLayanan);
+}
+function patientsByStatus(key) {
+  return visiblePatients().filter(p => p.status === key);
+}
+function statusLabel(key) {
+  return STATUSES.find(s => s.key === key).label;
+}
+
+// ---------------------------------------------------------------------------
+// Transitions (explicit action buttons only — no drag-and-drop, ADR 0008)
+// ---------------------------------------------------------------------------
+function transition(p, next) {
+  if (next === 'menunggu' && p.status === 'belum_tiba') { p.waitMin = 0; }
+  else if (next === 'sedang_dilayani' && p.status === 'menunggu') { p.serviceMin = 0; }
+  else if (next === 'belum_tiba' && p.status === 'menunggu') { delete p.waitMin; }
+  else if (next === 'menunggu' && p.status === 'sedang_dilayani') { delete p.serviceMin; }
+  else if (next === 'sedang_dilayani' && p.status === 'selesai') { /* resume serviceMin as-is */ }
+  p.status = next;
+  closeOverlay();
+  render();
+}
+
+function requestRevertWithPin(p, next) {
+  document.getElementById('modal-content').innerHTML = `
+    <h3>Konfirmasi Dokter</h3>
+    <div class="line">Membatalkan status <b>${statusLabel(p.status)}</b> untuk <b>${p.name}</b> memerlukan PIN Dokter yang bertugas (${p.dokter}).</div>
+    <input type="password" id="pinInput" maxlength="4" placeholder="••••" autofocus>
+    <div class="hint">Prototype: PIN 4 digit apa pun diterima.</div>
+    <div style="margin-top:14px">
+      <button class="primary" id="pinConfirm">Konfirmasi</button>
+      <button onclick="closeOverlay()">Batal</button>
+    </div>
+  `;
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('pinConfirm').onclick = () => {
+    const val = document.getElementById('pinInput').value;
+    if (!/^\d{4}$/.test(val)) { alertInline('Masukkan PIN 4 digit.'); return; }
+    transition(p, next);
+  };
+}
+
+function alertInline(msg) {
+  const hint = document.querySelector('.modal .hint');
+  if (hint) { hint.textContent = msg; hint.style.color = '#b3261e'; }
+}
+
+function closeOverlay() {
+  document.getElementById('overlay').classList.remove('open');
+}
+
+// ---------------------------------------------------------------------------
+// Tutup Layanan (ADR 0010) — per-Layanan, blocked while sedang_dilayani remains
+// ---------------------------------------------------------------------------
+function tutupLayanan() {
+  const inLayanan = PATIENTS.filter(p => p.layanan === currentLayanan && !p.removed);
+  const stillServing = inLayanan.filter(p => p.status === 'sedang_dilayani');
+  if (stillServing.length) {
+    showBanner(`Tutup Layanan belum bisa dilakukan — masih ${stillServing.length} pasien sedang dilayani: ${stillServing.map(p => p.name).join(', ')}.`, 'warn');
+    return;
+  }
+  let noShow = 0, cancelled = 0;
+  inLayanan.forEach(p => {
+    if (p.status === 'belum_tiba') { p.removed = true; p.appointmentStatus = 'no-show'; noShow++; }
+    else if (p.status === 'menunggu') { p.removed = true; p.appointmentStatus = 'cancelled'; cancelled++; }
+  });
+  closedLayanan.add(currentLayanan);
+  showBanner(`Layanan "${currentLayanan}" ditutup. ${noShow} ditandai no-show, ${cancelled} dibatalkan.`, 'ok');
+  render();
+}
+
+function resetHariBaru() {
+  closedLayanan.clear();
+  location.reload();
+}
+
+let bannerMsg = null;
+let boardTimer = null;
+function showBanner(text, kind) {
+  bannerMsg = { text, kind };
+  render();
+}
+
+// ---------------------------------------------------------------------------
+// Shared KPI summary bar — scoped to whatever's currently visible
+// ---------------------------------------------------------------------------
+function renderKpiBar(root) {
+  const scoped = visiblePatients();
+  const waitingLike = scoped.filter(p => ['menunggu','sedang_dilayani'].includes(p.status));
+  const preService = scoped.filter(p => p.status === 'menunggu' || (p.status === 'sedang_dilayani' && p.waitMin != null));
+  const avgWait = Math.round(
+    preService.reduce((sum, p) => sum + (p.waitMin || 0), 0) / (preService.length || 1)
+  );
+  const kpis = document.createElement('div');
+  kpis.className = 'kpis';
+  kpis.innerHTML = `
+    <div class="kpi"><div class="v">${scoped.length}</div><div class="l">Pasien hari ini</div></div>
+    <div class="kpi"><div class="v">${scoped.filter(p => p.status === 'menunggu').length}</div><div class="l">Sedang menunggu</div></div>
+    <div class="kpi"><div class="v">${scoped.filter(p => p.status === 'sedang_dilayani').length}</div><div class="l">Sedang dilayani</div></div>
+    <div class="kpi"><div class="v">${avgWait} mnt</div><div class="l">Rata-rata tunggu · target ${TARGET_WAKTU_TUNGGU_MNT} mnt</div></div>
+    <div class="kpi clock-kpi"><div class="v" id="clockValue"></div><div class="l" id="clockLabel"></div></div>
+  `;
+  root.appendChild(kpis);
+
+  updateClock();
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = setInterval(updateClock, 1000);
+
+  return waitingLike;
+}
+
+// ---------------------------------------------------------------------------
+// Board meta header — Layanan name, on-duty Staf Layanan + Dokter
+// ---------------------------------------------------------------------------
+let clockTimer = null;
+function renderBoardMeta(root) {
+  const meta = document.createElement('div');
+  meta.className = 'board-meta';
+
+  let layananInfoHtml = '';
+  if (currentRole === 'staf') {
+    const closed = closedLayanan.has(currentLayanan);
+    layananInfoHtml = `
+      <div class="layanan-info">
+        <b>${currentLayanan}</b>${closed ? '<span class="badge-closed">DITUTUP</span>' : ''}<br>
+        Staf bertugas: <b>${STAF_ON_DUTY[currentLayanan]}</b> &nbsp;·&nbsp;
+        Dokter bertugas: <b>${DOKTER_ON_DUTY[currentLayanan].join(', ')}</b>
+      </div>
+    `;
+  }
+
+  meta.innerHTML = layananInfoHtml || '<div class="layanan-info">Semua Layanan (tampilan Resepsionis)</div>';
+  root.appendChild(meta);
+}
+function updateClock() {
+  const v = document.getElementById('clockValue');
+  const l = document.getElementById('clockLabel');
+  if (!v || !l) return;
+  const now = new Date();
+  const time = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const date = now.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  v.textContent = `${time} ${KLINIK_TIMEZONE_LABEL}`;
+  l.textContent = date;
+}
+
+// ---------------------------------------------------------------------------
+// Kapasitas Dokter (ADR 0011) — a Dokter can have at most one Appointment
+// `sedang_dilayani` at a time, checked Klinik-wide (across ALL Layanan, not
+// just the currently-scoped one) since a Dokter could serve more than one
+// Layanan the same day.
+// ---------------------------------------------------------------------------
+function dokterAlreadyServing(p) {
+  return PATIENTS.find(x => x.id !== p.id && !x.removed && x.dokter === p.dokter && x.status === 'sedang_dilayani');
+}
+
+// ---------------------------------------------------------------------------
+// Card action buttons — role + status determine what's available (ADR 0008/0009/0011)
+// ---------------------------------------------------------------------------
+function cardActionsHtml(p) {
+  if (closedLayanan.has(p.layanan)) return '';
+  const buttons = [];
+  if (currentRole === 'resepsionis') {
+    if (p.status === 'belum_tiba') buttons.push(['primary', `transition(PATIENTS.find(x=>x.id===${p.id}),'menunggu')`, 'Check-In']);
+    else if (p.status === 'menunggu') buttons.push(['revert', `transition(PATIENTS.find(x=>x.id===${p.id}),'belum_tiba')`, '↩ Batalkan Check-In']);
+  } else {
+    if (p.status === 'menunggu') {
+      const blocker = dokterAlreadyServing(p);
+      if (blocker) {
+        buttons.push(['disabled', null, 'Menunggu Dokter', `${p.dokter} sedang melayani ${blocker.name}`]);
+      } else {
+        buttons.push(['primary', `transition(PATIENTS.find(x=>x.id===${p.id}),'sedang_dilayani')`, 'Mulai Layani']);
+      }
+    } else if (p.status === 'sedang_dilayani') {
+      buttons.push(['primary', `transition(PATIENTS.find(x=>x.id===${p.id}),'selesai')`, 'Selesai']);
+      buttons.push(['revert', `requestRevertWithPin(PATIENTS.find(x=>x.id===${p.id}),'menunggu')`, '↩ Kembali (PIN)']);
+    } else if (p.status === 'selesai') {
+      buttons.push(['revert', `requestRevertWithPin(PATIENTS.find(x=>x.id===${p.id}),'sedang_dilayani')`, '↩ Kembali (PIN)']);
+    }
+  }
+  if (!buttons.length) return '';
+  return `<div class="card-actions">${buttons.map(([cls, call, label, title]) =>
+    cls === 'disabled'
+      ? `<button class="disabled" disabled title="${title || ''}">${label}</button>`
+      : `<button class="${cls}" onclick="event.stopPropagation(); ${call}">${label}</button>`
+  ).join('')}</div>`;
+}
+
+function timerTagHtml(p) {
+  if (p.status === 'menunggu' && p.waitMin != null) {
+    const overTarget = p.waitMin > TARGET_WAKTU_TUNGGU_MNT;
+    return `<span class="tag timer${overTarget ? ' over-target' : ''}">Menunggu ${p.waitMin} mnt</span>`;
+  }
+  if (p.status === 'sedang_dilayani' && p.serviceMin != null) return `<span class="tag timer">Dilayani ${p.serviceMin} mnt</span>`;
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+// The board — classic kanban card columns, click-to-expand, with the KPI bar,
+// board meta header, and role-scoped action buttons.
+// ---------------------------------------------------------------------------
+function renderBoard(root) {
+  if (bannerMsg) {
+    const banner = document.createElement('div');
+    banner.className = `banner ${bannerMsg.kind}`;
+    banner.textContent = bannerMsg.text;
+    root.appendChild(banner);
+  }
+
+  renderBoardMeta(root);
+  renderKpiBar(root);
+
+  const board = document.createElement('div');
+  board.className = 'board';
+  STATUSES.forEach(s => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const list = patientsByStatus(s.key);
+    col.innerHTML = `
+      <div class="col-head">
+        <span class="name"><span class="status-dot dot-${s.key}"></span>&nbsp; ${s.label}</span>
+        <span class="count">${list.length}</span>
+      </div>
+      <div class="col-body">
+        ${list.length ? list.map(p => `
+          <div class="card" style="border-left-color:${STATUS_COLOR[s.key]}">
+            <div class="clickable" onclick="showDetail(${p.id})">
+              <div class="name">${p.name}</div>
+              <div class="meta">${p.layanan} · ${p.dokter}</div>
+              <div class="row2">
+                <span class="tag">${p.time}</span>
+                ${timerTagHtml(p) || `<span class="tag">${p.source === 'online' ? 'Online' : 'Telepon'}</span>`}
+              </div>
+            </div>
+            ${cardActionsHtml(p)}
+          </div>
+        `).join('') : `<div class="empty-col">Tidak ada pasien</div>`}
+      </div>
+    `;
+    board.appendChild(col);
+  });
+  root.appendChild(board);
+
+  // live-increment the relevant timer once per 5s so the board visibly "breathes".
+  // Cleared and re-created on every render — otherwise each re-render (e.g. a button
+  // click) would stack another interval on top of the old ones, accelerating the count.
+  if (boardTimer) clearInterval(boardTimer);
+  boardTimer = setInterval(() => {
+    visiblePatients().forEach(p => {
+      if (p.status === 'menunggu' && p.waitMin != null) p.waitMin += 1;
+      if (p.status === 'sedang_dilayani' && p.serviceMin != null) p.serviceMin += 1;
+    });
+    render();
+  }, 5000);
+}
+
+// ---------------------------------------------------------------------------
+// Detail modal (read-only info)
+// ---------------------------------------------------------------------------
+window.showDetail = function(id) {
+  const p = PATIENTS.find(p => p.id === id);
+  document.getElementById('modal-content').innerHTML = `
+    <h3>${p.name}</h3>
+    <div class="line"><span>Status:</span> ${statusLabel(p.status)}</div>
+    <div class="line"><span>Layanan:</span> ${p.layanan}</div>
+    <div class="line"><span>Dokter:</span> ${p.dokter}</div>
+    <div class="line"><span>Jam appointment:</span> ${p.time}</div>
+    <div class="line"><span>Booking source:</span> ${p.source === 'online' ? 'Online' : 'Telepon'}</div>
+    ${p.waitMin != null ? `<div class="line"><span>Waktu tunggu:</span> ${p.waitMin} mnt</div>` : ''}
+    ${p.serviceMin != null ? `<div class="line"><span>Durasi layanan:</span> ${p.serviceMin} mnt</div>` : ''}
+    <button onclick="closeOverlay()">Tutup</button>
+  `;
+  document.getElementById('overlay').classList.add('open');
+};
+document.getElementById('overlay').addEventListener('click', e => {
+  if (e.target.id === 'overlay') closeOverlay();
+});
+
+// ---------------------------------------------------------------------------
+// Role bar — role/Layanan pickers + Tutup Layanan + reset
+// ---------------------------------------------------------------------------
+function renderRoleBar(root) {
+  const bar = document.createElement('div');
+  bar.className = 'role-bar';
+  const closedCount = closedLayanan.size;
+  bar.innerHTML = `
+    <label>Peran:
+      <select id="roleSelect">
+        <option value="resepsionis" ${currentRole === 'resepsionis' ? 'selected' : ''}>Resepsionis (semua Layanan)</option>
+        <option value="staf" ${currentRole === 'staf' ? 'selected' : ''}>Staf Layanan</option>
+      </select>
+    </label>
+    ${currentRole === 'staf' ? `
+      <label>Layanan:
+        <select id="layananSelect">
+          ${LAYANAN_LIST.map(l => `<option value="${l}" ${l === currentLayanan ? 'selected' : ''}>${l}${closedLayanan.has(l) ? ' (ditutup)' : ''}</option>`).join('')}
+        </select>
+      </label>
+      <span class="closed-tracker">${closedCount}/${LAYANAN_LIST.length} Layanan ditutup hari ini</span>
+      ${closedCount === LAYANAN_LIST.length
+        ? `<button class="reset" onclick="resetHariBaru()">Reset Papan (Hari Baru)</button>`
+        : `<button class="tutup" ${closedLayanan.has(currentLayanan) ? 'disabled' : ''} onclick="tutupLayanan()">Tutup Layanan</button>`}
+    ` : ''}
+  `;
+  root.appendChild(bar);
+
+  document.getElementById('roleSelect').addEventListener('change', e => {
+    currentRole = e.target.value;
+    bannerMsg = null;
+    render();
+  });
+  const layananSelect = document.getElementById('layananSelect');
+  if (layananSelect) {
+    layananSelect.addEventListener('change', e => {
+      currentLayanan = e.target.value;
+      bannerMsg = null;
+      render();
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+function render() {
+  const root = document.getElementById('app-root');
+  root.innerHTML = '';
+  renderRoleBar(root);
+  renderBoard(root);
+}
+
+render();
+</script>
+
+</body>
+</html>

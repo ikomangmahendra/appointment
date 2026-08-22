@@ -1,0 +1,3 @@
+# Guest booking history auto-links to a User by phone match
+
+When someone registers as a User, any existing guest Appointment history and Patient record under that same (now-verified) phone number is automatically linked to the new User, rather than the User starting with a blank slate. Phone number is already the primary identity signal Patient Matching relies on (ADR 0004), so reusing it here to link a guest's past visits to their new account doesn't introduce a new identity mechanism — it applies the existing one at a new moment. The alternative — leaving guest history permanently disconnected from an account created later — would silently lose booking history a Patient would reasonably expect to see once they bother to register.
