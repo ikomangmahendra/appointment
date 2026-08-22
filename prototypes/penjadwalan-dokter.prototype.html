@@ -34,7 +34,20 @@
     from the working Jadwal view: that list grows large over time and
     audit needs to see past entries, which don't belong cluttering the
     day-to-day scheduling screen. It gets its own Semua/Mendatang/Riwayat
-    filter so history stays reachable instead of getting silently dropped.
+    filter so history stays reachable instead of getting silently dropped,
+    and — since audit means seeing every dokter, not just whichever one
+    happens to be selected — the list spans all dokter with a Dokter
+    column; only the "Ajukan Pengecualian" form stays scoped to the
+    selected dokter.
+  - the Jadwal page no longer shows a detailed upcoming-appointment list;
+    the goal there is just "does this date already have a patient
+    booked", not who/when. Minggu shows an "N appt" badge per day header
+    plus a small dot on the specific occupied hour cell(s) in the grid;
+    Bulan already had a per-day count badge (recolored to match). The
+    "tandai tiba (demo)" affordance needed to exercise the ADR-0018
+    blocked-conflict scenario moved into its own small collapsible panel
+    (bottom-right) alongside the action log — it's test tooling, not part
+    of the design being evaluated.
 
   That's all UI-only. The underlying conflict-handling logic (what happens
   to a confirmed Appointment orphaned by an edit — force-with-reason, or
@@ -71,6 +84,16 @@
     Riwayat aksi ▾
   </button>
   <div id="log-body" class="hidden bg-slate-900 text-slate-200 text-[11px] font-mono rounded-b-lg shadow-lg max-h-40 overflow-y-auto px-3 py-2"></div>
+</div>
+
+<!-- Demo: tandai pasien tiba — bukan bagian dari desain, cuma alat bantu untuk memicu
+     skenario "pasien sudah tiba" (ADR-0018) sekarang appointment tidak lagi ditampilkan
+     detail di halaman utama. -->
+<div id="demo-strip" class="fixed right-3 bottom-3 z-40 w-80 max-w-[calc(100vw-1.5rem)]">
+  <button id="demo-toggle" class="w-full text-left text-[11px] font-semibold text-slate-500 bg-white/90 border border-slate-200 rounded-t-lg px-3 py-1.5 shadow-sm">
+    Demo: tandai pasien tiba ▾
+  </button>
+  <div id="demo-body" class="hidden bg-white border border-slate-200 rounded-b-lg shadow-lg max-h-48 overflow-y-auto px-3 py-2"></div>
 </div>
 
 <script id="schedule-model">
@@ -467,9 +490,15 @@ function htmlJadwalMinggu(dokterId) {
     if (past) return shaded ? 'bg-slate-300' : 'bg-slate-100';
     return shaded ? 'bg-teal-200' : 'bg-slate-50';
   }
+  function appointmentTanggal(iso) {
+    return (state.appointments[dokterId] || []).filter(a => a.tanggal === iso);
+  }
+  function appointmentDiJam(iso, jam) {
+    return appointmentTanggal(iso).find(a => menit(a.mulai) <= jam * 60 && jam * 60 < menit(a.selesai));
+  }
 
   return `
-  <div class="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+  <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
     <h3 class="text-sm font-bold text-slate-700 mb-3">Jadwal Rutin Mingguan</h3>
     <div class="overflow-x-auto">
       <table class="w-full text-[11px] border-collapse">
@@ -480,9 +509,11 @@ function htmlJadwalMinggu(dokterId) {
               const iso = tanggalUntukHari(ui.weekStart, hari);
               const past = iso < TODAY_ISO;
               const today = iso === TODAY_ISO;
+              const jumlahAppt = appointmentTanggal(iso).length;
               return `<th class="font-semibold pb-1 ${past ? 'text-slate-300' : today ? 'text-teal-700' : 'text-slate-500'}">
                 <div>${hari.slice(0, 3)}</div>
                 <div class="text-[10px] font-normal mt-0.5 ${today ? 'inline-block bg-teal-100 rounded px-1' : ''}">${labelTanggalPendek(iso)}</div>
+                ${jumlahAppt > 0 ? `<div class="mt-0.5"><span class="text-[10px] font-semibold ${past ? 'bg-slate-200 text-slate-400' : 'bg-indigo-600 text-white'} rounded-full px-1.5">${jumlahAppt} appt</span></div>` : ''}
               </th>`;
             }).join('')}
           </tr>
@@ -493,11 +524,19 @@ function htmlJadwalMinggu(dokterId) {
               <td class="text-slate-400 text-right pr-1 align-top">${String(jam).padStart(2, '0')}</td>
               ${HARI_TAMPIL.map(hari => {
                 const iso = tanggalUntukHari(ui.weekStart, hari);
-                return `<td class="h-4 border border-slate-100 ${jamCellClass(hari, jam, iso < TODAY_ISO)}"></td>`;
+                const appt = appointmentDiJam(iso, jam);
+                const dotCls = appt ? (appt.status === 'perlu_dijadwal_ulang' ? 'bg-amber-500' : 'bg-indigo-600') : '';
+                return `<td class="h-4 border border-slate-100 ${jamCellClass(hari, jam, iso < TODAY_ISO)} text-center align-middle" ${appt ? `title="${escapeHtml(appt.pasien)} ${appt.mulai}–${appt.selesai}"` : ''}>
+                  ${appt ? `<span class="inline-block w-1.5 h-1.5 rounded-full ${dotCls}"></span>` : ''}
+                </td>`;
               }).join('')}
             </tr>`).join('')}
         </tbody>
       </table>
+    </div>
+    <div class="text-[10.5px] text-slate-400 mt-1.5 flex items-center gap-1.5">
+      <span class="inline-block w-1.5 h-1.5 rounded-full bg-indigo-600"></span> ada appointment terkonfirmasi pada jam itu
+      <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 ml-2"></span> perlu dijadwal ulang
     </div>
 
     <h4 class="text-xs font-semibold text-slate-500 uppercase mt-4 mb-2">Blok jadwal</h4>
@@ -549,7 +588,7 @@ function htmlKalenderBulan(dokterId) {
   }
 
   return `
-  <div class="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+  <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
     <h3 class="text-sm font-bold text-slate-700 mb-3">Kalender Efektif</h3>
     <div class="grid grid-cols-7 gap-1.5 text-center text-[11px] font-semibold text-slate-400 mb-1">
       ${HARI_TAMPIL.map(h => `<div>${h.slice(0, 3)}</div>`).join('')}
@@ -564,7 +603,7 @@ function htmlKalenderBulan(dokterId) {
         return `<button data-bulan-day="${iso}" ${past ? 'disabled' : ''} class="text-left rounded-lg border ${cls} px-2 py-2 h-16 flex flex-col justify-between ${past ? 'cursor-not-allowed' : 'hover:shadow-md transition'} ${today ? 'ring-2 ring-teal-500' : ''}">
           <div class="flex items-center justify-between">
             <span class="text-xs font-bold">${iso.slice(-2)}</span>
-            ${!past && s.apptCount ? `<span class="text-[10px] bg-white/70 rounded-full px-1.5">${s.apptCount}</span>` : ''}
+            ${!past && s.apptCount ? `<span class="text-[10px] font-semibold bg-indigo-600 text-white rounded-full px-1.5">${s.apptCount}</span>` : ''}
           </div>
           <div class="text-[10px] leading-tight">${past ? '' : s.label}</div>
         </button>`;
@@ -638,29 +677,7 @@ function renderPageJadwal(root, dokterId, konflik) {
 
     ${konflikBanner}
 
-    <div class="grid grid-cols-3 gap-5">
-      ${ui.mode === 'minggu' ? htmlJadwalMinggu(dokterId) : htmlKalenderBulan(dokterId)}
-      <div class="space-y-5">
-        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-          <h3 class="text-sm font-bold text-slate-700 mb-2">Appointment mendatang</h3>
-          <div class="space-y-1.5 max-h-[28rem] overflow-y-auto">
-            ${(() => {
-              const list = daftarAppointmentDokter(dokterId);
-              if (list.length === 0) return '<div class="text-xs text-slate-400 italic">Tidak ada.</div>';
-              return list.map(a => `
-                <div class="text-sm border border-slate-100 rounded-lg px-2.5 py-1.5">
-                  <div class="flex justify-between"><span class="font-medium">${escapeHtml(a.pasien)}</span><span class="text-slate-400">${a.tanggal}</span></div>
-                  <div class="flex gap-1 mt-0.5 items-center justify-between">
-                    <span class="text-slate-500">${a.mulai}–${a.selesai}</span>
-                    <div class="flex gap-1">${badgeStatus(a.status)}${badgeVisit(a.visitStatus)}</div>
-                  </div>
-                  ${a.visitStatus === 'belum-tiba' ? `<button data-tandai-tiba="${a.id}" class="text-[10px] text-slate-400 underline mt-1">tandai tiba (demo)</button>` : ''}
-                </div>`).join('');
-            })()}
-          </div>
-        </div>
-      </div>
-    </div>`;
+    ${ui.mode === 'minggu' ? htmlJadwalMinggu(dokterId) : htmlKalenderBulan(dokterId)}`;
 
   root.querySelectorAll('[data-mode]').forEach(btn => { btn.onclick = () => { ui.mode = btn.getAttribute('data-mode'); render(); }; });
   document.getElementById('nav-prev').onclick = () => {
@@ -681,7 +698,6 @@ function renderPageJadwal(root, dokterId, konflik) {
 
   if (ui.mode === 'minggu') wireJadwalMinggu(root, dokterId);
   else wireKalenderBulan(root);
-  wireTandaiTiba(root, dokterId);
 
   if (konflik) {
     if (konflik.blocked) document.getElementById('jadwal-dismiss').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
@@ -888,9 +904,26 @@ function renderLog() {
   body.scrollTop = body.scrollHeight;
 }
 
+function renderDemoPanel() {
+  const dokterId = state.selectedDokter;
+  const body = document.getElementById('demo-body');
+  const list = daftarAppointmentDokter(dokterId);
+  body.innerHTML = list.length === 0
+    ? `<div class="text-xs text-slate-400 italic">Tidak ada appointment untuk ${escapeHtml(dokterById(dokterId).nama)}.</div>`
+    : list.map(a => `
+      <div class="flex items-center justify-between gap-2 text-xs border-b border-slate-100 py-1.5 last:border-b-0">
+        <span class="text-slate-600">${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}</span>
+        ${a.visitStatus === 'belum-tiba'
+          ? `<button data-tandai-tiba="${a.id}" class="text-[11px] font-semibold text-teal-700 underline shrink-0">tandai tiba</button>`
+          : `<span class="text-[10px] text-slate-400 shrink-0">${a.visitStatus}</span>`}
+      </div>`).join('');
+  wireTandaiTiba(body, dokterId);
+}
+
 function render() {
   renderHalaman(document.getElementById('app-root'));
   renderLog();
+  renderDemoPanel();
 }
 
 document.getElementById('log-toggle').onclick = () => {
@@ -898,6 +931,12 @@ document.getElementById('log-toggle').onclick = () => {
   const collapsed = body.classList.contains('hidden');
   body.classList.toggle('hidden');
   document.getElementById('log-toggle').textContent = `Riwayat aksi ${collapsed ? '▴' : '▾'}`;
+};
+document.getElementById('demo-toggle').onclick = () => {
+  const body = document.getElementById('demo-body');
+  const collapsed = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  document.getElementById('demo-toggle').textContent = `Demo: tandai pasien tiba ${collapsed ? '▴' : '▾'}`;
 };
 
 render();
