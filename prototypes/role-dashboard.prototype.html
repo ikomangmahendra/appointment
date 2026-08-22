@@ -175,7 +175,7 @@ function perluDijadwalUlangItem(a, actionLabel) {
     id: a.id,
     primaryText: `${a.time} · ${a.patientName}`,
     secondaryText: `${layananName(a.layananId)} · ${dokterName(a.dokterId)}`,
-    meta: apptPill(a.appointmentStatus),
+    meta: '',
     group: null,
     action: { label: actionLabel, action: 'stub' },
   };
@@ -226,6 +226,7 @@ function buildModel(role) {
       { label: 'Perlu Check-In', value: belumTiba.length, tone: 'warn' },
       { label: 'Sedang di Klinik', value: diKlinik, tone: 'good' },
       { label: 'No-show', value: noShow, tone: 'bad' },
+      { label: 'Perlu Dijadwal Ulang', value: perluUlang.length, tone: perluUlang.length ? 'bad' : 'neutral' },
     ];
     const checkinItems = belumTiba.slice().sort(timeSort).map(a => ({
       id: a.id,
