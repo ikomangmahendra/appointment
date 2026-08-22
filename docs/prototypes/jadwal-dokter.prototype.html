@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<title>PROTOTYPE — Jadwal Dokter</title>
+<style>
+  :root {
+    --accent: #0f766e;
+    --accent-soft: #ccfbf1;
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --line: #e2e8f0;
+    --warn: #b45309;
+    --warn-soft: #fef3c7;
+    --bad: #b91c1c;
+    --bad-soft: #fee2e2;
+    --ok: #15803d;
+    --ok-soft: #dcfce7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 80px; }
+  .banner {
+    background: #111827;
+    color: #fbbf24;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 6px 0;
+    text-transform: uppercase;
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 4px; }
+  .question {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 18px 0 28px;
+    font-size: 14.5px;
+  }
+  .question b { color: var(--accent); }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 34px 0 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 14px; color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600;
+  }
+  .badge.confirmed { background: var(--ok-soft); color: var(--ok); }
+  .badge.perlu_dijadwal_ulang { background: var(--warn-soft); color: var(--warn); }
+  .badge.tersedia { background: var(--ok-soft); color: var(--ok); }
+  .badge.terisi { background: #e5e7eb; color: #4b5563; }
+  .badge.tutup { background: var(--bad-soft); color: var(--bad); }
+  button {
+    font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--line);
+    background: #fff; padding: 6px 11px; font-size: 13px; color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: #0d5c56; color: #fff; }
+  button.danger { color: var(--bad); border-color: #fecaca; }
+  button.danger:hover:not(:disabled) { background: var(--bad-soft); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  label { font-size: 12.5px; color: var(--muted); display: block; margin-bottom: 2px; }
+  input, select {
+    font: inherit; font-size: 13px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; color: var(--ink);
+  }
+  .field { display: flex; flex-direction: column; }
+  .msg { font-size: 13px; padding: 8px 10px; border-radius: 6px; margin-top: 8px; }
+  .msg.info { background: #eff6ff; color: #1d4ed8; }
+  .msg.warn { background: var(--warn-soft); color: var(--warn); }
+  .msg.error { background: var(--bad-soft); color: var(--bad); }
+  .log {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    background: #0f172a; color: #cbd5e1; border-radius: 8px; padding: 12px 14px;
+    max-height: 180px; overflow-y: auto;
+  }
+  .log div { margin-bottom: 3px; }
+  .log .t { color: #64748b; margin-right: 6px; }
+  .conflict-banner {
+    background: var(--warn-soft); border: 1px solid #fcd34d; border-radius: 8px;
+    padding: 14px 16px; margin: 12px 0 20px;
+  }
+  .conflict-banner h4 { margin: 0 0 6px; color: var(--warn); font-size: 14px; }
+  .conflict-banner ul { margin: 6px 0 12px 18px; padding: 0; font-size: 13.5px; }
+  .slot-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .slot {
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12.5px;
+    display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 78px;
+  }
+  .slot.tersedia { border-color: #86efac; }
+  .slot.terisi { background: #f3f4f6; color: var(--muted); }
+  .slot button { font-size: 11.5px; padding: 3px 7px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tabs button { border-radius: 999px; }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .scenario-desc { font-size: 13.5px; color: var(--ink); margin-bottom: 12px; }
+  .scenario-desc b { color: var(--accent); }
+  .steps { display: flex; flex-direction: column; gap: 6px; }
+  .step {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px;
+    border: 1px solid var(--line);
+  }
+  .step.done { background: #f0fdf4; border-color: #bbf7d0; }
+  .step.current { background: var(--accent-soft); border-color: var(--accent); }
+  .step .num {
+    width: 20px; height: 20px; border-radius: 50%; background: var(--line); color: #fff;
+    font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .step.done .num { background: var(--ok); }
+  .step.current .num { background: var(--accent); }
+  .step .label { font-size: 13px; flex: 1; }
+  .empty { color: var(--muted); font-size: 13px; font-style: italic; }
+  hr.sep { border: none; border-top: 1px solid var(--line); margin: 18px 0; }
+</style>
+</head>
+<body>
+<div class="banner">PROTOTYPE — throwaway code, not for production</div>
+<div class="wrap">
+  <h1>Admin Klinik: Membuat Jadwal Dokter</h1>
+  <div class="subtitle">Logic prototype — satu file HTML, tanpa server, tanpa database.</div>
+
+  <div class="question">
+    <b>Pertanyaan yang dijawab prototype ini:</b> Saat Admin Klinik mengatur <b>Jadwal</b> rutin seorang Dokter,
+    menambah <b>Pengecualian Jadwal</b> (cuti / jam khusus), atau mengubah <b>Jam Operasional</b> klinik —
+    apakah model data <code>Jadwal + Pengecualian Jadwal + Jam Operasional → Slot</code> dari
+    <code>CONTEXT.md</code> benar‑benar tahan terhadap kasus sulit? Terutama: apa yang terjadi pada
+    <b>Appointment</b> yang sudah dikonfirmasi pasien saat perubahan jadwal membuat slot itu tidak lagi tersedia?
+    Apakah sistem boleh mendiam‑diam “menghilangkan” appointment itu, atau harus memblokir perubahan sampai admin
+    sadar dan memutuskan?
+    <br><br>
+    <i>Asumsi: tidak ada halaman Angular/Spring yang sudah berjalan untuk fitur ini, jadi ini prototype logic
+    (bukan UI) — pertanyaan yang diuji adalah model state, bukan tampilan.</i>
+  </div>
+
+  <h2>Kondisi saat ini</h2>
+  <div id="pendingKonflik"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Jam Operasional Klinik</h3>
+      <table id="tblJamOperasional"></table>
+    </div>
+    <div class="card">
+      <h3>Jadwal Rutin — dr. Sari</h3>
+      <table id="tblJadwal"></table>
+      <div class="row" style="margin-top:10px">
+        <div class="field">
+          <label>Hari</label>
+          <select id="jHari"></select>
+        </div>
+        <div class="field">
+          <label>Mulai</label>
+          <input type="time" id="jMulai" value="08:00" />
+        </div>
+        <div class="field">
+          <label>Selesai</label>
+          <input type="time" id="jSelesai" value="12:00" />
+        </div>
+        <button class="primary" id="btnTambahJadwal" style="margin-top:16px">+ Tambah blok jadwal</button>
+      </div>
+      <div id="msgJadwal"></div>
+    </div>
+
+    <div class="card">
+      <h3>Pengecualian Jadwal</h3>
+      <table id="tblPengecualian"></table>
+      <div class="row" style="margin-top:10px">
+        <div class="field">
+          <label>Tanggal</label>
+          <input type="date" id="pTanggal" />
+        </div>
+        <div class="field">
+          <label>Tipe</label>
+          <select id="pTipe">
+            <option value="cuti">Cuti (libur sehari)</option>
+            <option value="jam_khusus">Jam khusus</option>
+          </select>
+        </div>
+        <div class="field" id="pJamWrap">
+          <label>Mulai–Selesai</label>
+          <div class="row" style="margin:0">
+            <input type="time" id="pMulai" value="08:00" style="width:90px" />
+            <input type="time" id="pSelesai" value="12:00" style="width:90px" />
+          </div>
+        </div>
+        <button class="primary" id="btnTambahPengecualian" style="margin-top:16px">+ Tambah pengecualian</button>
+      </div>
+      <div id="msgPengecualian"></div>
+    </div>
+
+    <div class="card">
+      <h3>Appointment Pasien (data yang sudah ada)</h3>
+      <table id="tblAppointments"></table>
+    </div>
+  </div>
+
+  <hr class="sep" />
+
+  <div class="card">
+    <h3>Lihat Slot &amp; Buat Appointment (untuk uji coba)</h3>
+    <div class="row">
+      <div class="field">
+        <label>Tanggal</label>
+        <input type="date" id="sTanggal" />
+      </div>
+      <div class="field">
+        <label>Layanan</label>
+        <select id="sLayanan"></select>
+      </div>
+    </div>
+    <div id="slotGrid" class="slot-grid"></div>
+    <div id="msgSlot"></div>
+  </div>
+
+  <h2>Riwayat aksi</h2>
+  <div class="log" id="log"></div>
+
+  <h2>Skenario terpandu</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="card">
+    <div class="scenario-desc" id="scenarioDesc"></div>
+    <div class="steps" id="scenarioSteps"></div>
+  </div>
+</div>
+
+<script id="jadwal-model">
+/*
+  ---- MODUL LOGIC MURNI ----
+  Tidak ada DOM, tidak ada `document`, tidak ada event handler di sini.
+  Ini bagian yang layak diangkat ke kode produksi kalau model ini divalidasi.
+*/
+const JadwalModel = (() => {
+  const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+  function hariDariTanggal(tanggalISO) {
+    const d = new Date(tanggalISO + 'T00:00:00');
+    return HARI[d.getDay()];
+  }
+
+  function menit(hhmm) {
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+  }
+  function hhmm(totalMenit) {
+    const h = Math.floor(totalMenit / 60).toString().padStart(2, '0');
+    const m = (totalMenit % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+  }
+
+  function jendelaEfektif(state, tanggalISO) {
+    // Urutan aturan (dari CONTEXT.md): Pengecualian Jadwal > Jadwal rutin, lalu selalu
+    // diiris (intersect) dengan Jam Operasional klinik.
+    const hari = hariDariTanggal(tanggalISO);
+    const jamOp = state.jamOperasional[hari];
+    const pengecualian = state.pengecualian.find(p => p.tanggal === tanggalISO);
+
+    if (pengecualian && pengecualian.tipe === 'cuti') {
+      return { jendela: [], alasanKosong: 'Dokter cuti (Pengecualian Jadwal) pada tanggal ini.' };
+    }
+    if (!jamOp) {
+      return { jendela: [], alasanKosong: `Klinik tutup pada hari ${hari} (Jam Operasional).` };
+    }
+
+    let jendelaMentah;
+    if (pengecualian && pengecualian.tipe === 'jam_khusus') {
+      jendelaMentah = [{ mulai: pengecualian.mulai, selesai: pengecualian.selesai }];
+    } else {
+      jendelaMentah = state.jadwal.filter(b => b.hari === hari).map(b => ({ mulai: b.mulai, selesai: b.selesai }));
+    }
+
+    const jendela = jendelaMentah
+      .map(w => ({
+        mulai: hhmm(Math.max(menit(w.mulai), menit(jamOp.buka))),
+        selesai: hhmm(Math.min(menit(w.selesai), menit(jamOp.tutup))),
+      }))
+      .filter(w => menit(w.mulai) < menit(w.selesai));
+
+    if (jendela.length === 0) {
+      return { jendela: [], alasanKosong: 'Tidak ada jadwal dokter yang tumpang tindih dengan jam operasional klinik pada tanggal ini.' };
+    }
+    return { jendela, alasanKosong: null };
+  }
+
+  function slotTersedia(state, tanggalISO, layananId) {
+    const layanan = state.layanan.find(l => l.id === layananId);
+    if (!layanan) return { slots: [], alasanKosong: 'Layanan tidak ditemukan.' };
+
+    const { jendela, alasanKosong } = jendelaEfektif(state, tanggalISO);
+    if (jendela.length === 0) return { slots: [], alasanKosong };
+
+    const appts = state.appointments.filter(a => a.tanggal === tanggalISO && a.status === 'confirmed');
+    const slots = [];
+    for (const w of jendela) {
+      let cursor = menit(w.mulai);
+      const akhir = menit(w.selesai);
+      while (cursor + layanan.durasiMenit <= akhir) {
+        const mulai = hhmm(cursor);
+        const selesai = hhmm(cursor + layanan.durasiMenit);
+        const bentrok = appts.find(a => !(a.selesai <= mulai || a.mulai >= selesai));
+        slots.push({
+          mulai, selesai,
+          status: bentrok ? 'terisi' : 'tersedia',
+          pasien: bentrok ? bentrok.pasien : null,
+        });
+        cursor += layanan.durasiMenit;
+      }
+    }
+    return { slots, alasanKosong: slots.length ? null : 'Jadwal ada, tapi tidak cukup panjang untuk satu slot layanan ini.' };
+  }
+
+  function waktuMasihTersedia(state, tanggalISO, mulai, selesai) {
+    const { jendela } = jendelaEfektif(state, tanggalISO);
+    return jendela.some(w => menit(w.mulai) <= menit(mulai) && menit(selesai) <= menit(w.selesai));
+  }
+
+  function cariKonflik(stateBaru, stateLama) {
+    return stateLama.appointments.filter(
+      a => a.status === 'confirmed' && !waktuMasihTersedia(stateBaru, a.tanggal, a.mulai, a.selesai)
+    );
+  }
+
+  function terapkanDenganCekKonflik(state, aksiLabel, buatStateHipotesis, paksa, alasan) {
+    const hipotesis = buatStateHipotesis(state);
+    const konflik = cariKonflik(hipotesis, state);
+    const konflikTerblokir = konflik.filter(a => a.visitStatus !== 'belum-tiba');
+
+    if (konflikTerblokir.length > 0) {
+      // Pasien sudah tiba secara fisik — tidak boleh dipaksa dengan cara apa pun.
+      return {
+        ...state,
+        pendingKonflik: null,
+        log: [...state.log, { level: 'error', text: `✗ "${aksiLabel}" ditolak total — pasien sudah tiba di klinik (${konflikTerblokir.map(a => `${a.pasien}: ${a.visitStatus}`).join(', ')}). Ubah jadwal ini tidak masuk akal lagi lewat back-office; tangani langsung di klinik.` }],
+      };
+    }
+
+    if (konflik.length > 0 && !paksa) {
+      return {
+        ...state,
+        pendingKonflik: { aksiLabel, appointments: konflik, terapkan: buatStateHipotesis },
+        log: [...state.log, { level: 'warn', text: `⚠️ "${aksiLabel}" ditunda — ${konflik.length} appointment akan kehilangan slotnya. Menunggu keputusan admin.` }],
+      };
+    }
+
+    if (konflik.length > 0 && paksa && !(alasan || '').trim()) {
+      // Tetap tahan sebagai pendingKonflik supaya admin tinggal isi alasan dan coba lagi.
+      return {
+        ...state,
+        pendingKonflik: { aksiLabel, appointments: konflik, terapkan: buatStateHipotesis },
+        log: [...state.log, { level: 'error', text: `✗ Belum bisa lanjut paksa — alasan wajib diisi untuk audit log.` }],
+      };
+    }
+
+    let hasil = hipotesis;
+    if (konflik.length > 0) {
+      const idKonflik = new Set(konflik.map(a => a.id));
+      hasil = {
+        ...hipotesis,
+        appointments: hipotesis.appointments.map(a =>
+          idKonflik.has(a.id) ? { ...a, status: 'perlu_dijadwal_ulang' } : a
+        ),
+      };
+    }
+    return {
+      ...hasil,
+      pendingKonflik: null,
+      log: [
+        ...state.log,
+        { level: 'info', text: `✓ ${aksiLabel}` },
+        ...(konflik.length > 0
+          ? [
+              { level: 'warn', text: `  → ${konflik.length} appointment ditandai "perlu dijadwal ulang" (bukan dihapus/diubah diam-diam): ${konflik.map(a => a.pasien).join(', ')}` },
+              { level: 'info', text: `  → Alasan paksa (audit log): "${alasan.trim()}"` },
+            ]
+          : []),
+      ],
+    };
+  }
+
+  function reduce(state, action) {
+    switch (action.type) {
+      case 'TAMBAH_JADWAL': {
+        const { hari, mulai, selesai } = action;
+        if (menit(mulai) >= menit(selesai)) {
+          return { ...state, log: [...state.log, { level: 'error', text: `✗ Blok jadwal ${hari} ${mulai}–${selesai} ditolak: jam mulai harus sebelum jam selesai.` }] };
+        }
+        const tumpangTindih = state.jadwal.find(
+          b => b.hari === hari && menit(b.mulai) < menit(selesai) && menit(mulai) < menit(b.selesai)
+        );
+        if (tumpangTindih) {
+          return { ...state, log: [...state.log, { level: 'error', text: `✗ Blok jadwal ${hari} ${mulai}–${selesai} ditolak: tumpang tindih dengan blok yang sudah ada (${tumpangTindih.mulai}–${tumpangTindih.selesai}).` }] };
+        }
+        return {
+          ...state,
+          jadwal: [...state.jadwal, { id: 'j' + Math.random().toString(36).slice(2, 8), hari, mulai, selesai }],
+          log: [...state.log, { level: 'info', text: `✓ Blok jadwal ditambahkan: ${hari} ${mulai}–${selesai}.` }],
+        };
+      }
+
+      case 'HAPUS_JADWAL': {
+        const blok = state.jadwal.find(b => b.id === action.id);
+        if (!blok) return state;
+        return terapkanDenganCekKonflik(
+          state,
+          `Hapus blok jadwal ${blok.hari} ${blok.mulai}–${blok.selesai}`,
+          s => ({ ...s, jadwal: s.jadwal.filter(b => b.id !== action.id) }),
+          action.paksa,
+          action.alasan
+        );
+      }
+
+      case 'TAMBAH_PENGECUALIAN': {
+        const { tanggal, tipe, mulai, selesai } = action;
+        if (state.pengecualian.some(p => p.tanggal === tanggal)) {
+          return { ...state, log: [...state.log, { level: 'error', text: `✗ Pengecualian untuk ${tanggal} ditolak: sudah ada pengecualian pada tanggal ini (hapus dulu yang lama).` }] };
+        }
+        if (tipe === 'jam_khusus' && menit(mulai) >= menit(selesai)) {
+          return { ...state, log: [...state.log, { level: 'error', text: `✗ Pengecualian jam khusus ditolak: jam mulai harus sebelum jam selesai.` }] };
+        }
+        const label = tipe === 'cuti' ? `Tambah cuti pada ${tanggal}` : `Tambah jam khusus ${tanggal} (${mulai}–${selesai})`;
+        return terapkanDenganCekKonflik(
+          state,
+          label,
+          s => ({
+            ...s,
+            pengecualian: [...s.pengecualian, { id: 'p' + Math.random().toString(36).slice(2, 8), tanggal, tipe, mulai, selesai }],
+          }),
+          action.paksa,
+          action.alasan
+        );
+      }
+
+      case 'HAPUS_PENGECUALIAN': {
+        const p = state.pengecualian.find(x => x.id === action.id);
+        if (!p) return state;
+        return terapkanDenganCekKonflik(
+          state,
+          `Hapus pengecualian ${p.tanggal}`,
+          s => ({ ...s, pengecualian: s.pengecualian.filter(x => x.id !== action.id) }),
+          action.paksa,
+          action.alasan
+        );
+      }
+
+      case 'SET_JAM_OPERASIONAL': {
+        const { hari, buka, tutup, tutupHari } = action;
+        const label = tutupHari ? `Tutup klinik setiap hari ${hari}` : `Ubah jam operasional ${hari} → ${buka}–${tutup}`;
+        return terapkanDenganCekKonflik(
+          state,
+          label,
+          s => ({ ...s, jamOperasional: { ...s.jamOperasional, [hari]: tutupHari ? null : { buka, tutup } } }),
+          action.paksa,
+          action.alasan
+        );
+      }
+
+      case 'LANJUTKAN_PAKSA': {
+        if (!state.pendingKonflik) return state;
+        return reduce(state, { ...action.aksiAsli, paksa: true, alasan: action.alasan });
+      }
+
+      case 'BATALKAN_KONFLIK': {
+        return { ...state, pendingKonflik: null, log: [...state.log, { level: 'info', text: '↩ Perubahan dibatalkan oleh admin, tidak ada appointment yang terdampak.' }] };
+      }
+
+      case 'TANDAI_TIBA': {
+        // Aksi demo: mensimulasikan pasien sudah check-in, di luar cakupan prototype ini
+        // (lihat prototype appointment-visit-status untuk model Visit Status sesungguhnya).
+        const appt = state.appointments.find(a => a.id === action.id);
+        if (!appt) return state;
+        return {
+          ...state,
+          appointments: state.appointments.map(a => a.id === action.id ? { ...a, visitStatus: 'menunggu' } : a),
+          log: [...state.log, { level: 'info', text: `✓ (demo) ${appt.pasien} ditandai sudah tiba di klinik.` }],
+        };
+      }
+
+      case 'BUAT_APPOINTMENT': {
+        const { tanggal, mulai, layananId, pasien } = action;
+        const layanan = state.layanan.find(l => l.id === layananId);
+        if (!layanan) return state;
+        const { slots } = slotTersedia(state, tanggal, layananId);
+        const slot = slots.find(s => s.mulai === mulai);
+        if (!slot || slot.status !== 'tersedia') {
+          return { ...state, log: [...state.log, { level: 'error', text: `✗ Booking ditolak: slot ${tanggal} ${mulai} untuk ${layanan.nama} tidak tersedia.` }] };
+        }
+        return {
+          ...state,
+          appointments: [
+            ...state.appointments,
+            { id: 'a' + Math.random().toString(36).slice(2, 8), tanggal, mulai: slot.mulai, selesai: slot.selesai, layananId, pasien, status: 'confirmed', visitStatus: 'belum-tiba' },
+          ],
+          log: [...state.log, { level: 'info', text: `✓ Appointment dibuat: ${pasien}, ${tanggal} ${slot.mulai}–${slot.selesai} (${layanan.nama}).` }],
+        };
+      }
+
+      default:
+        return state;
+    }
+  }
+
+  return { HARI, hariDariTanggal, jendelaEfektif, slotTersedia, waktuMasihTersedia, reduce };
+})();
+</script>
+
+<script>
+/* ---- Halaman (throwaway): render + wiring tombol, tidak ada logic bisnis di sini ---- */
+
+function seedAwal() {
+  const seninDepan = nextWeekday(1); // 1 = Senin
+  const selasaDepan = nextWeekday(2);
+  return {
+    layanan: [
+      { id: 'l1', nama: 'Konsultasi Umum', durasiMenit: 30 },
+      { id: 'l2', nama: 'Vaksinasi', durasiMenit: 15 },
+    ],
+    jamOperasional: {
+      Senin: { buka: '08:00', tutup: '17:00' },
+      Selasa: { buka: '08:00', tutup: '17:00' },
+      Rabu: { buka: '08:00', tutup: '17:00' },
+      Kamis: { buka: '08:00', tutup: '17:00' },
+      Jumat: { buka: '08:00', tutup: '17:00' },
+      Sabtu: { buka: '08:00', tutup: '12:00' },
+      Minggu: null,
+    },
+    jadwal: [{ id: 'j-seed', hari: 'Senin', mulai: '08:00', selesai: '12:00' }],
+    pengecualian: [],
+    appointments: [
+      { id: 'a-seed', tanggal: seninDepan, mulai: '09:00', selesai: '09:30', layananId: 'l1', pasien: 'Budi', status: 'confirmed', visitStatus: 'belum-tiba' },
+    ],
+    pendingKonflik: null,
+    log: [{ level: 'info', text: 'Kondisi awal dimuat: dr. Sari punya jadwal Senin 08:00–12:00, dan Budi sudah punya appointment Senin 09:00.' }],
+    _seninDepan: seninDepan,
+    _selasaDepan: selasaDepan,
+  };
+}
+
+function keTanggalISOLokal(d) {
+  // Sengaja tidak pakai toISOString(): itu mengonversi ke UTC dan bisa
+  // menggeser tanggal mundur satu hari untuk zona waktu UTC+, terutama
+  // dini hari — persis kasus yang bikin "Senin depan" jadi "Minggu".
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function nextWeekday(targetDay) {
+  const d = new Date();
+  const diff = (targetDay - d.getDay() + 7) % 7 || 7;
+  d.setDate(d.getDate() + diff);
+  return keTanggalISOLokal(d);
+}
+
+let state = seedAwal();
+let lastAksiUntukKonflik = null;
+let activeScenario = null;
+let scenarioStep = 0;
+
+const SKENARIO = [
+  {
+    key: 'normal',
+    judul: 'Jalur normal',
+    deskripsi: 'Admin menambah blok jadwal baru, lalu pasien membuat appointment di slot yang tersedia, dan slot itu langsung terisi.',
+    langkah: [
+      { label: 'Tambah jadwal Selasa 08:00–12:00', run: () => dispatch({ type: 'TAMBAH_JADWAL', hari: 'Selasa', mulai: '08:00', selesai: '12:00' }) },
+      { label: 'Lihat slot Selasa depan untuk Konsultasi Umum', run: () => { setSlotViewer(state._selasaDepan, 'l1'); renderSlots(); } },
+      { label: 'Buat appointment Rina pada 08:00', run: () => dispatch({ type: 'BUAT_APPOINTMENT', tanggal: state._selasaDepan, mulai: '08:00', layananId: 'l1', pasien: 'Rina' }) },
+      { label: 'Lihat slot lagi — 08:00 sekarang "terisi"', run: () => renderSlots() },
+    ],
+  },
+  {
+    key: 'hapus-konflik',
+    judul: 'Menghapus jadwal yang sudah dipakai',
+    deskripsi: 'Admin mencoba menghapus blok jadwal Senin 08:00–12:00 — padahal Budi sudah punya appointment jam 09:00 di dalamnya. Sistem harus menahan perubahan, bukan mendiam-diam menghilangkan appointment Budi.',
+    langkah: [
+      { label: 'Coba hapus blok jadwal Senin 08:00–12:00', run: () => dispatch({ type: 'HAPUS_JADWAL', id: 'j-seed' }) },
+      { label: 'Lihat peringatan konflik yang muncul', run: () => {} },
+      { label: 'Admin memutuskan: lanjutkan paksa (dengan alasan)', run: () => dispatch({ type: 'LANJUTKAN_PAKSA', aksiAsli: { type: 'HAPUS_JADWAL', id: 'j-seed' }, alasan: 'Blok jadwal Senin pagi tidak lagi dibutuhkan, sudah dikonfirmasi ke Budi via telepon.' }) },
+      { label: 'Lihat status appointment Budi berubah', run: () => {} },
+    ],
+  },
+  {
+    key: 'sudah-tiba',
+    judul: 'Diblokir total: pasien sudah tiba',
+    deskripsi: 'Sama seperti skenario di atas, tapi kali ini Budi sudah check-in di klinik saat perubahan jadwal dicoba. Kasus ini tidak boleh bisa dipaksa sama sekali — mengubah jadwal lewat back-office tidak masuk akal lagi begitu pasiennya sudah berdiri di depan meja resepsionis.',
+    langkah: [
+      { label: '(demo) Tandai Budi sudah tiba di klinik', run: () => dispatch({ type: 'TANDAI_TIBA', id: 'a-seed' }) },
+      { label: 'Coba hapus blok jadwal Senin 08:00–12:00', run: () => dispatch({ type: 'HAPUS_JADWAL', id: 'j-seed' }) },
+      { label: 'Lihat log — ditolak total, tidak ada opsi "paksa"', run: () => {} },
+    ],
+  },
+  {
+    key: 'ilegal',
+    judul: 'Percobaan yang seharusnya ilegal',
+    deskripsi: 'Dua percobaan yang model harus tolak: jadwal yang tumpang tindih pada hari yang sama, dan booking pada slot yang tidak ada (klinik tutup).',
+    langkah: [
+      { label: 'Coba tambah blok Senin 10:00–14:00 (tumpang tindih 08:00–12:00)', run: () => dispatch({ type: 'TAMBAH_JADWAL', hari: 'Senin', mulai: '10:00', selesai: '14:00' }) },
+      { label: 'Lihat slot Minggu depan (klinik tutup)', run: () => { setSlotViewer(nextWeekday(0), 'l1'); renderSlots(); } },
+      { label: 'Coba buat appointment Minggu 09:00 — ditolak', run: () => dispatch({ type: 'BUAT_APPOINTMENT', tanggal: nextWeekday(0), mulai: '09:00', layananId: 'l1', pasien: 'Coba Ilegal' }) },
+    ],
+  },
+  {
+    key: 'cuti',
+    judul: 'Pengecualian Jadwal: cuti dokter',
+    deskripsi: 'Dokter tiba-tiba cuti pada hari Senin depan — hari yang sama dengan appointment Budi. Pengecualian Jadwal harus menang atas jadwal rutin, tapi tetap tidak boleh menghapus appointment Budi diam-diam.',
+    langkah: [
+      { label: 'Tambah pengecualian "cuti" untuk Senin depan', run: () => dispatch({ type: 'TAMBAH_PENGECUALIAN', tanggal: state._seninDepan, tipe: 'cuti', mulai: null, selesai: null }) },
+      { label: 'Lihat peringatan konflik', run: () => {} },
+      { label: 'Admin konfirmasi cuti tetap berlaku (paksa, dengan alasan)', run: () => dispatch({ type: 'LANJUTKAN_PAKSA', aksiAsli: { type: 'TAMBAH_PENGECUALIAN', tanggal: state._seninDepan, tipe: 'cuti', mulai: null, selesai: null }, alasan: 'Dokter mendadak sakit, cuti dikonfirmasi pagi ini.' }) },
+      { label: 'Lihat slot Senin depan — kosong karena cuti', run: () => { setSlotViewer(state._seninDepan, 'l1'); renderSlots(); } },
+    ],
+  },
+];
+
+function dispatch(action) {
+  state = JadwalModel.reduce(state, action);
+  renderAll();
+}
+
+function resetState() {
+  state = seedAwal();
+}
+
+function setSlotViewer(tanggal, layananId) {
+  document.getElementById('sTanggal').value = tanggal;
+  document.getElementById('sLayanan').value = layananId;
+}
+
+// ---------- render ----------
+
+function renderAll() {
+  renderJamOperasional();
+  renderJadwal();
+  renderPengecualian();
+  renderAppointments();
+  renderPendingKonflik();
+  renderSlots();
+  renderLog();
+  renderScenario();
+}
+
+function renderJamOperasional() {
+  const tbl = document.getElementById('tblJamOperasional');
+  let html = '<tr><th>Hari</th><th>Jam</th><th></th></tr>';
+  for (const hari of JadwalModel.HARI) {
+    const jo = state.jamOperasional[hari];
+    html += `<tr>
+      <td>${hari}</td>
+      <td>${jo ? `${jo.buka}–${jo.tutup}` : '<span class="badge tutup">tutup</span>'}</td>
+      <td style="text-align:right">
+        <button data-jo-edit="${hari}">Ubah</button>
+      </td>
+    </tr>`;
+  }
+  tbl.innerHTML = html;
+  tbl.querySelectorAll('[data-jo-edit]').forEach(btn => {
+    btn.onclick = () => ubahJamOperasional(btn.getAttribute('data-jo-edit'));
+  });
+}
+
+function ubahJamOperasional(hari) {
+  const current = state.jamOperasional[hari];
+  const tutup = confirm(`Tutup klinik setiap hari ${hari}?\n(OK = tutup, Batal = atur jam buka/tutup)`);
+  if (tutup) {
+    dispatch({ type: 'SET_JAM_OPERASIONAL', hari, tutupHari: true });
+    return;
+  }
+  const buka = prompt(`Jam buka ${hari} (HH:MM)`, current ? current.buka : '08:00');
+  if (!buka) return;
+  const tutupJam = prompt(`Jam tutup ${hari} (HH:MM)`, current ? current.tutup : '17:00');
+  if (!tutupJam) return;
+  dispatch({ type: 'SET_JAM_OPERASIONAL', hari, buka, tutup: tutupJam, tutupHari: false });
+}
+
+function renderJadwal() {
+  const tbl = document.getElementById('tblJadwal');
+  let html = '<tr><th>Hari</th><th>Jam</th><th></th></tr>';
+  if (state.jadwal.length === 0) html += '<tr><td colspan="3" class="empty">Belum ada blok jadwal.</td></tr>';
+  for (const b of state.jadwal) {
+    html += `<tr>
+      <td>${b.hari}</td><td>${b.mulai}–${b.selesai}</td>
+      <td style="text-align:right"><button class="danger" data-hapus-jadwal="${b.id}">Hapus</button></td>
+    </tr>`;
+  }
+  tbl.innerHTML = html;
+  tbl.querySelectorAll('[data-hapus-jadwal]').forEach(btn => {
+    btn.onclick = () => dispatch({ type: 'HAPUS_JADWAL', id: btn.getAttribute('data-hapus-jadwal') });
+  });
+
+  const jHari = document.getElementById('jHari');
+  if (!jHari.dataset.filled) {
+    jHari.innerHTML = JadwalModel.HARI.map(h => `<option value="${h}">${h}</option>`).join('');
+    jHari.value = 'Rabu';
+    jHari.dataset.filled = '1';
+  }
+}
+
+function renderPengecualian() {
+  const tbl = document.getElementById('tblPengecualian');
+  let html = '<tr><th>Tanggal</th><th>Tipe</th><th></th></tr>';
+  if (state.pengecualian.length === 0) html += '<tr><td colspan="3" class="empty">Belum ada pengecualian.</td></tr>';
+  for (const p of state.pengecualian) {
+    const tipe = p.tipe === 'cuti' ? 'Cuti' : `Jam khusus ${p.mulai}–${p.selesai}`;
+    html += `<tr>
+      <td>${p.tanggal}</td><td>${tipe}</td>
+      <td style="text-align:right"><button class="danger" data-hapus-pengecualian="${p.id}">Hapus</button></td>
+    </tr>`;
+  }
+  tbl.innerHTML = html;
+  tbl.querySelectorAll('[data-hapus-pengecualian]').forEach(btn => {
+    btn.onclick = () => dispatch({ type: 'HAPUS_PENGECUALIAN', id: btn.getAttribute('data-hapus-pengecualian') });
+  });
+}
+
+function renderAppointments() {
+  const tbl = document.getElementById('tblAppointments');
+  let html = '<tr><th>Tanggal</th><th>Jam</th><th>Layanan</th><th>Pasien</th><th>Status</th><th>Visit Status</th><th></th></tr>';
+  if (state.appointments.length === 0) html += '<tr><td colspan="7" class="empty">Belum ada appointment.</td></tr>';
+  for (const a of state.appointments) {
+    const layanan = state.layanan.find(l => l.id === a.layananId);
+    html += `<tr>
+      <td>${a.tanggal}</td><td>${a.mulai}–${a.selesai}</td><td>${layanan ? layanan.nama : '?'}</td><td>${a.pasien}</td>
+      <td><span class="badge ${a.status}">${a.status === 'confirmed' ? 'confirmed' : 'perlu dijadwal ulang'}</span></td>
+      <td>${a.visitStatus}</td>
+      <td>${a.visitStatus === 'belum-tiba' ? `<button data-tandai-tiba="${a.id}">Tandai tiba (demo)</button>` : ''}</td>
+    </tr>`;
+  }
+  tbl.innerHTML = html;
+  tbl.querySelectorAll('[data-tandai-tiba]').forEach(btn => {
+    btn.onclick = () => dispatch({ type: 'TANDAI_TIBA', id: btn.getAttribute('data-tandai-tiba') });
+  });
+}
+
+function renderPendingKonflik() {
+  const el = document.getElementById('pendingKonflik');
+  if (!state.pendingKonflik) { el.innerHTML = ''; return; }
+  const { aksiLabel, appointments } = state.pendingKonflik;
+  el.innerHTML = `
+    <div class="conflict-banner">
+      <h4>⚠️ Konflik: "${aksiLabel}" akan memengaruhi appointment yang sudah dikonfirmasi</h4>
+      <ul>${appointments.map(a => `<li>${a.pasien} — ${a.tanggal} ${a.mulai}–${a.selesai}</li>`).join('')}</ul>
+      <label for="alasanPaksa">Alasan (wajib, untuk audit log)</label>
+      <input id="alasanPaksa" style="width:100%;margin-bottom:10px" placeholder="mis. Dokter cuti mendadak, sudah dikonfirmasi via telepon">
+      <button data-batal-konflik>Batalkan perubahan</button>
+      <button class="primary" data-paksa-konflik>Lanjutkan &amp; tandai "perlu dijadwal ulang"</button>
+    </div>`;
+  el.querySelector('[data-batal-konflik]').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
+  el.querySelector('[data-paksa-konflik]').onclick = () => dispatch({
+    type: 'LANJUTKAN_PAKSA',
+    aksiAsli: lastAksiUntukKonflik,
+    alasan: document.getElementById('alasanPaksa').value,
+  });
+}
+
+function renderSlots() {
+  const sLayanan = document.getElementById('sLayanan');
+  if (!sLayanan.dataset.filled) {
+    sLayanan.innerHTML = state.layanan.map(l => `<option value="${l.id}">${l.nama} (${l.durasiMenit} menit)</option>`).join('');
+    sLayanan.dataset.filled = '1';
+  }
+  const sTanggal = document.getElementById('sTanggal');
+  if (!sTanggal.value) sTanggal.value = state._seninDepan;
+
+  const tanggal = sTanggal.value;
+  const layananId = sLayanan.value;
+  const { slots, alasanKosong } = JadwalModel.slotTersedia(state, tanggal, layananId);
+  const grid = document.getElementById('slotGrid');
+  const msg = document.getElementById('msgSlot');
+
+  if (slots.length === 0) {
+    grid.innerHTML = '';
+    msg.innerHTML = `<div class="msg info">${alasanKosong || 'Tidak ada slot.'}</div>`;
+    return;
+  }
+  msg.innerHTML = '';
+  grid.innerHTML = slots.map(s => `
+    <div class="slot ${s.status}">
+      <div>${s.mulai}–${s.selesai}</div>
+      <span class="badge ${s.status}">${s.status === 'tersedia' ? 'tersedia' : s.pasien}</span>
+      ${s.status === 'tersedia' ? `<button data-book="${s.mulai}">Booking</button>` : ''}
+    </div>
+  `).join('');
+  grid.querySelectorAll('[data-book]').forEach(btn => {
+    btn.onclick = () => {
+      const pasien = prompt('Nama pasien?', 'Pasien Baru');
+      if (!pasien) return;
+      dispatch({ type: 'BUAT_APPOINTMENT', tanggal, mulai: btn.getAttribute('data-book'), layananId, pasien });
+    };
+  });
+}
+
+function renderLog() {
+  const el = document.getElementById('log');
+  el.innerHTML = state.log.slice(-30).map((l, i) => `<div><span class="t">${String(i + 1).padStart(2, '0')}</span>${escapeHtml(l.text)}</div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+function renderScenario() {
+  document.getElementById('tabs').innerHTML = SKENARIO.map(s =>
+    `<button data-tab="${s.key}" class="${activeScenario === s.key ? 'active' : ''}">${s.judul}</button>`
+  ).join('');
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.onclick = () => startScenario(btn.getAttribute('data-tab'));
+  });
+
+  if (!activeScenario) {
+    document.getElementById('scenarioDesc').innerHTML = '<span class="empty">Pilih skenario di atas untuk mulai walkthrough terpandu.</span>';
+    document.getElementById('scenarioSteps').innerHTML = '';
+    return;
+  }
+  const sk = SKENARIO.find(s => s.key === activeScenario);
+  document.getElementById('scenarioDesc').innerHTML = `<b>${sk.judul}.</b> ${sk.deskripsi}`;
+  document.getElementById('scenarioSteps').innerHTML = sk.langkah.map((l, i) => {
+    const cls = i < scenarioStep ? 'done' : i === scenarioStep ? 'current' : '';
+    const disabled = i !== scenarioStep;
+    return `<div class="step ${cls}">
+      <div class="num">${i < scenarioStep ? '✓' : i + 1}</div>
+      <div class="label">${l.label}</div>
+      <button data-step="${i}" ${disabled ? 'disabled' : ''}>${i === scenarioStep ? 'Jalankan' : ''}</button>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('[data-step]').forEach(btn => {
+    btn.onclick = () => runScenarioStep(parseInt(btn.getAttribute('data-step'), 10));
+  });
+}
+
+function startScenario(key) {
+  resetState();
+  activeScenario = key;
+  scenarioStep = 0;
+  renderAll();
+}
+
+function runScenarioStep(i) {
+  const sk = SKENARIO.find(s => s.key === activeScenario);
+  sk.langkah[i].run();
+  scenarioStep = i + 1;
+  renderAll();
+}
+
+// ---------- wiring bebas (free-play) ----------
+
+document.getElementById('btnTambahJadwal').onclick = () => {
+  const hari = document.getElementById('jHari').value;
+  const mulai = document.getElementById('jMulai').value;
+  const selesai = document.getElementById('jSelesai').value;
+  dispatch({ type: 'TAMBAH_JADWAL', hari, mulai, selesai });
+};
+
+document.getElementById('pTipe').onchange = () => {
+  document.getElementById('pJamWrap').style.display = document.getElementById('pTipe').value === 'jam_khusus' ? '' : 'none';
+};
+document.getElementById('pTipe').onchange();
+
+document.getElementById('btnTambahPengecualian').onclick = () => {
+  const tanggal = document.getElementById('pTanggal').value;
+  if (!tanggal) return;
+  const tipe = document.getElementById('pTipe').value;
+  const mulai = document.getElementById('pMulai').value;
+  const selesai = document.getElementById('pSelesai').value;
+  const aksi = { type: 'TAMBAH_PENGECUALIAN', tanggal, tipe, mulai: tipe === 'jam_khusus' ? mulai : null, selesai: tipe === 'jam_khusus' ? selesai : null };
+  dispatch(aksi);
+};
+
+document.getElementById('sTanggal').onchange = renderSlots;
+document.getElementById('sLayanan').onchange = renderSlots;
+
+// wrap dispatch so the "paksa" button in the conflict banner knows which action to redo
+const originalDispatch = dispatch;
+dispatch = function (action) {
+  if (['HAPUS_JADWAL', 'TAMBAH_PENGECUALIAN', 'HAPUS_PENGECUALIAN', 'SET_JAM_OPERASIONAL'].includes(action.type)) {
+    lastAksiUntukKonflik = action;
+  }
+  originalDispatch(action);
+};
+
+document.getElementById('sTanggal').value = state._seninDepan;
+renderAll();
+</script>
+</body>
+</html>
