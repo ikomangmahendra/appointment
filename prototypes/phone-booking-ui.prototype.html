@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Resepsionis: Booking via Telepon</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the Resepsionis' "create Appointment from a phone
+  call" screen look like? No backend, no persistence — dokter/slot data is
+  canned. See CONTEXT.md for domain terms (Resepsionis, Layanan, Dokter,
+  Slot, Patient Matching, Duplicate Candidate).
+
+  UPDATE (feedback round 2 — consolidation with the patient-management
+  prototype): this used to be a 3-variant switcher file. Feedback picked
+  Variant B — Dashboard split-screen — and asked for it to become the one
+  real screen, wired into the patient-management/patient-create/
+  patient-detail flow instead of standing alone:
+
+    - Variants A (step wizard) and C (conversation timeline) are gone,
+      along with the variant switcher — there's only one screen now.
+    - The old inline "cari pasien" section is gone. By the time a
+      Resepsionis lands here, the patient is already picked — either an
+      existing Patient (?patientId=<id>, looked up in the small canned
+      PATIENTS_DB below, kept in sync by id/name with
+      patient-management.prototype.html) or one just created in
+      patient-create.prototype.html (?newPatientName=&newPatientPhone=&
+      newPatientNik=&newPatientDob=&newPatientGender=, since that patient
+      has no numeric id to look up yet). A simple read-only profile card
+      replaces the search box; "Ganti pasien" goes back to the directory
+      if the receptionist picked the wrong person.
+    - Slots now cover Hari ini / Besok / Besok Lusa (was just today/besok),
+      plus a "Tanggal lain" date picker for anything further out —
+      generateSlotsForDate() fakes a canned-but-stable slot list for any
+      date the receptionist picks.
+    - The "panggilan sedang berlangsung" indicator is now a real ticking
+      clock running from page load; it doubles as the handling-time
+      measure requested in feedback ("catat berapa lama staff melayani
+      booking") — frozen and shown on the confirmation banner, and logged
+      to the console as a stand-in for wherever a real app would record
+      this metric.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+  Try: ?patientId=2 (existing patient, Duplicate Candidate), or open with
+  no params at all — it falls back to a demo patient so the file is still
+  trivially double-clickable on its own.
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+  .pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16">
+
+<div id="app"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md) — just enough to make the UI feel real.
+// ---------------------------------------------------------------------------
+const LAYANAN = [
+  { id: 1, name: 'Pemeriksaan Umum', duration: 15 },
+  { id: 2, name: 'Vaksinasi', duration: 20 },
+  { id: 3, name: 'Konsultasi Gigi', duration: 30 },
+  { id: 4, name: 'Fisioterapi', duration: 45 },
+];
+
+const DOKTER = [
+  { id: 1, name: 'dr. Amelia Putri', layananIds: [1, 2] },
+  { id: 2, name: 'dr. Bagus Santoso', layananIds: [3] },
+  { id: 3, name: 'dr. Citra Dewi', layananIds: [1, 2] },
+  { id: 4, name: 'dr. Dimas Wijaya', layananIds: [4] },
+];
+
+// "Today" is pinned to match the other prototypes in this set (see
+// patient-detail.prototype.html's passwordExpiryNote) so Hari ini/Besok/
+// Besok Lusa line up with a stable date instead of the real clock.
+const TODAY = new Date('2026-08-22T00:00:00');
+function addDays(date, n) { const d = new Date(date); d.setDate(d.getDate() + n); return d; }
+function isoDate(d) { return d.toISOString().slice(0, 10); }
+function fmtDayLabel(d) { return d.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' }); }
+
+const DAY_OFFSETS = [
+  { key: 'hari-ini', label: 'Hari ini', offset: 0 },
+  { key: 'besok', label: 'Besok', offset: 1 },
+  { key: 'besok-lusa', label: 'Besok Lusa', offset: 2 },
+];
+
+// slots[dokterId][dayKey] = [{ time, booked }] for the 3 fixed near-term days.
+const SLOTS = {
+  1: {
+    'hari-ini': ['09:00', '09:15', '09:30', '10:00', '10:15', '13:00', '13:30'].map((t, i) => ({ time: t, booked: i % 3 === 1 })),
+    'besok': ['09:00', '09:15', '10:00', '10:30', '11:00'].map((t, i) => ({ time: t, booked: i === 1 })),
+    'besok-lusa': ['09:00', '09:30', '10:00', '10:30', '13:00'].map((t, i) => ({ time: t, booked: i === 3 })),
+  },
+  2: {
+    'hari-ini': ['10:00', '10:30', '11:00', '14:00', '14:30'].map((t, i) => ({ time: t, booked: i === 0 })),
+    'besok': ['10:00', '10:30', '11:00'].map((t) => ({ time: t, booked: false })),
+    'besok-lusa': ['10:00', '10:30', '11:00', '14:00'].map((t, i) => ({ time: t, booked: i === 2 })),
+  },
+  3: {
+    'hari-ini': ['09:00', '09:20', '09:40', '13:00', '13:20'].map((t, i) => ({ time: t, booked: i % 2 === 0 })),
+    'besok': ['09:00', '09:20', '09:40', '10:00'].map((t) => ({ time: t, booked: false })),
+    'besok-lusa': ['09:00', '09:20', '13:00', '13:20'].map((t, i) => ({ time: t, booked: i === 1 })),
+  },
+  4: {
+    'hari-ini': ['08:00', '08:45', '13:00'].map((t, i) => ({ time: t, booked: i === 2 })),
+    'besok': ['08:00', '08:45', '09:30'].map((t) => ({ time: t, booked: false })),
+    'besok-lusa': ['08:00', '08:45', '13:00'].map((t, i) => ({ time: t, booked: i === 0 })),
+  },
+};
+
+// Deterministic stand-in for a real availability lookup: any date beyond
+// the 3 fixed days still needs *some* slot list, so hash dokter+date into a
+// stable booked/free pattern (stable across re-renders, unlike Math.random).
+function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; } return Math.abs(h); }
+function generateSlotsForDate(dokterId, dateStr) {
+  const base = ['08:30', '09:00', '09:30', '10:00', '10:30', '13:00', '13:30', '14:00'];
+  const h = hashStr(`${dokterId}-${dateStr}`);
+  return base.map((t, i) => ({ time: t, booked: (h >> i) % 3 === 0 }));
+}
+
+// Canned Patient Matching: exact NIK-grade match vs a fuzzy Duplicate
+// Candidate, kept by id/name in sync with patient-management.prototype.html
+// and patient-detail.prototype.html so ?patientId=<id> lands on "the same"
+// person across files. UI-only — renders the *shapes* these states take,
+// does not implement the real rule. See docs/adr/0004.
+const PATIENTS_DB = [
+  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', lastVisit: '02 Jul 2026 — Pemeriksaan Umum' },
+  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', lastVisit: null, duplicateOf: 3 },
+  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', lastVisit: '14 Jun 2026 — Vaksinasi', duplicateOf: 2 },
+  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', lastVisit: '10 Aug 2026 — Konsultasi Gigi' },
+  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', lastVisit: '05 Jan 2026 — Fisioterapi' },
+  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', lastVisit: null },
+  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', lastVisit: null, duplicateOf: 6 },
+  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', lastVisit: '22 May 2026 — Pemeriksaan Umum' },
+];
+function byId(id) { return PATIENTS_DB.find(p => p.id === id) || null; }
+
+// ---------------------------------------------------------------------------
+// Who is this booking for? Resolved once at load from the URL — either an
+// existing Patient (?patientId=) or one just created in
+// patient-create.prototype.html (?newPatientName=&newPatientPhone=&...).
+// Falls back to a demo patient so the file still runs standalone.
+// ---------------------------------------------------------------------------
+function resolvePatientFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const patientId = Number(params.get('patientId'));
+  if (patientId && byId(patientId)) return { ...byId(patientId), isNew: false };
+
+  const newName = params.get('newPatientName');
+  if (newName) {
+    return {
+      id: null, isNew: true, name: newName,
+      gender: params.get('newPatientGender') || null,
+      phone: params.get('newPatientPhone') || '',
+      nik: params.get('newPatientNik') || null,
+      dob: params.get('newPatientDob') || null,
+      lastVisit: null,
+    };
+  }
+
+  return { ...byId(1), isNew: false, isFallbackDemo: true };
+}
+
+const patient = resolvePatientFromUrl();
+
+// ---------------------------------------------------------------------------
+// Shared state — one "phone call" the receptionist is on.
+// ---------------------------------------------------------------------------
+let booking = {
+  selectedLayananId: null,
+  selectedDokterId: null,
+  selectedSlot: null, // { day: 'hari-ini'|'besok'|'besok-lusa'|isoDateString, label, time }
+  customDate: '',
+  notes: '',
+  confirmed: false,
+  serviceDurationMs: null,
+};
+
+function resetBookingKeepPatient() {
+  booking = { selectedLayananId: null, selectedDokterId: null, selectedSlot: null, customDate: '', notes: '', confirmed: false, serviceDurationMs: null };
+  callStartedAt = Date.now();
+  render();
+}
+
+function getSelectedLayanan() { return LAYANAN.find(l => l.id === booking.selectedLayananId) || null; }
+function getSelectedDokter() { return DOKTER.find(d => d.id === booking.selectedDokterId) || null; }
+function dokterFor(layananId) { return DOKTER.filter(d => d.layananIds.includes(layananId)); }
+
+// ---------------------------------------------------------------------------
+// Handling-time tracker — "catat berapa lama staff melayani booking".
+// Starts ticking the moment this screen loads (proxy for "call answered"),
+// shown live, frozen once the booking is confirmed.
+// ---------------------------------------------------------------------------
+let callStartedAt = Date.now();
+let tickHandle = null;
+
+function fmtDuration(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60), s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function startTicking() {
+  if (tickHandle) clearInterval(tickHandle);
+  tickHandle = setInterval(() => {
+    if (booking.confirmed) return;
+    const el = document.getElementById('live-timer');
+    if (el) el.textContent = fmtDuration(Date.now() - callStartedAt);
+  }, 1000);
+}
+
+// ---------------------------------------------------------------------------
+// Small render helpers
+// ---------------------------------------------------------------------------
+function esc(s) { return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function genderIcon(g) {
+  if (g === 'P') return `<span title="Perempuan" class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-pink-100 text-pink-600 text-xs shrink-0">♀</span>`;
+  if (g === 'L') return `<span title="Laki-laki" class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs shrink-0">♂</span>`;
+  return '';
+}
+function fmtDob(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : null; }
+
+function patientProfileCard() {
+  const p = patient;
+  const dup = p.duplicateOf ? byId(p.duplicateOf) : null;
+  return `<div class="space-y-2">
+    <div class="border border-slate-200 rounded-lg p-3 bg-white">
+      <div class="flex items-center gap-2">
+        <div class="font-medium text-sm">${esc(p.name)}</div>
+        ${genderIcon(p.gender)}
+        ${p.isNew ? '<span class="text-[11px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Pasien baru</span>' : ''}
+      </div>
+      <div class="text-xs text-slate-500 mt-1 space-y-0.5">
+        <div>${esc(p.phone) || '<span class="italic text-slate-400">Telepon belum diisi</span>'}</div>
+        <div>NIK: ${p.nik ? esc(p.nik) : '<span class="italic text-slate-400">belum diisi</span>'}</div>
+        <div>Tgl Lahir: ${fmtDob(p.dob) || '<span class="italic text-slate-400">belum diisi</span>'}</div>
+        <div>Terakhir kunjungan: ${p.lastVisit ? esc(p.lastVisit) : '<span class="italic text-slate-400">belum pernah</span>'}</div>
+      </div>
+      ${dup ? `<div class="mt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">⚠ Duplicate Candidate — kemungkinan sama dengan <strong>${esc(dup.name)}</strong> (${esc(dup.phone)}).</div>` : ''}
+      ${p.isFallbackDemo ? `<div class="mt-2 text-[11px] text-slate-400">Dibuka tanpa pasien terpilih — menampilkan data contoh.</div>` : ''}
+    </div>
+    <a href="patient-management.prototype.html" class="text-xs text-slate-500 underline inline-block">← Bukan pasien ini? Ganti pasien</a>
+  </div>`;
+}
+
+function layananChips() {
+  return LAYANAN.map(l => `
+    <button data-action="select-layanan" data-id="${l.id}"
+      class="px-3 py-1.5 rounded-full text-sm border ${booking.selectedLayananId === l.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-slate-300 hover:border-blue-400'}">
+      ${esc(l.name)} <span class="opacity-60">· ${l.duration}m</span>
+    </button>`).join('');
+}
+
+function dokterChips() {
+  const options = booking.selectedLayananId ? dokterFor(booking.selectedLayananId) : [];
+  if (!booking.selectedLayananId) return `<div class="text-sm text-slate-400">Pilih Layanan dahulu</div>`;
+  return options.map(d => `
+    <button data-action="select-dokter" data-id="${d.id}"
+      class="px-3 py-1.5 rounded-full text-sm border ${booking.selectedDokterId === d.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-300 hover:border-indigo-400'}">
+      ${esc(d.name)}
+    </button>`).join('');
+}
+
+function slotButton(day, label, time, booked) {
+  const isSel = booking.selectedSlot && booking.selectedSlot.day === day && booking.selectedSlot.time === time;
+  if (booked) return `<span class="px-2.5 py-1 rounded-md text-xs bg-slate-100 text-slate-400 line-through">${time}</span>`;
+  return `<button data-action="select-slot" data-day="${day}" data-label="${esc(label)}" data-time="${time}"
+    class="px-2.5 py-1 rounded-md text-xs border ${isSel ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white border-slate-300 hover:border-emerald-400'}">${time}</button>`;
+}
+
+function slotGrid() {
+  if (!booking.selectedDokterId) return `<div class="text-sm text-slate-400">Pilih Dokter dahulu</div>`;
+  const near = DAY_OFFSETS.map(({ key, label, offset }) => {
+    const slots = SLOTS[booking.selectedDokterId][key] || [];
+    return `<div class="mb-3">
+      <div class="text-xs font-medium text-slate-500 mb-1.5">${label} <span class="text-slate-400">(${fmtDayLabel(addDays(TODAY, offset))})</span></div>
+      <div class="flex flex-wrap gap-1.5">${slots.map(s => slotButton(key, label, s.time, s.booked)).join('') || '<span class="text-xs text-slate-400">Tidak ada slot.</span>'}</div>
+    </div>`;
+  }).join('');
+
+  const minDate = isoDate(addDays(TODAY, 3));
+  let customBlock = '';
+  if (booking.customDate) {
+    const label = fmtDayLabel(new Date(booking.customDate + 'T00:00:00'));
+    const slots = generateSlotsForDate(booking.selectedDokterId, booking.customDate);
+    customBlock = `<div data-anim="in" class="mb-1">
+      <div class="text-xs font-medium text-slate-500 mb-1.5">Tanggal pilihan <span class="text-slate-400">(${label})</span></div>
+      <div class="flex flex-wrap gap-1.5">${slots.map(s => slotButton(booking.customDate, label, s.time, s.booked)).join('')}</div>
+    </div>`;
+  }
+
+  return `${near}
+    <div class="border-t border-slate-200 pt-3">
+      <div class="text-xs font-medium text-slate-500 mb-1.5">Tanggal lain</div>
+      <input type="date" data-bind="customDate" value="${esc(booking.customDate)}" min="${minDate}"
+        class="border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      ${customBlock}
+    </div>`;
+}
+
+function summaryLine() {
+  const l = getSelectedLayanan();
+  const d = getSelectedDokter();
+  const s = booking.selectedSlot;
+  const parts = [];
+  parts.push(`<span>👤 ${esc(patient.name)}</span>`);
+  parts.push(`<span class="${l ? '' : 'text-slate-400'}">🩺 ${l ? esc(l.name) : 'Layanan?'}</span>`);
+  parts.push(`<span class="${d ? '' : 'text-slate-400'}">👨‍⚕️ ${d ? esc(d.name) : 'Dokter?'}</span>`);
+  parts.push(`<span class="${s ? '' : 'text-slate-400'}">🕒 ${s ? `${esc(s.label)} ${esc(s.time)}` : 'Slot?'}</span>`);
+  return parts.join(' <span class="text-slate-300">·</span> ');
+}
+
+function successBanner() {
+  return `<div data-anim="in" class="border border-green-300 bg-green-50 rounded-lg p-4 space-y-2 mb-4">
+    <div class="text-green-800 font-medium">✓ Appointment dibuat — Booking Source: <span class="font-mono text-xs bg-green-100 px-1.5 py-0.5 rounded">phone</span></div>
+    <div class="text-sm text-green-700">${summaryLine()}</div>
+    <div class="text-xs text-green-700">⏱ Waktu penanganan: <strong>${fmtDuration(booking.serviceDurationMs)}</strong></div>
+    <div class="flex gap-2">
+      <button data-action="reset" class="text-xs bg-green-700 text-white px-3 py-1.5 rounded-md hover:bg-green-800">+ Booking lain untuk pasien ini</button>
+      <a href="patient-management.prototype.html" class="text-xs bg-white border border-green-300 text-green-800 px-3 py-1.5 rounded-md hover:bg-green-100 inline-block">Kembali ke Daftar Pasien</a>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// The screen — Variant B, Dashboard split-screen (the only variant left).
+// ---------------------------------------------------------------------------
+function render() {
+  const allSet = booking.selectedLayananId && booking.selectedDokterId && booking.selectedSlot;
+
+  document.getElementById('app').innerHTML = `<div class="pt-6 px-4 max-w-6xl mx-auto">
+    <div class="mb-4">
+      <div class="text-xs uppercase tracking-wide text-slate-400">Resepsionis · Booking via Telepon</div>
+      <h1 class="text-lg font-semibold">Dashboard split-screen</h1>
+    </div>
+
+    <div class="sticky top-0 z-10 bg-white/95 backdrop-blur border border-slate-200 rounded-lg px-4 py-2.5 mb-4 flex items-center justify-between shadow-sm">
+      <div class="text-sm">${summaryLine()}</div>
+      <button data-action="confirm" ${allSet && !booking.confirmed ? '' : 'disabled'}
+        class="text-xs px-3 py-1.5 rounded-md text-white ${allSet && !booking.confirmed ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-300 cursor-not-allowed'}">Konfirmasi Booking</button>
+    </div>
+
+    ${booking.confirmed ? successBanner() : ''}
+
+    <div class="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
+      <div class="bg-white rounded-xl border border-slate-200 p-4 space-y-4 h-fit">
+        <div class="flex items-center gap-2 text-xs ${booking.confirmed ? 'text-slate-400' : 'text-emerald-700'}">
+          <span class="w-2 h-2 rounded-full ${booking.confirmed ? 'bg-slate-300' : 'bg-emerald-500 pulse-dot'}"></span>
+          ${booking.confirmed ? 'Panggilan selesai —' : 'Panggilan sedang berlangsung —'}
+          <span id="live-timer" class="font-mono">${fmtDuration(booking.confirmed ? booking.serviceDurationMs : Date.now() - callStartedAt)}</span>
+        </div>
+        <div>
+          <div class="text-xs font-medium text-slate-500 mb-1.5">Pasien</div>
+          ${patientProfileCard()}
+        </div>
+        <div>
+          <div class="text-xs font-medium text-slate-500 mb-1.5">Catatan panggilan</div>
+          <textarea data-bind="notes" rows="4" placeholder="Catatan bebas..." ${booking.confirmed ? 'disabled' : ''}
+            class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-50">${esc(booking.notes)}</textarea>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 p-4 space-y-5">
+        <div>
+          <div class="text-xs font-medium text-slate-500 mb-2">Layanan</div>
+          <div class="flex flex-wrap gap-2">${layananChips()}</div>
+        </div>
+        <div>
+          <div class="text-xs font-medium text-slate-500 mb-2">Dokter</div>
+          <div class="flex flex-wrap gap-2">${dokterChips()}</div>
+        </div>
+        <div>
+          <div class="text-xs font-medium text-slate-500 mb-2">Slot</div>
+          ${slotGrid()}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  switch (t.dataset.action) {
+    case 'select-layanan': booking.selectedLayananId = Number(t.dataset.id); booking.selectedDokterId = null; booking.selectedSlot = null; break;
+    case 'select-dokter': booking.selectedDokterId = Number(t.dataset.id); booking.selectedSlot = null; break;
+    case 'select-slot': booking.selectedSlot = { day: t.dataset.day, label: t.dataset.label, time: t.dataset.time }; break;
+    case 'confirm':
+      booking.serviceDurationMs = Date.now() - callStartedAt;
+      booking.confirmed = true;
+      console.log(`[phone-booking] handling time for ${patient.name}: ${fmtDuration(booking.serviceDurationMs)} (${booking.serviceDurationMs}ms)`);
+      break;
+    case 'reset': return resetBookingKeepPatient();
+  }
+  render();
+});
+
+document.addEventListener('input', (e) => {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  booking[bind] = e.target.value;
+  if (bind === 'customDate') { render(); return; }
+  // Keep focus/caret in the field being typed into across the notes re-render.
+  const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
+  render();
+  const el = document.querySelector(`[data-bind="${bind}"]`);
+  if (el) { el.focus(); el.setSelectionRange(selStart, selEnd); }
+});
+
+startTicking();
+render();
+</script>
+</body>
+</html>

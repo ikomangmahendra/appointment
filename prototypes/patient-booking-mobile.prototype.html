@@ -1,0 +1,508 @@
+<!--
+  PROTOTYPE — throwaway. Not wired to any backend, no persistence, no build step.
+  Question: "What should the patient-facing appointment booking flow look like on a
+  smartphone browser?"
+  Single flow: linear step-by-step wizard. Mock Layanan/Dokter/Jadwal data per
+  CONTEXT.md; Jam Operasional and Jadwal drive which slots are offered. NIK is captured
+  but optional per docs/adr/0005-nik-and-satu-sehat-readiness-without-integration.md;
+  providing it requires ticking a consent checkbox before the flow can continue.
+  Keluhan (chief complaint) is captured as an optional free-text field alongside
+  identity, per issue #1 story 19.
+  Picking a Slot places a Slot Hold for a per-Klinik-configurable duration (default 5
+  minutes, bounded 2-15 — override with ?holdMinutes=N for this demo) so the Slot isn't
+  lost mid-flow to another Patient; the "⏱ simulasikan hold habis" debug button forces
+  the hold to expire without waiting for the real countdown.
+  No real OTP/SMS — any 4-6 digit code is accepted; "Kirim ulang kode" has a 30s
+  cooldown, no SMS actually goes out. OTP is re-verified on every booking, even for a
+  returning guest Patient with no User account — this flow doesn't touch User accounts
+  at all (ADR-0015); OTP here just validates the booking itself, per-booking, every time.
+  Try ?layanan=gigi&dokter=bagus to simulate arriving via a Deep Link (see CONTEXT.md).
+  Run: open this file directly in a phone browser, or on desktop and narrow the window
+  (or use device toolbar) — it's designed for a phone-width viewport.
+
+  VERDICT: Wizard Bertahap (linear step-by-step) is the pick, over the
+  accumulating-scroll accordion and the calendar/bottom-sheet variants that were tried
+  and dropped. Carry this structure into the real Angular booking flow when it's built.
+-->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prototype: Booking Appointment (Mobile)</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #e7e9ee;
+    color: #1c1f26;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+
+  #harness-banner {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: .02em;
+    color: #6b5400;
+    background: #fff3c4;
+    padding: 6px 10px;
+    border-bottom: 1px solid #e6d27a;
+  }
+
+  #stage {
+    display: flex;
+    justify-content: center;
+    padding: 0;
+  }
+  #phone {
+    width: 100%;
+    max-width: 428px;
+    min-height: 100vh;
+    background: #fff;
+    position: relative;
+    overflow-x: hidden;
+    padding-bottom: 24px;
+  }
+  @media (min-width: 480px) {
+    #stage { padding: 28px 12px 56px; }
+    #phone {
+      min-height: 844px;
+      max-height: 844px;
+      overflow-y: auto;
+      border: 9px solid #14161b;
+      border-radius: 42px;
+      box-shadow: 0 30px 60px -20px rgba(0,0,0,.35);
+    }
+  }
+
+  /* ---------- shared bits (cosmetic only, not layout) ---------- */
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .muted { color: #8a8f9c; }
+  .err { color: #c0392b; font-size: 13px; margin-top: 6px; }
+  .field {
+    width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid #dbdde3;
+    font-size: 15px; margin-top: 6px; background: #fafbfc;
+  }
+  .field:focus { outline: none; border-color: #2563eb; background: #fff; }
+  label.flabel { font-size: 13px; font-weight: 600; color: #4a4f5b; display: block; margin-top: 14px; }
+  .primary-btn {
+    width: 100%; border: none; border-radius: 14px; padding: 14px; font-size: 15px;
+    font-weight: 700; color: #fff; margin-top: 18px;
+  }
+  .primary-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .resend-btn {
+    width: 100%; border: none; background: transparent; color: #2563eb;
+    font-weight: 700; font-size: 14px; padding: 12px; margin-top: 4px;
+  }
+  .resend-btn:disabled { color: #9aa0ab; cursor: not-allowed; }
+  textarea.field { resize: vertical; min-height: 64px; font-family: inherit; }
+  .hold-badge {
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+    background:#fff7e6; border:1.5px solid #f3d9ae; border-radius:12px; padding:10px 14px;
+    font-size:12.5px; color:#92610c; margin-bottom:10px;
+  }
+  .hold-badge b { font-variant-numeric: tabular-nums; }
+  .consent-row { display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:12.5px; color:#4a4f5b; }
+  .consent-row input { margin-top:3px; }
+
+  /* ================= Wizard Bertahap ================= */
+  .a-root { --accent: #2563eb; --accent-dark:#1d4ed8; display:flex; flex-direction:column; min-height:100%; }
+  .a-head { padding: 16px 18px 10px; }
+  .a-head .rowtop { display:flex; align-items:center; gap:10px; }
+  .a-back { border:none; background:#eef1f6; width:34px; height:34px; border-radius:10px; font-size:16px; }
+  .a-title { font-size: 18px; font-weight: 800; margin:0; }
+  .a-dots { display:flex; gap:6px; margin-top:14px; }
+  .a-dots i { flex:1; height:4px; border-radius:4px; background:#e7e9ee; display:block; }
+  .a-dots i.on { background: var(--accent); }
+  .a-body { padding: 6px 18px 18px; flex:1; }
+  .a-card {
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding: 14px 16px; border:1.5px solid #e7e9ee; border-radius:14px; margin-top:10px; background:#fff;
+  }
+  .a-card:active { background:#f2f6ff; }
+  .a-card .name { font-weight:700; font-size:15px; }
+  .a-card .sub { font-size:12.5px; color:#8a8f9c; margin-top:2px; }
+  .a-card .price { font-size:13px; font-weight:700; color: var(--accent); }
+  .a-card.booked { opacity:.4; }
+  .a-slotgrid { display:grid; grid-template-columns: repeat(3,1fr); gap:8px; margin-top:12px; }
+  .a-slot { padding:10px 4px; text-align:center; border-radius:10px; border:1.5px solid #e7e9ee; font-size:14px; font-weight:600; background:#fff; }
+  .a-slot.booked { color:#c3c6cd; background:#f4f5f7; text-decoration:line-through; }
+  .a-slot.sel { background: var(--accent); color:#fff; border-color: var(--accent); }
+  .a-summary { background:#f2f6ff; border-radius:14px; padding:14px 16px; margin-top:4px; font-size:13.5px; line-height:1.6; }
+  .a-summary b { color: var(--accent-dark); }
+  .a-code { text-align:center; padding: 22px 10px; }
+  .a-code .big { font-size:26px; font-weight:800; letter-spacing:.05em; color: var(--accent-dark); margin-top:8px; }
+  .a-check { width:64px; height:64px; border-radius:50%; background:#e8f5e9; color:#2e7d32; display:flex; align-items:center; justify-content:center; font-size:32px; margin: 0 auto 6px; }
+
+  /* ---------- harness: debug panel (not part of the design) ---------- */
+  #dbgToggle {
+    position:fixed; right:10px; bottom:14px; z-index:100; font-size:11px; background:#14161b; color:#fff;
+    border:none; border-radius:8px; padding:5px 8px; opacity:.55;
+  }
+  #dbgPanel {
+    position:fixed; right:8px; bottom:44px; z-index:101; width: min(320px, 90vw); max-height:50vh; overflow:auto;
+    background:#0f1115; color:#b6f0c1; font: 11px/1.5 ui-monospace, monospace; padding:10px 12px; border-radius:10px;
+    box-shadow: 0 10px 30px -8px rgba(0,0,0,.5); display:none; white-space:pre-wrap;
+  }
+  #dbgPanel.show { display:block; }
+  #dbgHoldExpire {
+    position:fixed; right:10px; bottom:74px; z-index:100; font-size:11px; background:#92610c; color:#fff;
+    border:none; border-radius:8px; padding:5px 8px; opacity:.7;
+  }
+</style>
+</head>
+<body>
+
+<div id="harness-banner">🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan</div>
+<div id="stage"><div id="phone"><div id="app"></div></div></div>
+<button id="dbgToggle" onclick="toggleDebug()">🔍 state</button>
+<button id="dbgHoldExpire" onclick="simulateHoldExpiredA()">⏱ simulasikan hold habis</button>
+<pre id="dbgPanel"></pre>
+
+<script>
+/* ---------------------------------------------------------------------- */
+/* Mock domain data (per CONTEXT.md: Layanan, Dokter, Jadwal)             */
+/* ---------------------------------------------------------------------- */
+var TODAY = new Date('2026-08-22T00:00:00');
+var KLINIK = { name: 'Klinik Sehat Sentosa', address: 'Jl. Merdeka No. 12, Denpasar', hours: 'Senin–Sabtu 08:00–17:00' };
+
+var LAYANAN = [
+  { id:'umum',  nama:'Pemeriksaan Umum',   durasi:30, harga:150000, desc:'Konsultasi dokter umum untuk keluhan sehari-hari.' },
+  { id:'vaksin',nama:'Vaksinasi',          durasi:15, harga:250000, desc:'Vaksinasi dewasa dan anak.' },
+  { id:'gigi',  nama:'Konsultasi Gigi',    durasi:45, harga:300000, desc:'Pemeriksaan dan perawatan gigi.' },
+  { id:'fisio', nama:'Fisioterapi',        durasi:60, harga:350000, desc:'Terapi fisik untuk pemulihan otot dan sendi.' }
+];
+
+// jadwal: { dayOfWeek(0=Min..6=Sab): [jamBuka, jamTutup] }
+var DOKTER = [
+  { id:'amelia', nama:'dr. Amelia Putri',   layanan:['umum','vaksin'], jadwal:{1:[8,16],2:[8,16],3:[8,16],4:[8,16],5:[8,16],6:[8,12]} },
+  { id:'bagus',  nama:'drg. Bagus Wirawan', layanan:['gigi'],          jadwal:{1:[9,15],2:[9,15],3:[9,15],4:[9,15],5:[9,15]} },
+  { id:'citra',  nama:'dr. Citra Dewi',     layanan:['fisio','umum'],  jadwal:{1:[8,16],3:[8,16],5:[8,16],6:[8,12]} }
+];
+var ANY_DOKTER = { id:'any', nama:'Dokter manapun (tercepat tersedia)' };
+
+// Slot Hold: per-Klinik setting, default 5 minutes, bounded 2-15 minutes.
+var HOLD_MINUTES_DEFAULT = 5, HOLD_MINUTES_MIN = 2, HOLD_MINUTES_MAX = 15;
+function resolveHoldMinutes(){
+  var v = parseInt(new URLSearchParams(location.search).get('holdMinutes'), 10);
+  if(isNaN(v)) return HOLD_MINUTES_DEFAULT;
+  return Math.max(HOLD_MINUTES_MIN, Math.min(HOLD_MINUTES_MAX, v));
+}
+var HOLD_MINUTES = resolveHoldMinutes();
+var HOLD_MS = HOLD_MINUTES * 60 * 1000;
+
+function pad(n){ return n<10?'0'+n:''+n; }
+function fmtDate(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+var DOW = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+var MON = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
+function dayLabel(d){ return DOW[d.getDay()]; }
+function shortDate(d){ return d.getDate()+' '+MON[d.getMonth()]; }
+function idr(n){ return 'Rp' + n.toLocaleString('id-ID'); }
+function esc(s){ return (s||'').replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]; }); }
+
+function days(n){ var out=[]; for(var i=0;i<n;i++){ var d=new Date(TODAY); d.setDate(d.getDate()+i); out.push(d); } return out; }
+var NEXT_DAYS = days(7);
+var RELATIVE_DAY_LABELS = ['Hari ini', 'Besok', 'Besok Lusa'];
+
+function hashKey(key){ var h=0; for(var i=0;i<key.length;i++){ h=(h*31+key.charCodeAt(i))>>>0; } return h; }
+function isBooked(key){ return hashKey(key)%5===0; } // ~20% pre-booked, deterministic
+
+function layananById(id){ return LAYANAN.filter(function(l){return l.id===id;})[0]; }
+function dokterById(id){ if(id==='any') return ANY_DOKTER; return DOKTER.filter(function(d){return d.id===id;})[0]; }
+function dokterForLayanan(layananId){ return DOKTER.filter(function(d){ return !layananId || d.layanan.indexOf(layananId)>-1; }); }
+
+function slotsForDokterDate(dokter, layanan, date){
+  var dow = date.getDay();
+  var jadwal = dokter.jadwal[dow];
+  if(!jadwal) return [];
+  var openMin = jadwal[0]*60, closeMin = jadwal[1]*60, durasi = layanan.durasi;
+  var out = [], cursor = openMin;
+  while(cursor + durasi <= closeMin){
+    var h = Math.floor(cursor/60), m = cursor%60;
+    var time = pad(h)+':'+pad(m);
+    var key = dokter.id+'-'+fmtDate(date)+'-'+time;
+    out.push({ time:time, booked:isBooked(key), dokterId:dokter.id });
+    cursor += durasi;
+  }
+  return out;
+}
+
+// merges slots across matching dokter (when patient picked "any" or none yet)
+function slotsForDate(date, layananId, dokterId){
+  if(!layananId) return [];
+  var layanan = layananById(layananId);
+  var doks = dokterForLayanan(layananId);
+  if(dokterId && dokterId!=='any'){ doks = doks.filter(function(d){return d.id===dokterId;}); }
+  var merged = {};
+  doks.forEach(function(d){
+    slotsForDokterDate(d, layanan, date).forEach(function(s){
+      var existing = merged[s.time];
+      if(!existing || (existing.booked && !s.booked)) merged[s.time] = s;
+    });
+  });
+  return Object.keys(merged).sort().map(function(t){ return merged[t]; });
+}
+function countAvailable(date, layananId, dokterId){
+  return slotsForDate(date, layananId, dokterId).filter(function(s){ return !s.booked; }).length;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Shared booking state + mutators                                        */
+/* ---------------------------------------------------------------------- */
+var booking = { layananId:null, dokterId:null, dateISO:null, slotTime:null, assignedDokterId:null, slotHeldAt:null,
+                nama:'', hp:'', nik:'', nikConsent:false, keluhan:'', otp:'', confirmed:false, err:null };
+
+function setLayanan(id){ booking.layananId=id; booking.dokterId=null; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null; booking.err=null; }
+function setDokter(id){ booking.dokterId=id; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null; booking.err=null; }
+function setDate(iso){ booking.dateISO=iso; booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null; booking.err=null; }
+function setSlot(time){
+  var d = new Date(booking.dateISO+'T00:00:00');
+  var slots = slotsForDate(d, booking.layananId, booking.dokterId);
+  var s = slots.filter(function(x){return x.time===time;})[0];
+  if(!s || s.booked) return false;
+  booking.slotTime = time; booking.assignedDokterId = s.dokterId; booking.slotHeldAt = Date.now(); booking.err=null;
+  return true;
+}
+function isSlotHoldExpired(){ return !!booking.slotHeldAt && (Date.now() - booking.slotHeldAt) > HOLD_MS; }
+function holdRemainingLabel(){
+  var rem = Math.max(0, HOLD_MS - (Date.now() - (booking.slotHeldAt||Date.now())));
+  var m = Math.floor(rem/60000), s = Math.floor((rem%60000)/1000);
+  return pad(m)+':'+pad(s);
+}
+function isValidPhone(v){ return /^08[0-9]{8,11}$/.test((v||'').trim()); }
+function isValidNik(v){ return (v||'').trim()==='' || /^[0-9]{16}$/.test(v.trim()); }
+function setIdentitas(nama, hp, nik, nikConsent, keluhan){
+  if(!(nama||'').trim()){ booking.err='Nama wajib diisi.'; return false; }
+  if(!isValidPhone(hp)){ booking.err='Nomor HP tidak valid. Contoh: 081234567890'; return false; }
+  if(!isValidNik(nik)){ booking.err='NIK harus 16 digit (opsional, boleh dikosongkan).'; return false; }
+  if((nik||'').trim() && !nikConsent){ booking.err='Centang persetujuan penyimpanan NIK, atau kosongkan NIK.'; return false; }
+  booking.nama=nama.trim(); booking.hp=hp.trim(); booking.nik=(nik||'').trim();
+  booking.nikConsent = !!(nik||'').trim() && !!nikConsent;
+  booking.keluhan=(keluhan||'').trim(); booking.err=null;
+  return true;
+}
+function verifyOtp(code){
+  if(!/^[0-9]{4,6}$/.test((code||'').trim())){ booking.err='Kode OTP tidak valid.'; return false; }
+  if(isSlotHoldExpired()){ return false; } // caller redirects back to Pilih Jam
+  booking.otp = code.trim(); booking.confirmed = true; booking.err=null;
+  return true;
+}
+function bookingCode(){
+  var key = (booking.layananId||'')+booking.dateISO+booking.slotTime+booking.hp;
+  return 'APT-' + hashKey(key).toString(36).toUpperCase().slice(0,6);
+}
+function summaryLines(){
+  var layanan = layananById(booking.layananId);
+  var dokter = dokterById(booking.assignedDokterId || booking.dokterId);
+  var d = booking.dateISO ? new Date(booking.dateISO+'T00:00:00') : null;
+  return {
+    layanan: layanan ? layanan.nama : '—',
+    dokter: dokter ? dokter.nama : '—',
+    tanggal: d ? (dayLabel(d)+', '+shortDate(d)) : '—',
+    jam: booking.slotTime || '—',
+    harga: layanan ? idr(layanan.harga) : '—'
+  };
+}
+
+/* ---------------------------------------------------------------------- */
+/* UI (navigation) state                                                  */
+/* ---------------------------------------------------------------------- */
+var ui = { A:{ step:0 } };
+
+function applyDeepLink(){
+  var p = new URLSearchParams(location.search);
+  var l = p.get('layanan'), d = p.get('dokter');
+  if(l && layananById(l)){ setLayanan(l); if(d && dokterById(d)) setDokter(d); }
+  booking._deepLink = !!(l && layananById(l));
+}
+
+/* ================= Wizard Bertahap ================= */
+var A_TITLES = ['Pilih Layanan','Pilih Dokter','Pilih Tanggal','Pilih Jam','Data Pasien','Verifikasi OTP','Konfirmasi'];
+
+var otpTimer = { remaining:0, intervalId:null };
+function startOtpCooldown(seconds){
+  otpTimer.remaining = seconds;
+  if(otpTimer.intervalId) clearInterval(otpTimer.intervalId);
+  updateOtpResendUI();
+  otpTimer.intervalId = setInterval(function(){
+    otpTimer.remaining--;
+    updateOtpResendUI();
+    if(otpTimer.remaining<=0){
+      clearInterval(otpTimer.intervalId);
+      otpTimer.intervalId = null;
+    }
+  }, 1000);
+}
+function updateOtpResendUI(){
+  var btn = document.getElementById('a-otp-resend');
+  if(!btn) return;
+  if(otpTimer.remaining>0){
+    btn.disabled = true;
+    btn.textContent = 'Kirim ulang kode ('+otpTimer.remaining+'s)';
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'Kirim ulang kode';
+  }
+}
+function resendOtpA(){
+  if(otpTimer.remaining>0) return;
+  var note = document.getElementById('a-otp-note');
+  if(note) note.textContent = 'Kode baru terkirim ke '+esc(booking.hp)+' (demo: kode apa saja 4-6 digit).';
+  startOtpCooldown(30);
+}
+
+function holdBadgeHtml(){
+  if(!booking.slotHeldAt) return '';
+  return '<div class="hold-badge"><span>⏱ Slot ditahan untuk Anda</span><b id="a-hold-remaining">'+holdRemainingLabel()+'</b></div>';
+}
+
+var holdTimer = { intervalId:null };
+function tickHold(){
+  if(isSlotHoldExpired()){
+    booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null;
+    booking.err='Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.';
+    ui.A.step=3; render(); return;
+  }
+  var el = document.getElementById('a-hold-remaining');
+  if(el) el.textContent = holdRemainingLabel();
+}
+function manageHoldTimer(){
+  var shouldRun = booking.slotHeldAt && (ui.A.step===4 || ui.A.step===5);
+  if(shouldRun && !holdTimer.intervalId){
+    holdTimer.intervalId = setInterval(tickHold, 1000);
+  } else if(!shouldRun && holdTimer.intervalId){
+    clearInterval(holdTimer.intervalId); holdTimer.intervalId = null;
+  }
+}
+
+function goA(delta){ ui.A.step = Math.max(0, Math.min(6, ui.A.step+delta)); render(); }
+function selLayananA(id){ setLayanan(id); ui.A.step=1; render(); }
+function selDokterA(id){ setDokter(id); ui.A.step=2; render(); }
+function selDateA(iso){ setDate(iso); ui.A.step=3; render(); }
+function selSlotA(time){ if(setSlot(time)) ui.A.step=4; render(); }
+function submitIdentitasA(){
+  var nama=document.getElementById('a-nama').value, hp=document.getElementById('a-hp').value, nik=document.getElementById('a-nik').value;
+  var nikConsent = document.getElementById('a-nik-consent').checked, keluhan = document.getElementById('a-keluhan').value;
+  var ok = setIdentitas(nama,hp,nik,nikConsent,keluhan);
+  if(ok) ui.A.step=5;
+  render();
+  if(ok) startOtpCooldown(30);
+}
+function submitOtpA(){
+  var code = document.getElementById('a-otp').value;
+  if(isSlotHoldExpired()){
+    booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null;
+    booking.err='Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.';
+    ui.A.step=3; render(); return;
+  }
+  if(verifyOtp(code)) ui.A.step=6;
+  render();
+}
+function simulateHoldExpiredA(){
+  if(!booking.slotHeldAt) return;
+  booking.slotHeldAt = Date.now() - HOLD_MS - 1000;
+  render();
+}
+
+function renderA(){
+  var step = ui.A.step, out = '';
+  out += '<div class="a-root">';
+  out += '<div class="a-head">';
+  out += '<div class="rowtop">';
+  out += step>0 && step<6 ? '<button class="a-back" onclick="goA(-1)">‹</button>' : '<span style="width:34px"></span>';
+  out += '<h1 class="a-title">'+A_TITLES[step]+'</h1>';
+  out += '</div>';
+  out += '<div class="a-dots">' + A_TITLES.map(function(_,i){ return '<i class="'+(i<=step?'on':'')+'"></i>'; }).join('') + '</div>';
+  out += '</div><div class="a-body">';
+
+  if(booking._deepLink && step<=2) out += '<p class="muted" style="font-size:12.5px;margin:0 0 8px">Dibuka dari link klinik — beberapa pilihan sudah terisi.</p>';
+
+  if(step===0){
+    out += '<p class="muted" style="font-size:12.5px;margin:0 0 10px">'+KLINIK.name+' &middot; '+KLINIK.address+'</p>';
+    LAYANAN.forEach(function(l){
+      out += '<div class="a-card" onclick="selLayananA(\''+l.id+'\')"><div><div class="name">'+l.nama+'</div><div class="sub">'+l.durasi+' menit &middot; '+l.desc+'</div></div><div class="price">'+idr(l.harga)+'</div></div>';
+    });
+  } else if(step===1){
+    var doks = dokterForLayanan(booking.layananId);
+    out += '<div class="a-card" onclick="selDokterA(\'any\')"><div><div class="name">'+ANY_DOKTER.nama+'</div><div class="sub">Sistem pilih otomatis</div></div></div>';
+    doks.forEach(function(d){
+      out += '<div class="a-card" onclick="selDokterA(\''+d.id+'\')"><div><div class="name">'+d.nama+'</div></div></div>';
+    });
+  } else if(step===2){
+    NEXT_DAYS.forEach(function(d, i){
+      var avail = countAvailable(d, booking.layananId, booking.dokterId);
+      var label = RELATIVE_DAY_LABELS[i] || dayLabel(d);
+      out += '<div class="a-card'+(avail===0?' booked':'')+'" onclick="'+(avail>0?('selDateA(\''+fmtDate(d)+'\')'):'')+'"><div><div class="name">'+label+', '+shortDate(d)+'</div><div class="sub">'+(avail>0? avail+' jam tersedia' : 'Penuh')+'</div></div></div>';
+    });
+  } else if(step===3){
+    if(booking.err) out += '<p class="err">'+booking.err+'</p>';
+    var d3 = new Date(booking.dateISO+'T00:00:00');
+    var slots = slotsForDate(d3, booking.layananId, booking.dokterId);
+    out += '<div class="a-slotgrid">';
+    slots.forEach(function(s){
+      out += '<div class="a-slot'+(s.booked?' booked':'')+(booking.slotTime===s.time?' sel':'')+'" onclick="'+(s.booked?'':('selSlotA(\''+s.time+'\')'))+'">'+s.time+'</div>';
+    });
+    if(!slots.length) out += '<p class="muted">Tidak ada jam tersedia di tanggal ini.</p>';
+    out += '</div>';
+  } else if(step===4){
+    out += holdBadgeHtml();
+    out += '<label class="flabel">Nama Lengkap</label><input id="a-nama" class="field" placeholder="Nama sesuai KTP" value="'+esc(booking.nama)+'">';
+    out += '<label class="flabel">No. HP</label><input id="a-hp" class="field" placeholder="081234567890" value="'+esc(booking.hp)+'">';
+    out += '<label class="flabel">Keluhan <span class="muted">(opsional)</span></label><textarea id="a-keluhan" class="field" rows="3" placeholder="Ceritakan keluhan Anda, supaya Dokter bisa siap-siap">'+esc(booking.keluhan)+'</textarea>';
+    out += '<label class="flabel">NIK <span class="muted">(opsional)</span></label><input id="a-nik" class="field" placeholder="16 digit" value="'+esc(booking.nik)+'" oninput="document.getElementById(\'a-nik-consent-wrap\').style.display=this.value.trim()?\'flex\':\'none\'">';
+    out += '<label id="a-nik-consent-wrap" class="consent-row" style="display:'+(booking.nik?'flex':'none')+'"><input type="checkbox" id="a-nik-consent" '+(booking.nikConsent?'checked':'')+'><span>Saya setuju NIK saya disimpan sesuai kebijakan Platform.</span></label>';
+    if(booking.err) out += '<p class="err">'+booking.err+'</p>';
+    out += '<button class="primary-btn" style="background:var(--accent)" onclick="submitIdentitasA()">Lanjut</button>';
+  } else if(step===5){
+    out += holdBadgeHtml();
+    out += '<p class="muted" id="a-otp-note">Kode OTP dikirim ke '+esc(booking.hp)+' (demo: kode apa saja 4-6 digit)</p>';
+    out += '<label class="flabel">Kode OTP</label><input id="a-otp" class="field" placeholder="123456" inputmode="numeric">';
+    if(booking.err) out += '<p class="err">'+booking.err+'</p>';
+    out += '<button class="primary-btn" style="background:var(--accent)" onclick="submitOtpA()">Verifikasi &amp; Booking</button>';
+    out += '<button id="a-otp-resend" class="resend-btn" onclick="resendOtpA()">Kirim ulang kode</button>';
+  } else if(step===6){
+    var sm = summaryLines();
+    out += '<div class="a-code"><div class="a-check">✓</div><div class="muted">Appointment terkonfirmasi</div><div class="big">'+bookingCode()+'</div></div>';
+    out += '<div class="a-summary"><b>'+sm.layanan+'</b><br>'+sm.dokter+'<br>'+sm.tanggal+' &middot; '+sm.jam+'<br>'+KLINIK.name+', '+KLINIK.address+'<br>Biaya: '+sm.harga+'</div>';
+  }
+  out += '</div></div>';
+  return out;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Harness: debug panel (not part of the design)                          */
+/* ---------------------------------------------------------------------- */
+var debugShown = false;
+function toggleDebug(){ debugShown = !debugShown; updateDebug(); }
+function updateDebug(){
+  var el = document.getElementById('dbgPanel');
+  el.className = debugShown ? 'show' : '';
+  if(debugShown){
+    el.textContent = 'ui: '+JSON.stringify(ui.A)+'\nbooking: '+JSON.stringify(booking, null, 2);
+  }
+}
+
+function render(){
+  document.getElementById('app').innerHTML = renderA();
+  if(ui.A.step!==5 && otpTimer.intervalId){ clearInterval(otpTimer.intervalId); otpTimer.intervalId=null; }
+  manageHoldTimer();
+  updateDebug();
+  console.log('[prototype] booking=', JSON.parse(JSON.stringify(booking)), 'ui=', JSON.parse(JSON.stringify(ui.A)));
+}
+
+(function init(){
+  applyDeepLink();
+  if(booking._deepLink){
+    ui.A.step = booking.dokterId ? 2 : 1;
+  }
+  render();
+})();
+</script>
+</body>
+</html>

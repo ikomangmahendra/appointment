@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Patient Management</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the "Patient Management" screen look like for a
+  Resepsionis / Admin Klinik — browsing, searching, and jumping into a
+  Patient record or straight into a phone booking? No backend, no
+  persistence — patient data is canned. See CONTEXT.md for domain terms
+  (Patient, User, NIK, Patient Matching, Duplicate Candidate).
+
+  UPDATE (feedback round 2 — consolidation with the phone-booking-ui
+  prototype):
+    - Variants B (Split kartu & detail) and C (Pencarian spotlight) are
+      dropped. Only Variant A — Direktori tabel — remains; the variant
+      switcher is gone since there's nothing left to switch between.
+    - This screen now links out to the other prototype in the same
+      "pasien" journey:
+        · "+ Pasien Baru" -> patient-create.prototype.html, whose success
+          screen now offers a "Buat Booking" hand-off into the phone
+          booking screen for the just-created patient.
+        · Each row has a dedicated "Booking" action -> jumps straight to
+          phone-booking-ui.prototype.html for that patient (no detour
+          through the detail page).
+        · Clicking a row still goes to patient-detail.prototype.html,
+          which itself also grew a "Buat Booking" button.
+    - Editing/creating forms, the address search-simulate, and the
+      duplicate compare screen all lived only in the now-removed variants
+      B/C, so their code is gone from this file too — see
+      patient-create.prototype.html / patient-detail.prototype.html for
+      where address-aware editing still lives.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16">
+
+<div id="app"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md) — just enough to make the UI feel real.
+// Same patient set/ids as patient-detail.prototype.html and
+// phone-booking-ui.prototype.html so cross-links (?id=, ?patientId=) land
+// on the "same" person across files.
+// ---------------------------------------------------------------------------
+const PATIENTS_DB = [
+  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', hasUser: true, visits: [
+    { date: '2026-07-02', layanan: 'Pemeriksaan Umum' },
+    { date: '2026-03-19', layanan: 'Vaksinasi' },
+  ] },
+  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', hasUser: false, visits: [], duplicateOf: 3 },
+  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', hasUser: false, visits: [
+    { date: '2026-06-14', layanan: 'Vaksinasi' },
+  ], duplicateOf: 2 },
+  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', hasUser: true, visits: [
+    { date: '2026-08-10', layanan: 'Konsultasi Gigi' },
+  ] },
+  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', hasUser: false, visits: [
+    { date: '2026-01-05', layanan: 'Fisioterapi' },
+  ] },
+  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', hasUser: true, visits: [] },
+  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', hasUser: false, visits: [], duplicateOf: 6 },
+  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', hasUser: false, visits: [
+    { date: '2026-05-22', layanan: 'Pemeriksaan Umum' },
+  ] },
+];
+
+const TABLE_PAGE_SIZE = 5;
+
+let ui = { query: '', filter: 'all', genderFilter: 'all', tablePage: 1 };
+
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '<span class="text-slate-400 italic">belum diisi</span>'; }
+function lastVisit(p) { return p.visits.length ? p.visits[p.visits.length - 1] : null; }
+
+function matches(p, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  return p.name.toLowerCase().includes(q) || p.phone.includes(q) || (p.nik || '').includes(q);
+}
+
+function visiblePatients(query, filter, gender) {
+  let list = PATIENTS_DB.filter(p => matches(p, query));
+  if (filter === 'duplicates') list = list.filter(p => p.duplicateOf);
+  if (gender && gender !== 'all') list = list.filter(p => p.gender === gender);
+  return list;
+}
+
+function render() {
+  const list = visiblePatients(ui.query, ui.filter, ui.genderFilter);
+  const dupCount = PATIENTS_DB.filter(p => p.duplicateOf).length;
+
+  const totalPages = Math.max(1, Math.ceil(list.length / TABLE_PAGE_SIZE));
+  const page = Math.min(ui.tablePage, totalPages);
+  const pageItems = list.slice((page - 1) * TABLE_PAGE_SIZE, page * TABLE_PAGE_SIZE);
+
+  const rows = pageItems.map(p => {
+    const lv = lastVisit(p);
+    return `<tr data-action="goto-detail" data-id="${p.id}" class="cursor-pointer border-b border-slate-100 hover:bg-blue-50/60">
+      <td class="py-2.5 px-3">
+        <div class="font-medium text-sm">${esc(p.name)} ${p.duplicateOf ? '<span class="text-amber-500" title="Duplicate Candidate">⚠</span>' : ''}</div>
+        <div class="text-xs text-slate-400">${esc(p.phone)}</div>
+      </td>
+      <td class="py-2.5 px-3 text-sm text-slate-500">${p.gender === 'P' ? 'P' : p.gender === 'L' ? 'L' : '<span class="italic text-slate-300">—</span>'}</td>
+      <td class="py-2.5 px-3 text-sm font-mono text-slate-500">${p.nik ? esc(p.nik) : '<span class="italic text-slate-300">—</span>'}</td>
+      <td class="py-2.5 px-3 text-sm text-slate-500">${fmtDate(p.dob)}</td>
+      <td class="py-2.5 px-3 text-sm">${p.hasUser ? '<span class="text-emerald-600">Terhubung</span>' : '<span class="text-slate-300">—</span>'}</td>
+      <td class="py-2.5 px-3 text-sm text-slate-500">${lv ? fmtDate(lv.date) : '<span class="italic text-slate-300">Belum pernah</span>'}</td>
+      <td class="py-2.5 px-3 text-sm text-right">
+        <a href="phone-booking-ui.prototype.html?patientId=${p.id}" data-action="stop" class="inline-block text-xs bg-emerald-600 text-white px-2.5 py-1.5 rounded-md hover:bg-emerald-700">📅 Booking</a>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('app').innerHTML = `<div class="max-w-6xl mx-auto pt-8 px-4">
+    <div class="mb-4 flex items-center justify-between">
+      <div><div class="text-xs uppercase tracking-wide text-slate-400">Admin Klinik · Patient Management</div><h1 class="text-lg font-semibold">Direktori Pasien</h1></div>
+      <a href="patient-create.prototype.html" class="text-sm bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 inline-block">+ Pasien Baru</a>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 mb-3">
+      <input data-bind="query" value="${esc(ui.query)}" placeholder="Cari nama, telepon, atau NIK..." class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <div class="flex gap-1 bg-white border border-slate-200 rounded-lg p-1">
+        <button data-action="set-gender-filter" data-gender="all" class="text-xs px-2.5 py-1 rounded-md ${ui.genderFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Semua Gender</button>
+        <button data-action="set-gender-filter" data-gender="L" class="text-xs px-2.5 py-1 rounded-md ${ui.genderFilter === 'L' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Laki-laki</button>
+        <button data-action="set-gender-filter" data-gender="P" class="text-xs px-2.5 py-1 rounded-md ${ui.genderFilter === 'P' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Perempuan</button>
+      </div>
+      <div class="flex gap-1 bg-white border border-slate-200 rounded-lg p-1">
+        <button data-action="set-filter" data-filter="all" class="text-xs px-2.5 py-1 rounded-md ${ui.filter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Semua</button>
+        <button data-action="set-filter" data-filter="duplicates" class="text-xs px-2.5 py-1 rounded-md ${ui.filter === 'duplicates' ? 'bg-amber-500 text-white' : 'text-slate-500'}">⚠ Kandidat Duplikat (${dupCount})</button>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <table class="w-full">
+        <thead><tr class="text-left text-xs text-slate-400 border-b border-slate-200">
+          <th class="py-2 px-3 font-medium">Pasien</th><th class="py-2 px-3 font-medium">Gender</th><th class="py-2 px-3 font-medium">NIK</th><th class="py-2 px-3 font-medium">Tgl Lahir</th><th class="py-2 px-3 font-medium">User</th><th class="py-2 px-3 font-medium">Kunjungan Terakhir</th><th class="py-2 px-3 font-medium"></th>
+        </tr></thead>
+        <tbody>${rows || `<tr><td colspan="7" class="py-8 text-center text-sm text-slate-400">Tidak ada pasien cocok.</td></tr>`}</tbody>
+      </table>
+    </div>
+
+    ${list.length ? `<div class="flex items-center justify-between mt-3 text-xs text-slate-500">
+      <button data-action="table-prev" ${page <= 1 ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 bg-white ${page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">← Sebelumnya</button>
+      <span>Halaman ${page} dari ${totalPages} · ${list.length} pasien cocok</span>
+      <button data-action="table-next" ${page >= totalPages ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 bg-white ${page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">Berikutnya →</button>
+    </div>` : ''}
+  </div>`;
+}
+
+document.addEventListener('click', (e) => {
+  // A link with data-action="stop" (the per-row Booking button) navigates on
+  // its own via href — don't let the row's own goto-detail handler hijack it.
+  if (e.target.closest('[data-action="stop"]')) return;
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  switch (t.dataset.action) {
+    case 'goto-detail': location.href = `patient-detail.prototype.html?id=${t.dataset.id}`; return;
+    case 'set-filter': ui.filter = t.dataset.filter; ui.tablePage = 1; break;
+    case 'set-gender-filter': ui.genderFilter = t.dataset.gender; ui.tablePage = 1; break;
+    case 'table-prev': ui.tablePage = Math.max(1, ui.tablePage - 1); break;
+    case 'table-next': ui.tablePage = ui.tablePage + 1; break;
+  }
+  render();
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.dataset.bind !== 'query') return;
+  ui.query = e.target.value; ui.tablePage = 1;
+  const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
+  render();
+  const el = document.querySelector('[data-bind="query"]');
+  if (el) { el.focus(); el.setSelectionRange(selStart, selEnd); }
+});
+
+render();
+</script>
+</body>
+</html>

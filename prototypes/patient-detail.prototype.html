@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Detail Pasien</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Sibling route to patient-management.prototype.html (feedback: "tampilkan
+  detail pasien di page baru"). A simple header (name + gender as an icon)
+  sits above vertical tabs for the three sections: Profil, Riwayat Kunjungan
+  (sorted by most recent, 10 per page — server-side pagination in the real
+  app, faked client-side here over canned data), and User Terkait.
+
+  UPDATE (fixing a flagged contradiction): this section used to be called
+  "Akun Pasien" and showed email + password expiration directly on a
+  Patient — flagged at the time as not matching CONTEXT.md's phone+OTP-only
+  definition. That's now resolved by ADR-0015: User is a separate concept
+  from Patient, and one User can manage several Patient profiles. This
+  section shows the User linked to this Patient (if any) — their phone/
+  email verification status, which login methods they've set up (Google
+  SSO and/or email+password, both optional per ADR-0015), and how many
+  other Patient profiles that same User manages. A Patient with no linked
+  User (most walk-ins and phone bookings) shows neither email nor password
+  at all, since neither belongs to a Patient in this model.
+
+  UPDATE (feedback round 2 — consolidation with the phone-booking-ui
+  prototype): the header now has a "Buat Booking" button that jumps to
+  phone-booking-ui.prototype.html?patientId=<id>, so a Resepsionis looking
+  up a patient here can go straight into booking a call for them.
+
+  This file has its own copy of PATIENTS_DB (see patient-management's for
+  the "real" shared shape) with one patient given 13 visits to demonstrate
+  pagination, and one left with zero visits to demonstrate the empty state.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+  Try: ?id=1 (paginated history, User manages another Patient too), ?id=6
+  (empty history), ?id=2 (Duplicate Candidate banner, no linked User).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function initials(name) { return name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '<span class="text-slate-400 italic">belum diisi</span>'; }
+function fmtDateTime(iso) { return new Date(iso).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+
+function mkAddress(street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId) {
+  return { street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId,
+    formatted: `${street}, ${kelurahan}, ${kecamatan}, ${kota}, ${provinsi} ${kodePos}` };
+}
+function emptyAddress() { return { street: '', kelurahan: '', kecamatan: '', kota: '', provinsi: '', kodePos: '', lat: null, lng: null, placeId: null, formatted: '' }; }
+
+const ADDRESS_SUGGESTIONS = [
+  mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'),
+  mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'),
+  mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'),
+  mkAddress('Jl. Anggrek No. 8', 'Cigadung', 'Cibeunying Kidul', 'Bandung', 'Jawa Barat', '40191', -6.8848, 107.6298, 'place_anggrek_8'),
+  mkAddress('Jl. Mawar No. 1', 'Merdeka', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9147, 107.6098, 'place_mawar_1'),
+  mkAddress('Jl. Kamboja No. 3', 'Sukajadi', 'Sukajadi', 'Bandung', 'Jawa Barat', '40163', -6.8879, 107.5893, 'place_kamboja_3'),
+  mkAddress('Jl. Asia Afrika No. 8', 'Braga', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9218, 107.6086, 'place_asiaafrika_8'),
+];
+
+// 13 visits on one patient so "10 per page" actually needs a page 2.
+const SITI_VISITS = [
+  { date: '2026-02-05', layanan: 'Pemeriksaan Umum', dokter: 'dr. Amelia Putri', status: 'completed' },
+  { date: '2026-03-19', layanan: 'Vaksinasi', dokter: 'dr. Amelia Putri', status: 'completed' },
+  { date: '2026-04-02', layanan: 'Pemeriksaan Umum', dokter: 'dr. Amelia Putri', status: 'completed' },
+  { date: '2026-04-20', layanan: 'Konsultasi Gigi', dokter: 'dr. Bagus Santoso', status: 'completed' },
+  { date: '2026-05-05', layanan: 'Fisioterapi', dokter: 'dr. Dimas Wijaya', status: 'no-show' },
+  { date: '2026-05-19', layanan: 'Pemeriksaan Umum', dokter: 'dr. Amelia Putri', status: 'completed' },
+  { date: '2026-06-02', layanan: 'Vaksinasi', dokter: 'dr. Amelia Putri', status: 'completed' },
+  { date: '2026-06-16', layanan: 'Pemeriksaan Umum', dokter: 'dr. Citra Dewi', status: 'completed' },
+  { date: '2026-06-30', layanan: 'Konsultasi Gigi', dokter: 'dr. Bagus Santoso', status: 'cancelled' },
+  { date: '2026-07-02', layanan: 'Pemeriksaan Umum', dokter: 'dr. Amelia Putri', status: 'completed' },
+  { date: '2026-07-14', layanan: 'Fisioterapi', dokter: 'dr. Dimas Wijaya', status: 'completed' },
+  { date: '2026-07-28', layanan: 'Pemeriksaan Umum', dokter: 'dr. Amelia Putri', status: 'completed' },
+  { date: '2026-08-10', layanan: 'Vaksinasi', dokter: 'dr. Amelia Putri', status: 'confirmed' },
+];
+
+let PATIENTS_DB = [
+  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', address: mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'), visits: SITI_VISITS,
+    user: { phone: '081234567890', phoneVerified: true, email: 'siti.rahma@example.com', emailVerified: true, loginMethods: ['google'], lastLoginAt: '2026-08-18T09:24:00', managesOtherPatients: 1 } },
+  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), visits: [], duplicateOf: 3, user: null },
+  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), visits: [
+    { date: '2026-06-14', layanan: 'Vaksinasi', dokter: 'dr. Bagus Santoso', status: 'completed' },
+  ], duplicateOf: 2, user: null },
+  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', address: mkAddress('Jl. Anggrek No. 8', 'Cigadung', 'Cibeunying Kidul', 'Bandung', 'Jawa Barat', '40191', -6.8848, 107.6298, 'place_anggrek_8'), visits: [
+    { date: '2026-08-10', layanan: 'Konsultasi Gigi', dokter: 'dr. Bagus Santoso', status: 'confirmed' },
+  ], user: { phone: '081311122233', phoneVerified: true, email: 'citra.dewi@example.com', emailVerified: false, loginMethods: ['email-password'], lastLoginAt: null, managesOtherPatients: 0 } },
+  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', address: mkAddress('Jl. Mawar No. 1', 'Merdeka', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9147, 107.6098, 'place_mawar_1'), visits: [
+    { date: '2026-01-05', layanan: 'Fisioterapi', dokter: 'dr. Dimas Wijaya', status: 'no-show' },
+  ], user: null },
+  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), visits: [],
+    user: { phone: '081533344455', phoneVerified: true, email: 'eka.putri@example.com', emailVerified: true, loginMethods: ['google', 'email-password'], lastLoginAt: '2026-08-01T18:02:00', managesOtherPatients: 0 } },
+  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), visits: [], duplicateOf: 6, user: null },
+  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', address: mkAddress('Jl. Kamboja No. 3', 'Sukajadi', 'Sukajadi', 'Bandung', 'Jawa Barat', '40163', -6.8879, 107.5893, 'place_kamboja_3'), visits: [
+    { date: '2026-05-22', layanan: 'Pemeriksaan Umum', dokter: 'dr. Citra Dewi', status: 'completed' },
+  ], user: null },
+];
+
+function byId(id) { return PATIENTS_DB.find(p => p.id === id) || null; }
+function genderLabel(g) { return g === 'P' ? 'Perempuan' : g === 'L' ? 'Laki-laki' : 'Belum diisi'; }
+function genderIcon(g) {
+  if (g === 'P') return `<span title="Perempuan" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-100 text-pink-600 text-sm shrink-0">♀</span>`;
+  if (g === 'L') return `<span title="Laki-laki" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-sm shrink-0">♂</span>`;
+  return `<span title="Jenis kelamin belum diisi" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-400 text-sm shrink-0">?</span>`;
+}
+function statusPill(status) {
+  const map = { completed: 'bg-emerald-100 text-emerald-700', confirmed: 'bg-blue-100 text-blue-700', 'no-show': 'bg-red-100 text-red-700', cancelled: 'bg-slate-100 text-slate-500', rescheduled: 'bg-amber-100 text-amber-700' };
+  return `<span class="text-[11px] px-1.5 py-0.5 rounded ${map[status] || 'bg-slate-100 text-slate-500'}">${esc(status)}</span>`;
+}
+
+const PAGE_SIZE = 10;
+const currentId = Number(new URLSearchParams(location.search).get('id')) || null;
+
+const TABS = [
+  { key: 'profil', label: 'Profil' },
+  { key: 'riwayat', label: 'Riwayat Kunjungan' },
+  { key: 'akun', label: 'User Terkait' },
+];
+
+let ui = { activeTab: 'profil', editing: false, editDraft: null, addressSearch: '', visitPage: 1 };
+
+// ---------------------------------------------------------------------------
+// Section 1 — Profil
+// ---------------------------------------------------------------------------
+function addressSearchBlock() {
+  const q = ui.addressSearch.trim();
+  const suggestions = q.length >= 3 ? ADDRESS_SUGGESTIONS.filter(s => s.formatted.toLowerCase().includes(q.toLowerCase())) : [];
+  const addr = ui.editDraft.address;
+  return `<div class="space-y-2">
+    <div class="relative">
+      <input data-bind="addressSearch" value="${esc(ui.addressSearch)}" placeholder="Cari alamat (Google Maps)..." class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      ${suggestions.length ? `<div data-anim="in" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 max-h-48 overflow-y-auto">
+        ${suggestions.map(s => `<div data-action="pick-address" data-place-id="${s.placeId}" class="cursor-pointer px-3 py-2 text-sm hover:bg-blue-50 border-b border-slate-100 last:border-0">📍 ${esc(s.formatted)}</div>`).join('')}
+      </div>` : ''}
+    </div>
+    ${addr ? `<div class="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200 rounded-md p-3">
+      <label class="block text-xs text-slate-400 col-span-2">Jalan<input data-bind="address.street" value="${esc(addr.street)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kelurahan<input data-bind="address.kelurahan" value="${esc(addr.kelurahan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kecamatan<input data-bind="address.kecamatan" value="${esc(addr.kecamatan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kota/Kabupaten<input data-bind="address.kota" value="${esc(addr.kota)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Provinsi<input data-bind="address.provinsi" value="${esc(addr.provinsi)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kode Pos<input data-bind="address.kodePos" value="${esc(addr.kodePos)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+    </div>` : `<button data-action="manual-address" class="text-xs text-blue-600 underline">+ Isi alamat manual (tanpa pencarian)</button>`}
+  </div>`;
+}
+
+function addressLines(addr) {
+  if (!addr || !addr.street) return '<span class="text-slate-400 italic">belum diisi</span>';
+  return `<div>${esc(addr.street)}</div>
+    <div class="text-xs text-slate-500">${esc(addr.kelurahan || '-')}, ${esc(addr.kecamatan || '-')}</div>
+    <div class="text-xs text-slate-500">${esc(addr.kota || '-')}, ${esc(addr.provinsi || '-')} ${esc(addr.kodePos || '')}</div>`;
+}
+
+function renderProfilSection(p) {
+  if (ui.editing) {
+    const d = ui.editDraft;
+    return `<div class="grid grid-cols-2 gap-4">
+      <label class="block text-xs text-slate-500">Nama<input data-bind="name" value="${esc(d.name)}" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">Telepon<input data-bind="phone" value="${esc(d.phone)}" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="nik" value="${esc(d.nik)}" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="dob" type="date" value="${esc(d.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="gender" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"><option value="L" ${d.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${d.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
+      <div class="col-span-2">
+        <div class="text-xs text-slate-500 mb-1">Alamat</div>
+        ${addressSearchBlock()}
+      </div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button data-action="save-edit" class="text-sm bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">Simpan</button>
+      <button data-action="cancel-edit" class="text-sm text-slate-500 underline">Batal</button>
+    </div>`;
+  }
+  return `<div class="grid grid-cols-2 gap-y-2 text-sm">
+    <div class="text-slate-400">Telepon</div><div>${esc(p.phone)}</div>
+    <div class="text-slate-400">NIK</div><div class="font-mono">${p.nik ? esc(p.nik) : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
+    <div class="text-slate-400">Tgl Lahir</div><div>${fmtDate(p.dob)}</div>
+    <div class="text-slate-400">Jenis Kelamin</div><div>${genderLabel(p.gender)}</div>
+    <div class="text-slate-400">Alamat</div><div>${addressLines(p.address)}</div>
+  </div>
+  <button data-action="start-edit" class="mt-4 text-sm bg-slate-800 text-white px-4 py-2 rounded-md hover:bg-slate-900">Edit data</button>`;
+}
+
+// ---------------------------------------------------------------------------
+// Section 2 — Riwayat Kunjungan (sorted desc, 10/page)
+// ---------------------------------------------------------------------------
+function renderRiwayatSection(p) {
+  if (!p.visits.length) return `<div class="text-sm text-slate-400 italic">Belum ada riwayat kunjungan.</div>`;
+  const sorted = p.visits.slice().sort((a, b) => b.date.localeCompare(a.date));
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const page = Math.min(ui.visitPage, totalPages);
+  const pageItems = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  return `<div class="space-y-2">${pageItems.map(v => `
+    <div class="flex items-center justify-between border border-slate-200 rounded-md px-3 py-2 text-sm">
+      <div><div class="font-medium">${esc(v.layanan)}</div><div class="text-xs text-slate-500">${fmtDate(v.date)} · ${esc(v.dokter)}</div></div>
+      ${statusPill(v.status)}
+    </div>`).join('')}</div>
+  ${totalPages > 1 ? `<div class="flex items-center justify-between mt-3 text-xs text-slate-500">
+    <button data-action="visit-prev" ${page <= 1 ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 ${page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">← Sebelumnya</button>
+    <span>Halaman ${page} dari ${totalPages} · ${sorted.length} kunjungan total</span>
+    <button data-action="visit-next" ${page >= totalPages ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 ${page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">Berikutnya →</button>
+  </div>
+  <div class="text-[11px] text-slate-400 mt-1">Menampilkan 10 kunjungan terakhir per halaman — di aplikasi nyata ini server-side pagination, bukan potongan array di klien.</div>` : ''}`;
+}
+
+// ---------------------------------------------------------------------------
+// Section 3 — User Terkait (ADR-0015: User is separate from Patient; one
+// User can manage several Patient profiles, so this Patient links to at
+// most one User, but that User may show up here for other Patients too)
+// ---------------------------------------------------------------------------
+function verifiedBadge(isVerified) {
+  return isVerified
+    ? `<span class="text-emerald-700">✓ Terverifikasi</span>`
+    : `<span class="text-amber-600">Belum terverifikasi</span>`;
+}
+function loginMethodsLabel(methods) {
+  const labels = { google: 'Google SSO', 'email-password': 'Email + Password' };
+  return methods.map(m => labels[m] || m).join(', ');
+}
+
+function renderAkunSection(p) {
+  if (!p.user) {
+    return `<div class="text-sm text-slate-500">Pasien ini belum dikelola oleh User manapun — data dicatat oleh Resepsionis dari panggilan telepon atau kunjungan langsung, atau ini Patient dari booking tamu (HP+OTP per-booking, tanpa akun).</div>`;
+  }
+  const u = p.user;
+  return `<div class="grid grid-cols-2 gap-y-2 text-sm">
+    <div class="text-slate-400">No. HP</div><div>${esc(u.phone)} ${verifiedBadge(u.phoneVerified)}</div>
+    <div class="text-slate-400">Email</div><div>${u.email ? `${esc(u.email)} ${verifiedBadge(u.emailVerified)}` : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
+    <div class="text-slate-400">Metode Login</div><div>${loginMethodsLabel(u.loginMethods)}</div>
+    <div class="text-slate-400">Terakhir Login</div><div>${u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : '<span class="text-slate-400 italic">Belum pernah login</span>'}</div>
+  </div>
+  ${u.managesOtherPatients > 0 ? `<div class="text-xs text-slate-500 mt-3">User ini juga mengelola ${u.managesOtherPatients} profil Pasien lain.</div>` : ''}`;
+}
+
+// ---------------------------------------------------------------------------
+// Page shell
+// ---------------------------------------------------------------------------
+function duplicateBanner(p) {
+  if (!p.duplicateOf) return '';
+  const other = byId(p.duplicateOf);
+  return `<div class="border border-amber-300 bg-amber-50 rounded-lg p-3 text-xs mb-4">
+    ⚠ <strong>Duplicate Candidate</strong> — kemungkinan sama dengan <strong>${esc(other.name)}</strong> (${esc(other.phone)}). Tidak digabung otomatis (bukan match NIK) — tinjau lewat halaman Patient Management.
+  </div>`;
+}
+
+function render() {
+  const p = byId(currentId);
+  const app = document.getElementById('app');
+  if (!p) {
+    app.innerHTML = `<div class="max-w-xl mx-auto pt-16 px-4 text-center">
+      <div class="text-sm text-slate-500 mb-3">Pasien tidak ditemukan${currentId ? ` (id=${currentId})` : ''}.</div>
+      <a href="patient-management.prototype.html" class="text-sm text-blue-700 underline">← Kembali ke Daftar Pasien</a>
+    </div>`;
+    return;
+  }
+  const activeTab = TABS.find(t => t.key === ui.activeTab) || TABS[0];
+  const sectionContent = ui.activeTab === 'riwayat' ? renderRiwayatSection(p)
+    : ui.activeTab === 'akun' ? renderAkunSection(p)
+    : renderProfilSection(p);
+
+  app.innerHTML = `<div class="max-w-4xl mx-auto pt-8 px-4 pb-16">
+    <a href="patient-management.prototype.html" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
+
+    <div class="bg-white rounded-xl border border-slate-200 p-5 mt-3 mb-4 flex items-center gap-4">
+      <div class="w-14 h-14 rounded-full bg-slate-800 text-white flex items-center justify-center text-xl shrink-0">${initials(p.name)}</div>
+      <div class="flex-1">
+        <div class="flex items-center gap-2">
+          <h1 class="text-xl font-semibold">${esc(p.name)}</h1>
+          ${genderIcon(p.gender)}
+        </div>
+        <div class="text-xs text-slate-400">Pasien #${p.id}</div>
+      </div>
+      <a href="phone-booking-ui.prototype.html?patientId=${p.id}" class="text-sm bg-emerald-600 text-white px-3 py-2 rounded-md hover:bg-emerald-700 shrink-0">📅 Buat Booking</a>
+    </div>
+
+    ${duplicateBanner(p)}
+
+    <div class="grid grid-cols-1 md:grid-cols-[190px_1fr] gap-4">
+      <div class="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
+        ${TABS.map(t => `<button data-action="set-tab" data-tab="${t.key}" class="text-left whitespace-nowrap px-3 py-2.5 rounded-lg text-sm ${ui.activeTab === t.key ? 'bg-slate-900 text-white' : 'hover:bg-slate-200 text-slate-600'}">${t.label}</button>`).join('')}
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 p-5 min-h-[320px]" data-anim="in">
+        <div class="text-sm font-semibold mb-3">${activeTab.label}</div>
+        ${sectionContent}
+      </div>
+    </div>
+  </div>`;
+}
+
+function applyBind(e) {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  const parts = bind.split('.');
+  if (parts[0] === 'address') ui.editDraft.address[parts[1]] = e.target.value;
+  else if (bind === 'addressSearch') ui.addressSearch = e.target.value;
+  else ui.editDraft[bind] = e.target.value;
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  const p = byId(currentId);
+  switch (t.dataset.action) {
+    case 'set-tab': ui.activeTab = t.dataset.tab; ui.editing = false; ui.editDraft = null; break;
+    case 'start-edit':
+      ui.editing = true; ui.addressSearch = '';
+      ui.editDraft = { name: p.name, phone: p.phone, nik: p.nik || '', dob: p.dob, gender: p.gender, address: p.address ? { ...p.address } : null };
+      break;
+    case 'cancel-edit': ui.editing = false; ui.editDraft = null; break;
+    case 'save-edit':
+      p.name = ui.editDraft.name; p.phone = ui.editDraft.phone; p.nik = ui.editDraft.nik || null;
+      p.dob = ui.editDraft.dob; p.gender = ui.editDraft.gender; p.address = ui.editDraft.address;
+      ui.editing = false; ui.editDraft = null;
+      break;
+    case 'pick-address': {
+      const s = ADDRESS_SUGGESTIONS.find(a => a.placeId === t.dataset.placeId);
+      if (s) ui.editDraft.address = { ...s };
+      ui.addressSearch = '';
+      break;
+    }
+    case 'manual-address': ui.editDraft.address = emptyAddress(); break;
+    case 'visit-prev': ui.visitPage = Math.max(1, ui.visitPage - 1); break;
+    case 'visit-next': ui.visitPage = ui.visitPage + 1; break;
+  }
+  render();
+});
+
+document.addEventListener('input', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName === 'SELECT') return;
+  applyBind(e);
+  const bind = e.target.dataset.bind;
+  const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
+  render();
+  const el = document.querySelector(`[data-bind="${bind}"]`);
+  if (el && el.type !== 'date') { el.focus(); el.setSelectionRange(selStart, selEnd); }
+  else if (el) el.focus();
+});
+
+document.addEventListener('change', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName !== 'SELECT') return;
+  applyBind(e);
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
