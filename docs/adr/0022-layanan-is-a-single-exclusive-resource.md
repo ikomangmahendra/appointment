@@ -1,0 +1,7 @@
+# A Layanan is a single exclusive resource — Jadwal blocks carry a Layanan and are checked for overlap on two axes
+
+A Klinik has exactly one room/station per Layanan, so at most one Dokter may hold a Jadwal block for a given Layanan at any moment — even though a Layanan can have several Dokter *eligible* to perform it. This means a Jadwal block (and a Jam Khusus override) must name which Layanan it's for, something the original model didn't track. Overlap-checking now runs on two axes: within one Dokter's own blocks across different Layanan (a Dokter can't be in two places at once), and across different Dokter's blocks for the same Layanan (the room itself can't hold two Dokter at once). No separate "Ruang Layanan" (room) entity was introduced — Layanan itself is treated as the exclusive resource, since no Klinik has been described needing more than one room per Layanan.
+
+Enforcement isn't limited to Jadwal-authoring time: the same exclusivity must hold when Slot are generated/booked, as a backstop against data entered before this rule existed or a bug in one layer.
+
+A cross-Dokter, same-Layanan overlap is a hard rejection with no override, the same category as the pre-existing same-Dokter block-overlap check — not routed through ADR 0018's force-with-reason flow. ADR 0018 exists for cases needing a human judgment call (rescheduling a Patient); this is a structural "two Dokter can't occupy the same Layanan at once" impossibility, with nothing to force through.

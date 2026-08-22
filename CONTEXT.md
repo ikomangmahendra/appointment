@@ -20,7 +20,7 @@ A Platform-level operator who provisions new Klinik and oversees the Platform as
 The administrator of a single Klinik, responsible for managing its Layanan, Dokter, staff accounts, and operating hours.
 
 **Resepsionis**:
-Front-desk staff at a Klinik who create Appointments from phone calls and Check-In patients on arrival.
+Front-desk staff at a Klinik who create Appointments from phone calls and Check-In patients on arrival. Can view (read-only) each Dokter's effective schedule via Kalender Audit Jadwal to inform phone bookings, but cannot create, edit, or delete Jadwal, Pengecualian Jadwal, or Jam Operasional — that stays exclusive to Admin Klinik.
 _Avoid_: Staf (too broad — use Resepsionis specifically for the front-desk role)
 
 **Staf Layanan**:
@@ -43,21 +43,30 @@ How a User adds someone to the set of Patients they manage, the *first* time —
 ### Scheduling & Appointments
 
 **Layanan**:
-A type of medical service offered by a Klinik (e.g. general checkup, vaccination), with its own duration and set of Dokter who can perform it. Defined independently per Klinik — there is no Platform-wide service catalog.
+A type of medical service offered by a Klinik (e.g. general checkup, vaccination), with its own duration and set of Dokter *eligible* to perform it. Defined independently per Klinik — there is no Platform-wide service catalog. Eligibility doesn't imply concurrency: a Layanan is a single exclusive resource (one service room, in effect) — only one of its eligible Dokter may hold a Jadwal block for it at any given moment. See Jadwal, [ADR 0022](docs/adr/0022-layanan-is-a-single-exclusive-resource.md).
 _Avoid_: Service, Treatment
 
 **Jadwal**:
-A Dokter's recurring weekly availability template, from which bookable Slot are generated.
+A Dokter's recurring weekly availability template, made of blocks each scoped to exactly one Layanan the Dokter performs during it. No two blocks may overlap in time — neither two of the same Dokter's own blocks across different Layanan (a Dokter can only be in one place at a time), nor two different Dokter's blocks for the same Layanan (a Layanan is a single exclusive resource; see Layanan). From this exclusivity-checked template, bookable Slot are generated. See [ADR 0022](docs/adr/0022-layanan-is-a-single-exclusive-resource.md).
 _Avoid_: Schedule, Availability
 
 **Pengecualian Jadwal**:
-A one-off override to a Dokter's Jadwal for a specific date (e.g. cuti, extra practice hours), taking precedence over the recurring template.
+A one-off override to a Dokter's Jadwal for a specific date, taking precedence over the recurring template. Comes in exactly two kinds — see Cuti and Jam Khusus. At most one Pengecualian Jadwal may exist per Dokter per date; changing it (e.g. Cuti → Jam Khusus for the same date) means deleting the old one and creating a new one, not editing a shared record in place. Only ever creatable for today or a future date, never backdated — a past no-show or unplanned absence is instead recorded via the Appointment's own Visit Status/Appointment Status, not a retroactive Pengecualian Jadwal.
+
+**Cuti**:
+A Pengecualian Jadwal marking a Dokter fully unavailable for a date — bypasses Jam Operasional entirely, unlike Jam Khusus. May be submitted in bulk across a date range as a matter of data-entry convenience, but each resulting date is its own independent Pengecualian Jadwal record from the moment it's created (individually editable/deletable) — there is no "leave period" entity remembering the batch. Bulk creation is Cuti-only.
+
+**Jam Khusus**:
+A Pengecualian Jadwal replacing a Dokter's usual Jadwal for one date, for one Layanan, with a different start/end time (e.g. shortened hours) — unlike Cuti, still bounded by the Klinik's Jam Operasional for that date, the same as the recurring Jadwal is; entering hours outside Jam Operasional produces a warning rather than being rejected. Subject to the same per-Layanan, per-Dokter exclusivity as Jadwal (see Jadwal) — an override date is not a loophole around it. Always entered per-date, never in bulk — a recurring pattern of special hours belongs in the Jadwal template itself.
 
 **Jam Operasional**:
-A Klinik's own opening hours and holiday calendar, independent of any single Dokter's Jadwal. A Slot is only bookable when it falls within both the Klinik's Jam Operasional and the relevant Dokter's Jadwal. Editing any of Jadwal, Pengecualian Jadwal, or Jam Operasional in a way that would orphan an already-`confirmed` Appointment requires an explicit, reasoned admin override rather than silently dropping or moving that Appointment — see [ADR 0018](docs/adr/0018-jadwal-conflict-flags-appointment-for-reschedule.md).
+A Klinik's own opening hours and holiday calendar, independent of any single Dokter's Jadwal. A Slot is only bookable when it falls within both the Klinik's Jam Operasional and the relevant Dokter's Jadwal. Editing any of Jadwal, Pengecualian Jadwal, or Jam Operasional in a way that would orphan an already-`confirmed` Appointment requires an explicit, reasoned admin override rather than silently dropping or moving that Appointment — see [ADR 0018](docs/adr/0018-jadwal-conflict-flags-appointment-for-reschedule.md). Because Jam Operasional is Klinik-wide, its conflict check aggregates affected Appointments across every Dokter into one review, unlike a Jadwal/Pengecualian Jadwal edit's single-Dokter scope — see [ADR 0021](docs/adr/0021-jam-operasional-conflict-check-spans-all-dokter.md).
+
+**Kalender Audit Jadwal**:
+A read-only, Klinik-wide calendar view across every Dokter's effective schedule (Jadwal, Pengecualian Jadwal, and Jam Operasional combined), including past dates — distinct from the per-Dokter, current-week-onward-only view an Admin Klinik uses to actually edit a Jadwal.
 
 **Slot**:
-A discrete, bookable unit of time for one Dokter, sized to the duration of a specific Layanan.
+A discrete, bookable unit of time for one Dokter, sized to the duration of a specific Layanan. Because a Layanan is a single exclusive resource (see Layanan), two different Dokter's Slots for the same Layanan may never overlap in time — enforced at booking time as a backstop, not only when Jadwal is authored.
 
 **Slot Hold**:
 The Slot claim held by an Appointment sitting at Appointment Status `pending` — the moment a Slot is selected and identity submitted, an Appointment is created at `pending` and occupies the Slot exactly like a `confirmed` one would, so no other booking can take it. Enforced server-side: a scheduler cancels the Appointment if OTP isn't confirmed within a per-Klinik-configurable duration (default 5 minutes, bounded 2-15 minutes), releasing the Slot. See [ADR 0016](docs/adr/0016-slot-hold-enforced-via-pending-status-and-scheduler.md), which supersedes the client-side-only framing in the original [ADR 0014](docs/adr/0014-slot-hold-during-booking.md).
