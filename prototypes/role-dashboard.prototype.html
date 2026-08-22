@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Role Dashboard</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the shared "dashboard" home screen look like across
+  the roles who'd land on it — Admin Klinik, Resepsionis, Staf Layanan,
+  Dokter, and Super-Admin (see CONTEXT.md for these actors)? An in-page ROLE
+  selector swaps the dashboard's content to that role's own view. No
+  backend — one shared canned Appointment list (mutable in memory) drives
+  every role's numbers, so actions like Check-In or advancing Visit Status
+  are visible across roles that touch the same data.
+
+  VERDICT: three structurally different layouts were tried — A (Grid
+  widget: stat cards + two-panel grid), B (Fokus hari ini: single-column
+  task feed), C (Command center: nav rail + kanban board for queues).
+  Variant A won on feedback: dense enough for overview-only roles (Admin
+  Klinik, Dokter, Super-Admin) without forcing extra navigation on them,
+  while still surfacing Resepsionis's Check-In queue and actions with no
+  extra clicks. B and C are removed; only A's layout remains, generalized
+  from a fixed two-panel shape into a per-role list of sections so each
+  role can carry a different number of panels (see buildModel/sectionPanel
+  below) — e.g. Admin Klinik's added "Perlu Dijadwal Ulang" and "Info
+  Klinik" panels, or Dokter's Info Lain panel mixing list items and
+  free-text notices (cuti, clinic closures).
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
+
+<div id="app"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md) — one shared Appointment list that
+// every role's dashboard reads a different slice of. Visit Status stages
+// per CONTEXT.md: belum tiba -> menunggu -> sedang dilayani -> selesai
+// (docs/adr/0007 merged an earlier "telah tiba" stage into menunggu).
+// Appointment Status is a distinct field (docs/adr/0002).
+// ---------------------------------------------------------------------------
+const KLINIK = { name: 'Klinik Sehat Bahagia', today: '22 Agustus 2026' };
+
+const LAYANAN = [
+  { id: 1, name: 'Pemeriksaan Umum' },
+  { id: 2, name: 'Vaksinasi' },
+  { id: 3, name: 'Konsultasi Gigi' },
+  { id: 4, name: 'Fisioterapi' },
+];
+
+const DOKTER = [
+  { id: 1, name: 'dr. Amelia Putri', layananIds: [1, 2] },
+  { id: 2, name: 'dr. Bagus Santoso', layananIds: [3] },
+  { id: 3, name: 'dr. Citra Dewi', layananIds: [1, 2] },
+  { id: 4, name: 'dr. Dimas Wijaya', layananIds: [4] },
+];
+
+const STAF = [
+  { id: 1, name: 'Rina', layananIds: [1, 2] },
+  { id: 2, name: 'Yusuf', layananIds: [3, 4] },
+];
+
+const UPCOMING_COUNTS = {
+  1: { besok: 5, besokLusa: 3 },
+  2: { besok: 3, besokLusa: 4 },
+  3: { besok: 4, besokLusa: 2 },
+  4: { besok: 2, besokLusa: 1 },
+};
+const DUPLICATE_COUNT = 2;
+
+// Pengecualian Jadwal (cuti) per Dokter — CONTEXT.md
+const CUTI = [
+  { dokterId: 1, mulai: '2026-08-28', selesai: '2026-08-29', alasan: 'Cuti tahunan' },
+  { dokterId: 4, mulai: '2026-09-02', selesai: '2026-09-02', alasan: 'Keperluan keluarga' },
+];
+
+// Klinik-wide closures (Jam Operasional's holiday calendar) — hari libur nasional, force majeure, dll.
+const KLINIK_TUTUP = [
+  { tanggal: '2026-08-31', alasan: 'Cuti bersama Hari Kemerdekaan' },
+];
+
+function fmtTanggalPendek(iso) {
+  const bulan = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
+  const d = new Date(iso + 'T00:00:00');
+  return `${d.getDate()} ${bulan[d.getMonth()]} ${d.getFullYear()}`;
+}
+function cutiUntukDokter(dokterId) { return CUTI.filter(c => c.dokterId === dokterId); }
+function cutiLines(list) {
+  return list.map(c => {
+    const rentang = c.mulai === c.selesai ? fmtTanggalPendek(c.mulai) : `${fmtTanggalPendek(c.mulai)}–${fmtTanggalPendek(c.selesai)}`;
+    return c.dokterName ? `${c.dokterName} cuti ${rentang} (${c.alasan})` : `Cuti ${rentang} (${c.alasan})`;
+  });
+}
+function klinikTutupLines() { return KLINIK_TUTUP.map(k => `Klinik tutup ${fmtTanggalPendek(k.tanggal)} — ${k.alasan}`); }
+
+const KLINIK_LIST = [
+  { name: 'Klinik Sehat Bahagia', kota: 'Bandung', dokterCount: 4, staffCount: 6, appointmentsToday: 9 },
+  { name: 'Klinik Mitra Husada', kota: 'Jakarta', dokterCount: 6, staffCount: 9, appointmentsToday: 14 },
+  { name: 'Klinik Bunda Sehat', kota: 'Surabaya', dokterCount: 3, staffCount: 5, appointmentsToday: 7 },
+  { name: 'Klinik Medika Prima', kota: 'Yogyakarta', dokterCount: 2, staffCount: 4, appointmentsToday: 3 },
+];
+
+let APPOINTMENTS_TODAY = [
+  { id: 1, time: '08:00', patientName: 'Siti Rahma', layananId: 1, dokterId: 1, appointmentStatus: 'completed', visitStatus: 'selesai', bookingSource: 'phone' },
+  { id: 2, time: '08:15', patientName: 'Budi Santoso', layananId: 2, dokterId: 1, appointmentStatus: 'confirmed', visitStatus: 'sedang dilayani', bookingSource: 'online' },
+  { id: 3, time: '08:30', patientName: 'Citra Dewi', layananId: 3, dokterId: 2, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'online' },
+  { id: 4, time: '09:00', patientName: 'Dimas Wijaya', layananId: 4, dokterId: 4, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'phone' },
+  { id: 5, time: '09:15', patientName: 'Eka Putri', layananId: 1, dokterId: 3, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'online' },
+  { id: 6, time: '09:30', patientName: 'Fajar Ramadhan', layananId: 2, dokterId: 1, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'phone' },
+  { id: 7, time: '10:00', patientName: 'Gita Ayu', layananId: 3, dokterId: 2, appointmentStatus: 'confirmed', visitStatus: 'belum tiba', bookingSource: 'online' },
+  { id: 8, time: '10:15', patientName: 'Hendra Saputra', layananId: 1, dokterId: 3, appointmentStatus: 'cancelled', visitStatus: 'belum tiba', bookingSource: 'phone' },
+  { id: 9, time: '10:30', patientName: 'Indah Lestari', layananId: 4, dokterId: 4, appointmentStatus: 'perlu_dijadwal_ulang', visitStatus: 'belum tiba', bookingSource: 'online' },
+  { id: 10, time: '11:00', patientName: 'Joko Widodo', layananId: 2, dokterId: 1, appointmentStatus: 'no-show', visitStatus: 'belum tiba', bookingSource: 'phone' },
+];
+
+const STAGES = ['belum tiba', 'menunggu', 'sedang dilayani', 'selesai'];
+function nextStage(stage) { const i = STAGES.indexOf(stage); return i >= 0 && i < STAGES.length - 1 ? STAGES[i + 1] : null; }
+
+const ROLES = [
+  { key: 'admin_klinik', label: 'Admin Klinik' },
+  { key: 'resepsionis', label: 'Resepsionis' },
+  { key: 'staf_layanan', label: 'Staf Layanan' },
+  { key: 'dokter', label: 'Dokter' },
+  { key: 'super_admin', label: 'Super-Admin' },
+];
+
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function layananName(id) { return LAYANAN.find(l => l.id === id).name; }
+function dokterName(id) { return DOKTER.find(d => d.id === id).name; }
+function timeSort(a, b) { return a.time.localeCompare(b.time); }
+function apptsForDokter(id) { return APPOINTMENTS_TODAY.filter(a => a.dokterId === id); }
+function apptsForLayananIds(ids) { return APPOINTMENTS_TODAY.filter(a => ids.includes(a.layananId) && a.appointmentStatus !== 'cancelled'); }
+function perluDijadwalUlangList() { return APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'perlu_dijadwal_ulang'); }
+
+function visitPill(stage) {
+  const map = { 'belum tiba': 'bg-slate-100 text-slate-500', 'menunggu': 'bg-amber-100 text-amber-700', 'sedang dilayani': 'bg-indigo-100 text-indigo-700', 'selesai': 'bg-emerald-100 text-emerald-700' };
+  return `<span class="text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${map[stage] || ''}">${esc(stage)}</span>`;
+}
+function apptPill(status) {
+  const map = { confirmed: 'bg-blue-100 text-blue-700', completed: 'bg-emerald-100 text-emerald-700', cancelled: 'bg-slate-100 text-slate-400 line-through', 'no-show': 'bg-red-100 text-red-700', rescheduled: 'bg-amber-100 text-amber-700', perlu_dijadwal_ulang: 'bg-orange-100 text-orange-700' };
+  return `<span class="text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${map[status] || ''}">${esc(status)}</span>`;
+}
+function bookingPill(source) {
+  const map = { online: 'bg-indigo-100 text-indigo-700', phone: 'bg-purple-100 text-purple-700' };
+  return `<span class="text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${map[source] || ''}">${esc(source)}</span>`;
+}
+function toneClass(tone) {
+  return { good: 'text-emerald-600', warn: 'text-amber-600', bad: 'text-red-600', neutral: 'text-slate-800' }[tone] || 'text-slate-800';
+}
+
+// ---------------------------------------------------------------------------
+// Shared state — role + (variant-C-only) section. Appointment mutations are
+// stored directly on APPOINTMENTS_TODAY so switching layout variants keeps
+// comparing the SAME live data.
+// ---------------------------------------------------------------------------
+let ui = { role: 'admin_klinik', apptPage: 1 };
+const APPT_PAGE_SIZE = 5;
+
+// ---------------------------------------------------------------------------
+// Per-role dashboard model — the content is role-owned; layout variants only
+// decide how to arrange {stats, primaryItems, secondaryItems}.
+// ---------------------------------------------------------------------------
+function perluDijadwalUlangItem(a, actionLabel) {
+  return {
+    id: a.id,
+    primaryText: `${a.time} · ${a.patientName}`,
+    secondaryText: `${layananName(a.layananId)} · ${dokterName(a.dokterId)}`,
+    meta: apptPill(a.appointmentStatus),
+    group: null,
+    action: { label: actionLabel, action: 'stub' },
+  };
+}
+
+function buildModel(role) {
+  if (role === 'admin_klinik') {
+    const active = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus !== 'cancelled');
+    const selesai = active.filter(a => a.visitStatus === 'selesai').length;
+    const berjalan = active.filter(a => ['menunggu', 'sedang dilayani'].includes(a.visitStatus)).length;
+    const dokterAktif = new Set(active.map(a => a.dokterId)).size;
+    const perluUlang = perluDijadwalUlangList();
+    const stats = [
+      { label: 'Appointment Hari Ini', value: active.length, tone: 'neutral' },
+      { label: 'Selesai', value: selesai, tone: 'good' },
+      { label: 'Sedang Berjalan', value: berjalan, tone: 'warn' },
+      { label: 'Dokter Aktif', value: dokterAktif, tone: 'neutral' },
+      { label: 'Perlu Dijadwal Ulang', value: perluUlang.length, tone: perluUlang.length ? 'bad' : 'neutral' },
+    ];
+    const appointmentItems = APPOINTMENTS_TODAY.slice().sort(timeSort).map(a => ({
+      id: a.id,
+      primaryText: `${a.time} · ${a.patientName}`,
+      secondaryText: `${layananName(a.layananId)} · ${dokterName(a.dokterId)}`,
+      meta: `${apptPill(a.appointmentStatus)} ${visitPill(a.visitStatus)}`,
+      group: layananName(a.layananId),
+      action: null,
+    }));
+    const layananItems = [
+      { id: 'dup', primaryText: '⚠ Kandidat Duplikat', secondaryText: `${DUPLICATE_COUNT} pasang menunggu tinjauan`, meta: '', action: { label: 'Tinjau →', action: 'stub' } },
+      ...LAYANAN.map(l => ({ id: 'l' + l.id, primaryText: l.name, secondaryText: `${active.filter(a => a.layananId === l.id).length} appointment hari ini`, meta: '', action: null })),
+    ];
+    const sections = [
+      { key: 'appointments', title: 'Appointment Hari Ini (Semua)', items: appointmentItems, paginate: true },
+      { key: 'perlu-ulang', title: 'Perlu Dijadwal Ulang', items: perluUlang.map(a => perluDijadwalUlangItem(a, 'Lihat →')) },
+      { key: 'layanan', title: 'Ringkasan Layanan & Duplikat', items: layananItems },
+      { key: 'info', title: 'Info Klinik', notices: klinikTutupLines() },
+    ];
+    return { roleLabel: 'Admin Klinik', roleDesc: 'Ringkasan operasional klinik hari ini', stats, sections };
+  }
+
+  if (role === 'resepsionis') {
+    const belumTiba = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'confirmed' && a.visitStatus === 'belum tiba');
+    const diKlinik = APPOINTMENTS_TODAY.filter(a => ['menunggu', 'sedang dilayani'].includes(a.visitStatus)).length;
+    const noShow = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'no-show').length;
+    const perluUlang = perluDijadwalUlangList();
+    const stats = [
+      { label: 'Appointment Hari Ini', value: APPOINTMENTS_TODAY.filter(a => a.appointmentStatus !== 'cancelled').length, tone: 'neutral' },
+      { label: 'Perlu Check-In', value: belumTiba.length, tone: 'warn' },
+      { label: 'Sedang di Klinik', value: diKlinik, tone: 'good' },
+      { label: 'No-show', value: noShow, tone: 'bad' },
+    ];
+    const checkinItems = belumTiba.slice().sort(timeSort).map(a => ({
+      id: a.id,
+      primaryText: `${a.time} · ${a.patientName}`,
+      secondaryText: `${layananName(a.layananId)} · ${dokterName(a.dokterId)}`,
+      meta: bookingPill(a.bookingSource),
+      group: null,
+      action: { label: 'Check-In', action: 'checkin', id: a.id },
+    }));
+    const aksiItems = [
+      { id: 'newbooking', primaryText: '+ Booking via Telepon', secondaryText: 'Catat appointment dari panggilan masuk', meta: '', action: { label: 'Buka →', action: 'stub' } },
+      { id: 'searchpatient', primaryText: 'Cari Pasien', secondaryText: 'Lihat profil & riwayat kunjungan', meta: '', action: { label: 'Buka →', action: 'stub' } },
+    ];
+    const dokterCutiLines = cutiLines(CUTI.map(c => ({ ...c, dokterName: dokterName(c.dokterId) })));
+    const sections = [
+      { key: 'checkin', title: 'Perlu Check-In', items: checkinItems },
+      { key: 'perlu-ulang', title: 'Perlu Ditindaklanjuti (Reschedule/Cancel)', items: perluUlang.map(a => perluDijadwalUlangItem(a, 'Tindak Lanjuti')) },
+      { key: 'info', title: 'Info', notices: [...klinikTutupLines(), ...dokterCutiLines] },
+      { key: 'aksi', title: 'Aksi Cepat', items: aksiItems },
+    ];
+    return { roleLabel: 'Resepsionis', roleDesc: 'Check-in pasien & booking hari ini', stats, sections };
+  }
+
+  if (role === 'staf_layanan') {
+    const staf = STAF[0];
+    const mine = apptsForLayananIds(staf.layananIds);
+    const antrian = mine.filter(a => ['menunggu', 'sedang dilayani'].includes(a.visitStatus));
+    const selesai = mine.filter(a => a.visitStatus === 'selesai');
+    const stats = [
+      { label: 'Menunggu', value: mine.filter(a => a.visitStatus === 'menunggu').length, tone: 'warn' },
+      { label: 'Sedang Dilayani', value: mine.filter(a => a.visitStatus === 'sedang dilayani').length, tone: 'good' },
+      { label: 'Selesai Hari Ini', value: selesai.length, tone: 'neutral' },
+      { label: 'Total Antrian', value: antrian.length, tone: 'neutral' },
+    ];
+    const antrianItems = antrian.slice().sort(timeSort).map(a => ({
+      id: a.id,
+      primaryText: a.patientName,
+      secondaryText: `${layananName(a.layananId)} · ${a.time} · ${dokterName(a.dokterId)}`,
+      meta: visitPill(a.visitStatus),
+      group: a.visitStatus,
+      action: nextStage(a.visitStatus) ? { label: `→ ${nextStage(a.visitStatus)}`, action: 'advance', id: a.id } : null,
+    }));
+    const selesaiItems = selesai.map(a => ({ id: a.id, primaryText: a.patientName, secondaryText: `${layananName(a.layananId)} · ${a.time}`, meta: visitPill(a.visitStatus), action: null }));
+    const sections = [
+      { key: 'antrian', title: 'Antrian Pasien', items: antrianItems },
+      { key: 'selesai', title: 'Selesai Hari Ini', items: selesaiItems },
+    ];
+    return { roleLabel: `Staf Layanan (${staf.name})`, roleDesc: `Menangani: ${staf.layananIds.map(layananName).join(', ')}`, stats, sections };
+  }
+
+  if (role === 'dokter') {
+    const dok = DOKTER[0];
+    const mine = apptsForDokter(dok.id).filter(a => a.appointmentStatus !== 'cancelled');
+    const selesai = mine.filter(a => a.visitStatus === 'selesai').length;
+    const stats = [
+      { label: 'Appointment Hari Ini', value: mine.length, tone: 'neutral' },
+      { label: 'Selesai', value: selesai, tone: 'good' },
+      { label: 'Sisa Jadwal', value: mine.length - selesai, tone: 'warn' },
+    ];
+    const jadwalItems = mine.slice().sort(timeSort).map(a => ({
+      id: a.id,
+      primaryText: `${a.time} · ${a.patientName}`,
+      secondaryText: layananName(a.layananId),
+      meta: `${apptPill(a.appointmentStatus)} ${visitPill(a.visitStatus)}`,
+      group: null,
+      action: null,
+    }));
+    const upcoming = UPCOMING_COUNTS[dok.id] || { besok: 0, besokLusa: 0 };
+    const infoItems = [
+      { id: 'besok', primaryText: 'Besok', secondaryText: `${upcoming.besok} appointment terjadwal`, meta: '', action: null },
+      { id: 'besok-lusa', primaryText: 'Besok Lusa', secondaryText: `${upcoming.besokLusa} appointment terjadwal`, meta: '', action: null },
+      { id: 'jadwal', primaryText: 'Jadwal Rutin', secondaryText: 'Senin–Jumat 08:00–14:00', meta: '', action: null },
+    ];
+    const infoNotices = [...cutiLines(cutiUntukDokter(dok.id)), ...klinikTutupLines()];
+    const sections = [
+      { key: 'jadwal', title: 'Jadwal Hari Ini', items: jadwalItems },
+      { key: 'info', title: 'Info Lain', items: infoItems, notices: infoNotices },
+    ];
+    return { roleLabel: `Dokter (${dok.name})`, roleDesc: 'Jadwal praktik hari ini — Visit Status diubah oleh Resepsionis/Staf Layanan', stats, sections };
+  }
+
+  // super_admin
+  const totalApptToday = KLINIK_LIST.reduce((s, k) => s + k.appointmentsToday, 0);
+  const stats = [
+    { label: 'Klinik Aktif', value: KLINIK_LIST.length, tone: 'neutral' },
+    { label: 'Appointment Hari Ini (Platform)', value: totalApptToday, tone: 'neutral' },
+    { label: 'Klinik Baru Bulan Ini', value: 1, tone: 'good' },
+  ];
+  const klinikItems = KLINIK_LIST.map(k => ({
+    id: k.name,
+    primaryText: k.name,
+    secondaryText: `${k.dokterCount} dokter · ${k.staffCount} staf`,
+    meta: `${k.appointmentsToday} appt hari ini`,
+    group: k.kota,
+    action: null,
+  }));
+  const provisioningItems = [
+    { id: 'provision', primaryText: '+ Provisikan Klinik Baru', secondaryText: 'Buat tenant Klinik baru di Platform', meta: '', action: { label: 'Buka →', action: 'stub' } },
+    { id: 'event1', primaryText: 'Klinik Sehat Bahagia diaktifkan', secondaryText: '12 Agu 2026', meta: '', action: null },
+  ];
+  const sections = [
+    { key: 'klinik', title: 'Daftar Klinik', items: klinikItems },
+    { key: 'provisioning', title: 'Provisioning & Aktivitas', items: provisioningItems },
+  ];
+  return { roleLabel: 'Super-Admin', roleDesc: 'Ringkasan seluruh Klinik di Platform (bukan operasional satu Klinik)', stats, sections };
+}
+
+// ---------------------------------------------------------------------------
+// Shared leaf renderers (small, intentionally reused — not full layouts)
+// ---------------------------------------------------------------------------
+function statCard(s) {
+  return `<div class="bg-white rounded-xl border border-slate-200 p-4">
+    <div class="text-xs text-slate-400 mb-1">${esc(s.label)}</div>
+    <div class="text-2xl font-semibold ${toneClass(s.tone)}">${s.value}</div>
+  </div>`;
+}
+
+function emptyNote() { return `<div class="text-sm text-slate-400 italic py-6 text-center">Tidak ada item.</div>`; }
+
+function itemRow(item, style) {
+  if (style === 'board') {
+    return `<div class="border border-slate-200 rounded-lg bg-white p-3 flex flex-col gap-1.5">
+      <div class="text-sm font-medium">${esc(item.primaryText)}</div>
+      <div class="text-xs text-slate-400">${esc(item.secondaryText)}</div>
+      ${item.meta ? `<div>${item.meta}</div>` : ''}
+      ${item.action ? `<button data-action="${item.action.action}" data-id="${item.action.id ?? ''}" class="mt-1 w-full text-xs bg-blue-600 text-white px-2.5 py-1.5 rounded-md hover:bg-blue-700">${esc(item.action.label)}</button>` : ''}
+    </div>`;
+  }
+  const pad = style === 'big' ? 'p-4' : 'p-3';
+  return `<div class="flex items-center justify-between gap-3 ${pad} border border-slate-200 rounded-lg bg-white">
+    <div class="min-w-0">
+      <div class="text-sm font-medium truncate">${esc(item.primaryText)}</div>
+      <div class="text-xs text-slate-400 truncate">${esc(item.secondaryText)}</div>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      ${item.meta ? `<span>${item.meta}</span>` : ''}
+      ${item.action ? `<button data-action="${item.action.action}" data-id="${item.action.id ?? ''}" class="text-xs bg-blue-600 text-white px-2.5 py-1.5 rounded-md hover:bg-blue-700">${esc(item.action.label)}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function roleSelectorTabs() {
+  return ROLES.map(r => `<button data-action="set-role" data-role="${r.key}" class="px-3 py-1.5 rounded-full text-xs font-medium border ${ui.role === r.key ? 'bg-slate-900 text-white border-slate-900' : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'}">${esc(r.label)}</button>`).join('');
+}
+
+function noticePanel(lines) {
+  if (!lines || !lines.length) return '';
+  return `<div class="space-y-1.5">${lines.map(l => `<div class="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-md px-2.5 py-1.5">⚠ ${esc(l)}</div>`).join('')}</div>`;
+}
+
+function sectionPanel(section, isMain) {
+  const items = section.items || [];
+  let body = '';
+  if (items.length) {
+    let shown = items;
+    let pager = '';
+    if (section.paginate) {
+      const totalPages = Math.max(1, Math.ceil(items.length / APPT_PAGE_SIZE));
+      const page = Math.min(ui.apptPage, totalPages);
+      shown = items.slice((page - 1) * APPT_PAGE_SIZE, page * APPT_PAGE_SIZE);
+      if (totalPages > 1) {
+        pager = `<div class="flex items-center justify-between mt-3 text-xs text-slate-500">
+          <button data-action="appt-prev" ${page <= 1 ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 ${page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">← Sebelumnya</button>
+          <span>Halaman ${page} dari ${totalPages}</span>
+          <button data-action="appt-next" ${page >= totalPages ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 ${page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">Berikutnya →</button>
+        </div>`;
+      }
+    }
+    body += `<div class="space-y-2${isMain ? ' max-h-[420px] overflow-y-auto pr-1' : ''}">${shown.map(i => itemRow(i, section.style)).join('')}</div>${pager}`;
+  }
+  if (section.notices && section.notices.length) {
+    body += (body ? '<div class="mt-3">' + noticePanel(section.notices) + '</div>' : noticePanel(section.notices));
+  }
+  if (!body) body = emptyNote();
+  return `<div class="bg-white rounded-xl border border-slate-200 p-4${isMain ? '' : ' h-fit'}">
+    <div class="text-sm font-medium mb-3">${esc(section.title)}</div>
+    ${body}
+  </div>`;
+}
+
+// ===========================================================================
+// Dashboard layout — Grid widget (verdict: picked over "Fokus hari ini" and
+// "Command center" variants; see the comment at the top of this file)
+// ===========================================================================
+function renderDashboard() {
+  const m = buildModel(ui.role);
+  const [mainSection, ...restSections] = m.sections;
+  return `<div class="max-w-6xl mx-auto pt-8 px-4">
+    <div class="mb-1"><div class="text-xs uppercase tracking-wide text-slate-400">${esc(KLINIK.name)} · ${esc(KLINIK.today)}</div><h1 class="text-lg font-semibold">Dashboard</h1></div>
+    <div class="flex flex-wrap gap-2 my-4">${roleSelectorTabs()}</div>
+    <div class="mb-4"><div class="font-medium">${esc(m.roleLabel)}</div><div class="text-sm text-slate-500">${esc(m.roleDesc)}</div></div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">${m.stats.map(statCard).join('')}</div>
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+      ${sectionPanel(mainSection, true)}
+      <div class="space-y-4">${restSections.map(s => sectionPanel(s, false)).join('')}</div>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Wiring: delegated events
+// ---------------------------------------------------------------------------
+function render() {
+  document.getElementById('app').innerHTML = renderDashboard();
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  const action = t.dataset.action;
+  switch (action) {
+    case 'set-role': ui.role = t.dataset.role; ui.apptPage = 1; break;
+    case 'appt-prev': ui.apptPage = Math.max(1, ui.apptPage - 1); break;
+    case 'appt-next': ui.apptPage = ui.apptPage + 1; break;
+    case 'checkin': { const a = APPOINTMENTS_TODAY.find(x => x.id === Number(t.dataset.id)); if (a) a.visitStatus = 'menunggu'; break; }
+    case 'advance': { const a = APPOINTMENTS_TODAY.find(x => x.id === Number(t.dataset.id)); if (a) { const nxt = nextStage(a.visitStatus); if (nxt) a.visitStatus = nxt; } break; }
+    case 'stub': break; // prototype stub — this would navigate to that screen in the real app
+  }
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
