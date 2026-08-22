@@ -4,9 +4,17 @@
   smartphone browser?"
   Single flow: linear step-by-step wizard. Mock Layanan/Dokter/Jadwal data per
   CONTEXT.md; Jam Operasional and Jadwal drive which slots are offered. NIK is captured
-  but optional per docs/adr/0005-nik-and-satu-sehat-readiness-without-integration.md.
+  but optional per docs/adr/0005-nik-and-satu-sehat-readiness-without-integration.md;
+  providing it requires ticking a consent checkbox before the flow can continue.
+  Keluhan (chief complaint) is captured as an optional free-text field alongside
+  identity, per issue #1 story 19.
+  Picking a Slot places a Slot Hold for a per-Klinik-configurable duration (default 5
+  minutes, bounded 2-15 — override with ?holdMinutes=N for this demo) so the Slot isn't
+  lost mid-flow to another Patient; the "⏱ simulasikan hold habis" debug button forces
+  the hold to expire without waiting for the real countdown.
   No real OTP/SMS — any 4-6 digit code is accepted; "Kirim ulang kode" has a 30s
-  cooldown, no SMS actually goes out.
+  cooldown, no SMS actually goes out. OTP is re-verified on every booking, even for a
+  returning Patient — Akun Pasien has no password, so OTP verification IS the auth act.
   Try ?layanan=gigi&dokter=bagus to simulate arriving via a Deep Link (see CONTEXT.md).
   Run: open this file directly in a phone browser, or on desktop and narrow the window
   (or use device toolbar) — it's designed for a phone-width viewport.
@@ -92,6 +100,15 @@
     font-weight: 700; font-size: 14px; padding: 12px; margin-top: 4px;
   }
   .resend-btn:disabled { color: #9aa0ab; cursor: not-allowed; }
+  textarea.field { resize: vertical; min-height: 64px; font-family: inherit; }
+  .hold-badge {
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+    background:#fff7e6; border:1.5px solid #f3d9ae; border-radius:12px; padding:10px 14px;
+    font-size:12.5px; color:#92610c; margin-bottom:10px;
+  }
+  .hold-badge b { font-variant-numeric: tabular-nums; }
+  .consent-row { display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:12.5px; color:#4a4f5b; }
+  .consent-row input { margin-top:3px; }
 
   /* ================= Wizard Bertahap ================= */
   .a-root { --accent: #2563eb; --accent-dark:#1d4ed8; display:flex; flex-direction:column; min-height:100%; }
@@ -133,6 +150,10 @@
     box-shadow: 0 10px 30px -8px rgba(0,0,0,.5); display:none; white-space:pre-wrap;
   }
   #dbgPanel.show { display:block; }
+  #dbgHoldExpire {
+    position:fixed; right:10px; bottom:74px; z-index:100; font-size:11px; background:#92610c; color:#fff;
+    border:none; border-radius:8px; padding:5px 8px; opacity:.7;
+  }
 </style>
 </head>
 <body>
@@ -140,6 +161,7 @@
 <div id="harness-banner">🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan</div>
 <div id="stage"><div id="phone"><div id="app"></div></div></div>
 <button id="dbgToggle" onclick="toggleDebug()">🔍 state</button>
+<button id="dbgHoldExpire" onclick="simulateHoldExpiredA()">⏱ simulasikan hold habis</button>
 <pre id="dbgPanel"></pre>
 
 <script>
@@ -163,6 +185,16 @@ var DOKTER = [
   { id:'citra',  nama:'dr. Citra Dewi',     layanan:['fisio','umum'],  jadwal:{1:[8,16],3:[8,16],5:[8,16],6:[8,12]} }
 ];
 var ANY_DOKTER = { id:'any', nama:'Dokter manapun (tercepat tersedia)' };
+
+// Slot Hold: per-Klinik setting, default 5 minutes, bounded 2-15 minutes.
+var HOLD_MINUTES_DEFAULT = 5, HOLD_MINUTES_MIN = 2, HOLD_MINUTES_MAX = 15;
+function resolveHoldMinutes(){
+  var v = parseInt(new URLSearchParams(location.search).get('holdMinutes'), 10);
+  if(isNaN(v)) return HOLD_MINUTES_DEFAULT;
+  return Math.max(HOLD_MINUTES_MIN, Math.min(HOLD_MINUTES_MAX, v));
+}
+var HOLD_MINUTES = resolveHoldMinutes();
+var HOLD_MS = HOLD_MINUTES * 60 * 1000;
 
 function pad(n){ return n<10?'0'+n:''+n; }
 function fmtDate(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
@@ -222,31 +254,41 @@ function countAvailable(date, layananId, dokterId){
 /* ---------------------------------------------------------------------- */
 /* Shared booking state + mutators                                        */
 /* ---------------------------------------------------------------------- */
-var booking = { layananId:null, dokterId:null, dateISO:null, slotTime:null, assignedDokterId:null,
-                nama:'', hp:'', nik:'', otp:'', confirmed:false, err:null };
+var booking = { layananId:null, dokterId:null, dateISO:null, slotTime:null, assignedDokterId:null, slotHeldAt:null,
+                nama:'', hp:'', nik:'', nikConsent:false, keluhan:'', otp:'', confirmed:false, err:null };
 
-function setLayanan(id){ booking.layananId=id; booking.dokterId=null; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.err=null; }
-function setDokter(id){ booking.dokterId=id; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.err=null; }
-function setDate(iso){ booking.dateISO=iso; booking.slotTime=null; booking.assignedDokterId=null; booking.err=null; }
+function setLayanan(id){ booking.layananId=id; booking.dokterId=null; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null; booking.err=null; }
+function setDokter(id){ booking.dokterId=id; booking.dateISO=null; booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null; booking.err=null; }
+function setDate(iso){ booking.dateISO=iso; booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null; booking.err=null; }
 function setSlot(time){
   var d = new Date(booking.dateISO+'T00:00:00');
   var slots = slotsForDate(d, booking.layananId, booking.dokterId);
   var s = slots.filter(function(x){return x.time===time;})[0];
   if(!s || s.booked) return false;
-  booking.slotTime = time; booking.assignedDokterId = s.dokterId; booking.err=null;
+  booking.slotTime = time; booking.assignedDokterId = s.dokterId; booking.slotHeldAt = Date.now(); booking.err=null;
   return true;
+}
+function isSlotHoldExpired(){ return !!booking.slotHeldAt && (Date.now() - booking.slotHeldAt) > HOLD_MS; }
+function holdRemainingLabel(){
+  var rem = Math.max(0, HOLD_MS - (Date.now() - (booking.slotHeldAt||Date.now())));
+  var m = Math.floor(rem/60000), s = Math.floor((rem%60000)/1000);
+  return pad(m)+':'+pad(s);
 }
 function isValidPhone(v){ return /^08[0-9]{8,11}$/.test((v||'').trim()); }
 function isValidNik(v){ return (v||'').trim()==='' || /^[0-9]{16}$/.test(v.trim()); }
-function setIdentitas(nama, hp, nik){
+function setIdentitas(nama, hp, nik, nikConsent, keluhan){
   if(!(nama||'').trim()){ booking.err='Nama wajib diisi.'; return false; }
   if(!isValidPhone(hp)){ booking.err='Nomor HP tidak valid. Contoh: 081234567890'; return false; }
   if(!isValidNik(nik)){ booking.err='NIK harus 16 digit (opsional, boleh dikosongkan).'; return false; }
-  booking.nama=nama.trim(); booking.hp=hp.trim(); booking.nik=(nik||'').trim(); booking.err=null;
+  if((nik||'').trim() && !nikConsent){ booking.err='Centang persetujuan penyimpanan NIK, atau kosongkan NIK.'; return false; }
+  booking.nama=nama.trim(); booking.hp=hp.trim(); booking.nik=(nik||'').trim();
+  booking.nikConsent = !!(nik||'').trim() && !!nikConsent;
+  booking.keluhan=(keluhan||'').trim(); booking.err=null;
   return true;
 }
 function verifyOtp(code){
   if(!/^[0-9]{4,6}$/.test((code||'').trim())){ booking.err='Kode OTP tidak valid.'; return false; }
+  if(isSlotHoldExpired()){ return false; } // caller redirects back to Pilih Jam
   booking.otp = code.trim(); booking.confirmed = true; booking.err=null;
   return true;
 }
@@ -314,6 +356,30 @@ function resendOtpA(){
   startOtpCooldown(30);
 }
 
+function holdBadgeHtml(){
+  if(!booking.slotHeldAt) return '';
+  return '<div class="hold-badge"><span>⏱ Slot ditahan untuk Anda</span><b id="a-hold-remaining">'+holdRemainingLabel()+'</b></div>';
+}
+
+var holdTimer = { intervalId:null };
+function tickHold(){
+  if(isSlotHoldExpired()){
+    booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null;
+    booking.err='Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.';
+    ui.A.step=3; render(); return;
+  }
+  var el = document.getElementById('a-hold-remaining');
+  if(el) el.textContent = holdRemainingLabel();
+}
+function manageHoldTimer(){
+  var shouldRun = booking.slotHeldAt && (ui.A.step===4 || ui.A.step===5);
+  if(shouldRun && !holdTimer.intervalId){
+    holdTimer.intervalId = setInterval(tickHold, 1000);
+  } else if(!shouldRun && holdTimer.intervalId){
+    clearInterval(holdTimer.intervalId); holdTimer.intervalId = null;
+  }
+}
+
 function goA(delta){ ui.A.step = Math.max(0, Math.min(6, ui.A.step+delta)); render(); }
 function selLayananA(id){ setLayanan(id); ui.A.step=1; render(); }
 function selDokterA(id){ setDokter(id); ui.A.step=2; render(); }
@@ -321,14 +387,25 @@ function selDateA(iso){ setDate(iso); ui.A.step=3; render(); }
 function selSlotA(time){ if(setSlot(time)) ui.A.step=4; render(); }
 function submitIdentitasA(){
   var nama=document.getElementById('a-nama').value, hp=document.getElementById('a-hp').value, nik=document.getElementById('a-nik').value;
-  var ok = setIdentitas(nama,hp,nik);
+  var nikConsent = document.getElementById('a-nik-consent').checked, keluhan = document.getElementById('a-keluhan').value;
+  var ok = setIdentitas(nama,hp,nik,nikConsent,keluhan);
   if(ok) ui.A.step=5;
   render();
   if(ok) startOtpCooldown(30);
 }
 function submitOtpA(){
   var code = document.getElementById('a-otp').value;
+  if(isSlotHoldExpired()){
+    booking.slotTime=null; booking.assignedDokterId=null; booking.slotHeldAt=null;
+    booking.err='Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.';
+    ui.A.step=3; render(); return;
+  }
   if(verifyOtp(code)) ui.A.step=6;
+  render();
+}
+function simulateHoldExpiredA(){
+  if(!booking.slotHeldAt) return;
+  booking.slotHeldAt = Date.now() - HOLD_MS - 1000;
   render();
 }
 
@@ -363,6 +440,7 @@ function renderA(){
       out += '<div class="a-card'+(avail===0?' booked':'')+'" onclick="'+(avail>0?('selDateA(\''+fmtDate(d)+'\')'):'')+'"><div><div class="name">'+label+', '+shortDate(d)+'</div><div class="sub">'+(avail>0? avail+' jam tersedia' : 'Penuh')+'</div></div></div>';
     });
   } else if(step===3){
+    if(booking.err) out += '<p class="err">'+booking.err+'</p>';
     var d3 = new Date(booking.dateISO+'T00:00:00');
     var slots = slotsForDate(d3, booking.layananId, booking.dokterId);
     out += '<div class="a-slotgrid">';
@@ -372,12 +450,16 @@ function renderA(){
     if(!slots.length) out += '<p class="muted">Tidak ada jam tersedia di tanggal ini.</p>';
     out += '</div>';
   } else if(step===4){
+    out += holdBadgeHtml();
     out += '<label class="flabel">Nama Lengkap</label><input id="a-nama" class="field" placeholder="Nama sesuai KTP" value="'+esc(booking.nama)+'">';
     out += '<label class="flabel">No. HP</label><input id="a-hp" class="field" placeholder="081234567890" value="'+esc(booking.hp)+'">';
-    out += '<label class="flabel">NIK <span class="muted">(opsional)</span></label><input id="a-nik" class="field" placeholder="16 digit" value="'+esc(booking.nik)+'">';
+    out += '<label class="flabel">Keluhan <span class="muted">(opsional)</span></label><textarea id="a-keluhan" class="field" rows="3" placeholder="Ceritakan keluhan Anda, supaya Dokter bisa siap-siap">'+esc(booking.keluhan)+'</textarea>';
+    out += '<label class="flabel">NIK <span class="muted">(opsional)</span></label><input id="a-nik" class="field" placeholder="16 digit" value="'+esc(booking.nik)+'" oninput="document.getElementById(\'a-nik-consent-wrap\').style.display=this.value.trim()?\'flex\':\'none\'">';
+    out += '<label id="a-nik-consent-wrap" class="consent-row" style="display:'+(booking.nik?'flex':'none')+'"><input type="checkbox" id="a-nik-consent" '+(booking.nikConsent?'checked':'')+'><span>Saya setuju NIK saya disimpan sesuai kebijakan Platform.</span></label>';
     if(booking.err) out += '<p class="err">'+booking.err+'</p>';
     out += '<button class="primary-btn" style="background:var(--accent)" onclick="submitIdentitasA()">Lanjut</button>';
   } else if(step===5){
+    out += holdBadgeHtml();
     out += '<p class="muted" id="a-otp-note">Kode OTP dikirim ke '+esc(booking.hp)+' (demo: kode apa saja 4-6 digit)</p>';
     out += '<label class="flabel">Kode OTP</label><input id="a-otp" class="field" placeholder="123456" inputmode="numeric">';
     if(booking.err) out += '<p class="err">'+booking.err+'</p>';
@@ -408,6 +490,7 @@ function updateDebug(){
 function render(){
   document.getElementById('app').innerHTML = renderA();
   if(ui.A.step!==5 && otpTimer.intervalId){ clearInterval(otpTimer.intervalId); otpTimer.intervalId=null; }
+  manageHoldTimer();
   updateDebug();
   console.log('[prototype] booking=', JSON.parse(JSON.stringify(booking)), 'ui=', JSON.parse(JSON.stringify(ui.A)));
 }
