@@ -44,8 +44,9 @@
 // ---------------------------------------------------------------------------
 // Canned domain data (see CONTEXT.md) — one shared Appointment list that
 // every role's dashboard reads a different slice of. Visit Status stages
-// per CONTEXT.md: belum tiba -> telah tiba -> menunggu -> sedang dilayani ->
-// selesai. Appointment Status is a distinct field (docs/adr/0002).
+// per CONTEXT.md: belum tiba -> menunggu -> sedang dilayani -> selesai
+// (docs/adr/0007 merged an earlier "telah tiba" stage into menunggu).
+// Appointment Status is a distinct field (docs/adr/0002).
 // ---------------------------------------------------------------------------
 const KLINIK = { name: 'Klinik Sehat Bahagia', today: '22 Agustus 2026' };
 
@@ -82,16 +83,16 @@ let APPOINTMENTS_TODAY = [
   { id: 1, time: '08:00', patientName: 'Siti Rahma', layananId: 1, dokterId: 1, appointmentStatus: 'completed', visitStatus: 'selesai', bookingSource: 'phone' },
   { id: 2, time: '08:15', patientName: 'Budi Santoso', layananId: 2, dokterId: 1, appointmentStatus: 'confirmed', visitStatus: 'sedang dilayani', bookingSource: 'online' },
   { id: 3, time: '08:30', patientName: 'Citra Dewi', layananId: 3, dokterId: 2, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'online' },
-  { id: 4, time: '09:00', patientName: 'Dimas Wijaya', layananId: 4, dokterId: 4, appointmentStatus: 'confirmed', visitStatus: 'telah tiba', bookingSource: 'phone' },
+  { id: 4, time: '09:00', patientName: 'Dimas Wijaya', layananId: 4, dokterId: 4, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'phone' },
   { id: 5, time: '09:15', patientName: 'Eka Putri', layananId: 1, dokterId: 3, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'online' },
-  { id: 6, time: '09:30', patientName: 'Fajar Ramadhan', layananId: 2, dokterId: 1, appointmentStatus: 'confirmed', visitStatus: 'telah tiba', bookingSource: 'phone' },
+  { id: 6, time: '09:30', patientName: 'Fajar Ramadhan', layananId: 2, dokterId: 1, appointmentStatus: 'confirmed', visitStatus: 'menunggu', bookingSource: 'phone' },
   { id: 7, time: '10:00', patientName: 'Gita Ayu', layananId: 3, dokterId: 2, appointmentStatus: 'confirmed', visitStatus: 'belum tiba', bookingSource: 'online' },
   { id: 8, time: '10:15', patientName: 'Hendra Saputra', layananId: 1, dokterId: 3, appointmentStatus: 'cancelled', visitStatus: 'belum tiba', bookingSource: 'phone' },
   { id: 9, time: '10:30', patientName: 'Indah Lestari', layananId: 4, dokterId: 4, appointmentStatus: 'confirmed', visitStatus: 'belum tiba', bookingSource: 'online' },
   { id: 10, time: '11:00', patientName: 'Joko Widodo', layananId: 2, dokterId: 1, appointmentStatus: 'no-show', visitStatus: 'belum tiba', bookingSource: 'phone' },
 ];
 
-const STAGES = ['belum tiba', 'telah tiba', 'menunggu', 'sedang dilayani', 'selesai'];
+const STAGES = ['belum tiba', 'menunggu', 'sedang dilayani', 'selesai'];
 function nextStage(stage) { const i = STAGES.indexOf(stage); return i >= 0 && i < STAGES.length - 1 ? STAGES[i + 1] : null; }
 
 const ROLES = [
@@ -110,7 +111,7 @@ function apptsForDokter(id) { return APPOINTMENTS_TODAY.filter(a => a.dokterId =
 function apptsForLayananIds(ids) { return APPOINTMENTS_TODAY.filter(a => ids.includes(a.layananId) && a.appointmentStatus !== 'cancelled'); }
 
 function visitPill(stage) {
-  const map = { 'belum tiba': 'bg-slate-100 text-slate-500', 'telah tiba': 'bg-blue-100 text-blue-700', 'menunggu': 'bg-amber-100 text-amber-700', 'sedang dilayani': 'bg-indigo-100 text-indigo-700', 'selesai': 'bg-emerald-100 text-emerald-700' };
+  const map = { 'belum tiba': 'bg-slate-100 text-slate-500', 'menunggu': 'bg-amber-100 text-amber-700', 'sedang dilayani': 'bg-indigo-100 text-indigo-700', 'selesai': 'bg-emerald-100 text-emerald-700' };
   return `<span class="text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${map[stage] || ''}">${esc(stage)}</span>`;
 }
 function apptPill(status) {
@@ -165,7 +166,7 @@ function buildModel(role) {
 
   if (role === 'resepsionis') {
     const belumTiba = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'confirmed' && a.visitStatus === 'belum tiba');
-    const diKlinik = APPOINTMENTS_TODAY.filter(a => ['telah tiba', 'menunggu', 'sedang dilayani'].includes(a.visitStatus)).length;
+    const diKlinik = APPOINTMENTS_TODAY.filter(a => ['menunggu', 'sedang dilayani'].includes(a.visitStatus)).length;
     const noShow = APPOINTMENTS_TODAY.filter(a => a.appointmentStatus === 'no-show').length;
     const stats = [
       { label: 'Appointment Hari Ini', value: APPOINTMENTS_TODAY.filter(a => a.appointmentStatus !== 'cancelled').length, tone: 'neutral' },
@@ -191,7 +192,7 @@ function buildModel(role) {
   if (role === 'staf_layanan') {
     const staf = STAF[0];
     const mine = apptsForLayananIds(staf.layananIds);
-    const antrian = mine.filter(a => ['telah tiba', 'menunggu', 'sedang dilayani'].includes(a.visitStatus));
+    const antrian = mine.filter(a => ['menunggu', 'sedang dilayani'].includes(a.visitStatus));
     const selesai = mine.filter(a => a.visitStatus === 'selesai');
     const stats = [
       { label: 'Menunggu', value: mine.filter(a => a.visitStatus === 'menunggu').length, tone: 'warn' },
@@ -437,7 +438,7 @@ document.addEventListener('click', (e) => {
     case 'switch-next': return cycle(1);
     case 'set-role': ui.role = t.dataset.role; ui.section = 'ringkasan'; break;
     case 'set-section': ui.section = t.dataset.section; break;
-    case 'checkin': { const a = APPOINTMENTS_TODAY.find(x => x.id === Number(t.dataset.id)); if (a) a.visitStatus = 'telah tiba'; break; }
+    case 'checkin': { const a = APPOINTMENTS_TODAY.find(x => x.id === Number(t.dataset.id)); if (a) a.visitStatus = 'menunggu'; break; }
     case 'advance': { const a = APPOINTMENTS_TODAY.find(x => x.id === Number(t.dataset.id)); if (a) { const nxt = nextStage(a.visitStatus); if (nxt) a.visitStatus = nxt; } break; }
     case 'stub': break; // prototype stub — this would navigate to that screen in the real app
   }
