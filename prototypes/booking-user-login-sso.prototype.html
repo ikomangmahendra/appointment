@@ -52,6 +52,11 @@
       Patient's phone (not disclosed to the User) before linking; skipping
       or failing that OTP falls back to creating a separate new Patient.
 
+  UPDATE (feedback round 2): every OTP screen (login, guest, and the
+  Patient phone-match) now has a "Kirim ulang kode" resend control with a
+  30s cooldown — matching the resend behaviour already established in
+  patient-booking-mobile.prototype.html's guest OTP step.
+
   No backend, no persistence, no real OAuth/SMS — everything is canned
   in-memory mock data, reset on reload. Any 4-6 digit code is accepted as a
   valid OTP. See the harness banner below for test values.
@@ -274,6 +279,40 @@ function render() {
     confirm: screenConfirm, done: screenDone,
   };
   root().innerHTML = screens[a.step]();
+  if (["otpLogin", "guestOtp", "patientMatchOtp"].includes(a.step)) startResendTimer(30);
+}
+
+/* ---- OTP resend cooldown, shared by every OTP screen (one at a time) ---- */
+let otpResendTimer = null;
+function startResendTimer(seconds) {
+  if (otpResendTimer) clearInterval(otpResendTimer);
+  let remaining = seconds;
+  const tick = () => {
+    const btn = document.getElementById("otpResendBtn");
+    if (!btn) { clearInterval(otpResendTimer); otpResendTimer = null; return; } // left the OTP screen
+    if (remaining <= 0) {
+      btn.disabled = false;
+      btn.textContent = "Kirim ulang kode";
+      clearInterval(otpResendTimer); otpResendTimer = null;
+    } else {
+      btn.disabled = true;
+      btn.textContent = `Kirim ulang kode (${remaining}s)`;
+      remaining--;
+    }
+  };
+  tick();
+  otpResendTimer = setInterval(tick, 1000);
+}
+function resendOtp() {
+  const note = document.getElementById("otpResendNote");
+  if (note) note.textContent = "Kode baru terkirim (demo: kode apa saja tetap diterima).";
+  startResendTimer(30);
+}
+function otpResendRow() {
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+    <button class="ghost-btn" id="otpResendBtn" disabled onclick="resendOtp()">Kirim ulang kode (30s)</button>
+    <p class="subtitle" id="otpResendNote" style="margin:0;"></p>
+  </div>`;
 }
 
 /* ---- gate & login ---- */
@@ -340,6 +379,7 @@ function screenOtpLogin() {
     <p class="subtitle">Kode dikirim ke ${maskPhone(a.pendingPhone)} (demo: masukkan kode apa saja).</p>
     <input class="field" id="in_otpLogin" placeholder="Kode 4-6 digit" maxlength="6">
     <button class="primary-btn" onclick="submitOtpLogin()">Verifikasi &amp; Masuk</button>
+    ${otpResendRow()}
   </div>`;
 }
 function submitOtpLogin() {
@@ -373,6 +413,7 @@ function screenGuestOtp() {
     <p class="subtitle">Kode dikirim ke ${a.guestPhone} (demo: masukkan kode apa saja).</p>
     <input class="field" id="in_guestOtp" placeholder="Kode 4-6 digit" maxlength="6">
     <button class="primary-btn" onclick="submitGuestOtp()">Verifikasi</button>
+    ${otpResendRow()}
   </div>`;
 }
 function submitGuestOtp() {
@@ -551,6 +592,7 @@ function screenPatientMatchOtp() {
     <div class="banner-note">No. HP yang dimasukkan cocok dengan Patient yang sudah pernah berobat di sini. Untuk menjaga privasi, kode OTP dikirim ke nomor tersebut — bukan ke Anda — untuk konfirmasi keterkaitan sebelum riwayatnya ditautkan.</div>
     <input class="field" id="in_matchOtp" placeholder="Kode OTP dari pasien tersebut" maxlength="6">
     <button class="primary-btn" onclick="submitMatchOtp()">Verifikasi &amp; Tautkan</button>
+    ${otpResendRow()}
     <button class="ghost-btn" onclick="finalizeNewPatient(false)">Lewati — buat Patient baru terpisah</button>
   </div>`;
 }
