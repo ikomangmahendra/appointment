@@ -80,7 +80,20 @@ Changing an Appointment's time by marking the original Appointment `rescheduled`
 The real-time stage of a Patient's presence at the Klinik on the day of their Appointment: `belum tiba` → `menunggu` → `sedang dilayani` → `selesai`. Distinct from Appointment Status. (An earlier design considered a `telah tiba` stage between `belum tiba` and `menunggu`; see [ADR 0007](docs/adr/0007-merge-telah-tiba-into-menunggu.md) for why it was merged away.)
 
 **Check-In**:
-A Resepsionis marking a Patient's Visit Status as `menunggu` on arrival at the Klinik.
+A Patient's Visit Status being marked as `menunggu` on arrival at the Klinik — either manually by a Resepsionis, or by the Patient themselves via **Self Check-In** at a Kios. See [ADR 0012](docs/adr/0012-self-check-in-via-kios.md).
+
+**Self Check-In**:
+A Patient performing their own Check-In by scanning their Kode Check-In at a Kios, with no Resepsionis involved. Writes Visit Status directly to `menunggu` — the same single-step transition a Resepsionis's Check-In performs, so [ADR 0007](docs/adr/0007-merge-telah-tiba-into-menunggu.md)'s reasoning still holds; Self Check-In is a second way to trigger that transition, not a new stage. Only available when the Appointment needs no exception handling (e.g. nothing has changed since booking) — anything else is routed to a Resepsionis instead. Assumes the Appointment already exists: a Patient without one (walk-in) must be registered by a Resepsionis first, since a Kios never creates an Appointment. A Kode Check-In identifies exactly one Appointment — a Patient with two Appointments the same day has two separate codes and scans once per Appointment, mirroring the Visit Status Board's one-card-per-Appointment rule. Valid any time within the Klinik's Jam Operasional that day, with no "too early" cutoff, matching a Resepsionis's own unrestricted timing. If the Appointment is no longer eligible (already resolved away by Tutup Layanan, or already past `menunggu`), the Kios shows an error and directs the Patient to a Resepsionis — it never reverts or overrides Visit Status itself.
+_Avoid_: Kiosk Check-In (Kios is the device; Self Check-In is the act)
+
+**Kode Check-In**:
+A QR code generated for an Appointment at the moment it's created, used to perform Self Check-In. Delivered via WhatsApp (extending the Deep Link delivery channel) when the Appointment's Booking Source is `phone`, or shown in Akun Pasien when Booking Source is `online`.
+
+**Kios**:
+A self-service device at a Klinik where a Patient scans their Kode Check-In to perform Self Check-In. Bound to exactly one Klinik. Confirms a scan by showing the Patient's name for the Patient to confirm — no further identity input is required. On success, shows the Patient's name, the Layanan they're checked in for, and an estimated Waktu Tunggu — nothing is printed or sent elsewhere; it's a live screen, not a ticket.
+
+**Kanal Check-In**:
+Which path performed a given Check-In: `resepsionis` or `kios` (Self Check-In). Recorded on the Appointment for audit and board display only — it doesn't change [ADR 0009](docs/adr/0009-visit-status-revert-requires-dokter-pin.md): reverting a Check-In is always a Resepsionis action, regardless of which Kanal Check-In performed it.
 
 **Visit Status Board**:
 The kanban view of an Appointment's Visit Status, scoped to the viewing staff's own Klinik and its current operating day (per Jam Operasional). One card represents one Appointment, not one Patient — a Patient with two Appointments the same day appears as two independent cards. `cancelled` and `rescheduled` Appointments never appear on the board; an Appointment marked `no-show` is removed from it immediately. A Resepsionis sees one combined board across all of the Klinik's Layanan; a Staf Layanan sees only the board for their own Layanan. Each Layanan's board header shows: the Layanan's name, its on-duty Staf Layanan (one assigned per shift, not per-Appointment), the Dokter(s) currently on duty for that Layanan today, and the Klinik's current local date/time with its timezone label (WIB/WITA/WIT).
