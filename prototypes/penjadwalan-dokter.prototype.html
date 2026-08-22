@@ -290,7 +290,12 @@ function terapkanDenganCekKonflik(state, dokterId, aksiLabel, buatStateHipotesis
 function reduce(state, action) {
   switch (action.type) {
     case 'SELECT_DOKTER':
-      return { ...state, selectedDokter: action.dokterId, pendingKonflik: null };
+      // Jangan bersihkan pendingKonflik di sini: sejak Pengecualian & Cuti menampilkan
+      // semua dokter untuk audit, sebuah konflik yang belum diselesaikan bisa jadi bukan
+      // untuk dokter yang baru dipilih — pindah dokter di slider tidak boleh diam-diam
+      // membatalkan keputusan admin yang belum selesai (lihat konflikJadwal/konflikPengecualian
+      // di renderHalaman, yang sudah menyaring berdasarkan dokter & jenis aksi masing-masing).
+      return { ...state, selectedDokter: action.dokterId };
 
     case 'TAMBAH_BLOK': {
       const { dokterId, hari, mulai, selesai } = action;
@@ -690,8 +695,16 @@ function renderPageJadwal(root, dokterId, konflik) {
 // =====================================================================
 // Halaman: Pengecualian & Cuti (daftar terfilter + form pengajuan)
 // =====================================================================
+function semuaPengecualianLintasDokter() {
+  const rows = [];
+  for (const d of state.dokter) {
+    for (const p of (state.pengecualian[d.id] || [])) rows.push({ ...p, dokterId: d.id, dokterNama: d.nama });
+  }
+  return rows.sort((a, b) => a.tanggal.localeCompare(b.tanggal) || a.dokterNama.localeCompare(b.dokterNama));
+}
+
 function renderPagePengecualian(root, dokterId, konflik) {
-  const semua = [...(state.pengecualian[dokterId] || [])].sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+  const semua = semuaPengecualianLintasDokter();
   const mendatang = semua.filter(p => p.tanggal >= TODAY_ISO);
   const riwayat = semua.filter(p => p.tanggal < TODAY_ISO);
   const filter = ui.pengecualianFilter;
@@ -699,16 +712,17 @@ function renderPagePengecualian(root, dokterId, konflik) {
 
   let konflikBanner = '';
   if (konflik) {
+    const dokterKonflik = dokterById(konflik.dokterId);
     if (konflik.blocked) {
       konflikBanner = `<div class="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-4">
-        <div class="font-semibold text-rose-700 mb-1">✗ "${escapeHtml(konflik.aksiLabel)}" ditolak total</div>
+        <div class="font-semibold text-rose-700 mb-1">✗ "${escapeHtml(konflik.aksiLabel)}" (${escapeHtml(dokterKonflik.nama)}) ditolak total</div>
         <div class="text-sm text-rose-700 mb-2">Pasien berikut sudah tiba di klinik — perubahan lewat back-office tidak bisa dipaksakan:</div>
         <ul class="list-disc ml-5 text-sm text-rose-700 mb-2">${konflik.appointments.filter(a => a.visitStatus !== 'belum-tiba').map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}–${a.selesai} (${a.visitStatus})</li>`).join('')}</ul>
         <button id="peng-dismiss" class="text-xs font-semibold underline text-rose-700">Tutup</button>
       </div>`;
     } else {
       konflikBanner = `<div class="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4">
-        <div class="font-semibold text-amber-800 mb-1">⚠️ "${escapeHtml(konflik.aksiLabel)}" akan memengaruhi appointment terkonfirmasi</div>
+        <div class="font-semibold text-amber-800 mb-1">⚠️ "${escapeHtml(konflik.aksiLabel)}" (${escapeHtml(dokterKonflik.nama)}) akan memengaruhi appointment terkonfirmasi</div>
         <ul class="list-disc ml-5 text-sm text-amber-800 mb-2">${konflik.appointments.map(a => `<li>${escapeHtml(a.pasien)} — ${a.tanggal} ${a.mulai}–${a.selesai}</li>`).join('')}</ul>
         <label class="block text-xs font-medium text-amber-800 mb-1">Alasan (wajib, untuk audit log)</label>
         <input id="peng-alasan" class="w-full border border-amber-300 rounded-lg px-2 py-1.5 text-sm mb-2" placeholder="mis. dokter cuti mendadak">
@@ -725,7 +739,10 @@ function renderPagePengecualian(root, dokterId, konflik) {
     <div class="grid grid-cols-3 gap-5">
       <div class="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
         <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h3 class="text-sm font-bold text-slate-700">Daftar Pengecualian &amp; Cuti</h3>
+          <div>
+            <h3 class="text-sm font-bold text-slate-700">Daftar Pengecualian &amp; Cuti</h3>
+            <p class="text-[11px] text-slate-400">Semua dokter — untuk kebutuhan audit.</p>
+          </div>
           <div class="flex gap-1.5">
             <button data-filter="semua" class="text-xs font-semibold px-3 py-1.5 rounded-full border ${filter === 'semua' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300'}">Semua (${semua.length})</button>
             <button data-filter="mendatang" class="text-xs font-semibold px-3 py-1.5 rounded-full border ${filter === 'mendatang' ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-600 border-slate-300'}">Mendatang (${mendatang.length})</button>
@@ -736,18 +753,19 @@ function renderPagePengecualian(root, dokterId, konflik) {
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="text-[11px] uppercase text-slate-400">
-              <tr><th class="text-left py-1.5 px-2">Tanggal</th><th class="text-left py-1.5 px-2">Hari</th><th class="text-left py-1.5 px-2">Tipe</th><th class="text-left py-1.5 px-2">Jam</th><th class="text-left py-1.5 px-2">Status</th><th class="px-2"></th></tr>
+              <tr><th class="text-left py-1.5 px-2">Dokter</th><th class="text-left py-1.5 px-2">Tanggal</th><th class="text-left py-1.5 px-2">Hari</th><th class="text-left py-1.5 px-2">Tipe</th><th class="text-left py-1.5 px-2">Jam</th><th class="text-left py-1.5 px-2">Status</th><th class="px-2"></th></tr>
             </thead>
             <tbody>
-              ${filtered.length === 0 ? '<tr><td colspan="6" class="text-xs text-slate-400 italic py-3 px-2">Tidak ada data untuk filter ini.</td></tr>' : filtered.map(p => {
+              ${filtered.length === 0 ? '<tr><td colspan="7" class="text-xs text-slate-400 italic py-3 px-2">Tidak ada data untuk filter ini.</td></tr>' : filtered.map(p => {
                 const lewat = p.tanggal < TODAY_ISO;
                 return `<tr class="border-t border-slate-100 ${lewat ? 'text-slate-400' : ''}">
+                  <td class="py-1.5 px-2 font-medium ${lewat ? '' : 'text-slate-700'}">${escapeHtml(p.dokterNama)}</td>
                   <td class="py-1.5 px-2">${p.tanggal}</td>
                   <td class="py-1.5 px-2">${hariDariTanggal(p.tanggal)}</td>
                   <td class="py-1.5 px-2">${p.tipe === 'cuti' ? 'Cuti' : 'Jam khusus'}</td>
                   <td class="py-1.5 px-2">${p.tipe === 'jam_khusus' ? `${p.mulai}–${p.selesai}` : '—'}</td>
                   <td class="py-1.5 px-2">${lewat ? '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Riwayat</span>' : '<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Akan datang</span>'}</td>
-                  <td class="py-1.5 px-2 text-right">${lewat ? '' : `<button data-hapus-pengecualian="${p.id}" class="text-xs font-semibold text-rose-600">Hapus</button>`}</td>
+                  <td class="py-1.5 px-2 text-right">${lewat ? '' : `<button data-hapus-pengecualian="${p.id}" data-dokter-id="${p.dokterId}" class="text-xs font-semibold text-rose-600">Hapus</button>`}</td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -756,7 +774,8 @@ function renderPagePengecualian(root, dokterId, konflik) {
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <h3 class="text-sm font-bold text-slate-700 mb-3">Ajukan Pengecualian</h3>
+        <h3 class="text-sm font-bold text-slate-700 mb-1">Ajukan Pengecualian</h3>
+        <p class="text-[11px] text-slate-500 mb-3">Untuk <span class="font-semibold text-slate-700">${escapeHtml(dokterById(dokterId).nama)}</span> — ganti dokter lewat slider di atas.</p>
         <div class="space-y-2 bg-slate-50 rounded-xl p-3">
           <select id="p-tipe" class="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm">
             <option value="cuti">Cuti (rentang tanggal)</option>
@@ -780,7 +799,9 @@ function renderPagePengecualian(root, dokterId, konflik) {
     </div>`;
 
   root.querySelectorAll('[data-filter]').forEach(btn => { btn.onclick = () => { ui.pengecualianFilter = btn.getAttribute('data-filter'); render(); }; });
-  root.querySelectorAll('[data-hapus-pengecualian]').forEach(btn => { btn.onclick = () => dispatch({ type: 'HAPUS_PENGECUALIAN', dokterId, id: btn.getAttribute('data-hapus-pengecualian') }); });
+  root.querySelectorAll('[data-hapus-pengecualian]').forEach(btn => {
+    btn.onclick = () => dispatch({ type: 'HAPUS_PENGECUALIAN', dokterId: btn.getAttribute('data-dokter-id'), id: btn.getAttribute('data-hapus-pengecualian') });
+  });
 
   const tipeSel = document.getElementById('p-tipe');
   function syncTipeUI() {
@@ -818,9 +839,12 @@ function renderPagePengecualian(root, dokterId, konflik) {
 // =====================================================================
 function renderHalaman(root) {
   const dokterId = state.selectedDokter;
-  const konflikAktif = state.pendingKonflik && state.pendingKonflik.dokterId === dokterId ? state.pendingKonflik : null;
-  const konflikJadwal = konflikAktif && konflikAktif.rawAction.type === 'HAPUS_BLOK' ? konflikAktif : null;
-  const konflikPengecualian = konflikAktif && ['TAMBAH_PENGECUALIAN', 'HAPUS_PENGECUALIAN', 'TAMBAH_CUTI_RENTANG'].includes(konflikAktif.rawAction.type) ? konflikAktif : null;
+  // Jadwal hanya pernah diedit untuk dokter yang sedang dipilih di slider, jadi tetap
+  // dicocokkan ke dokterId itu. Tapi Pengecualian & Cuti kini menampilkan SEMUA dokter
+  // (untuk audit) dan baris "Hapus" di sana bisa memicu konflik untuk dokter mana pun,
+  // bukan cuma yang sedang dipilih — jadi jangan disaring dengan dokterId di sini.
+  const konflikJadwal = state.pendingKonflik && state.pendingKonflik.dokterId === dokterId && state.pendingKonflik.rawAction.type === 'HAPUS_BLOK' ? state.pendingKonflik : null;
+  const konflikPengecualian = state.pendingKonflik && ['TAMBAH_PENGECUALIAN', 'HAPUS_PENGECUALIAN', 'TAMBAH_CUTI_RENTANG'].includes(state.pendingKonflik.rawAction.type) ? state.pendingKonflik : null;
 
   root.innerHTML = `
   <div class="max-w-6xl mx-auto px-6 py-6">
