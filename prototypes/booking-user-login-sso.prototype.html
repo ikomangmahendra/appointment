@@ -8,52 +8,56 @@
   PROTOTYPE — throwaway code, do not build on top of this.
 
   Question: what should the appointment booking flow look like once a Patient
-  can also be a logged-in User (Google SSO or phone/password), instead of always
-  booking as an anonymous guest? The existing patient-booking-mobile.prototype.html
-  already answered "what should the *guest* booking wizard look like" (verdict:
-  Wizard Bertahap) and explicitly left User accounts untouched (ADR 0015). This
-  prototype is the follow-up question: how does an authenticated User — who may
-  manage several Patients (self + dependents, per the User/Patient split in
-  ADR 0015) — plug into that same booking journey, and where does login/SSO
-  itself sit relative to it?
+  can also be a logged-in User (Google SSO or email+password), instead of
+  always booking as an anonymous guest? The existing
+  patient-booking-mobile.prototype.html already answered "what should the
+  *guest* booking wizard look like" (verdict: Wizard Bertahap) and explicitly
+  left User accounts untouched (ADR 0015). This prototype is the follow-up:
+  how does an authenticated User — who may manage several Patients (self +
+  dependents, per the User/Patient split in ADR 0015) — plug into that same
+  booking journey, and where does login/SSO itself sit relative to it?
 
-  No backend, no persistence, no real OAuth or SMS — everything below is canned
-  in-memory mock data reset on reload. "Lanjutkan dengan Google" simulates a
-  popup with a timeout, not a real Google flow. Any 4-6 digit code is accepted
-  as a valid OTP.
+  UPDATE (feedback round 1 — consolidation): three variants were tried —
+  A (Gerbang Masuk: auth gate before the wizard), B (Tamu Dulu: guest wizard
+  untouched, login offered as a late upsell), C (Beranda Akun: persistent
+  account-first app shell with tabs). Feedback picked **Variant A**; B and C
+  are gone, along with the variant switcher — there's only one screen now.
+  On top of picking A, feedback reshaped several steps:
 
-  Domain rules this prototype leans on (see CONTEXT.md / docs/adr):
-  - A User account is distinct from a Patient; a User manages one or more
-    Patient profiles (self, auto-created at registration, plus any dependents)
-    — ADR 0015.
-  - Becoming a User is always optional; the guest phone+OTP flow keeps working
-    unchanged — ADR 0015.
-  - Registration only requires phone OTP; Google SSO signup defers phone
-    verification, at the latest, to the User's first Appointment — ADR 0015.
-  - An existing Patient record (guest booking, Resepsionis phone booking, or a
-    dependent added by another User) auto-links to a new User by phone match
-    on registration — ADR 0017.
-  - Every Appointment records Booked By: guest Patient, User, or Resepsionis —
-    shown on each variant's confirmation screen.
+    - Login methods narrowed to Google SSO or Email + Password only — the
+      old "Masuk dengan No. HP + password" option is gone.
+    - Both login methods now go through a phone OTP step. Email+password
+      OTPs to the phone already on file (a 2nd factor on top of the
+      password); Google SSO — new or returning — also OTPs to a phone
+      number, collecting it first if the account doesn't have one yet. This
+      is stricter than ADR 0015's "can defer phone verification to the
+      first Appointment" for Google signups — this prototype always
+      verifies phone at login instead, per explicit feedback.
+    - Tanggal (date) is now picked *before* Dokter, not after: Jadwal
+      availability is a per-weekday recurring template (per CONTEXT.md's
+      Jadwal definition), so the date has to be known before doctors can be
+      filtered by it. Defaults to "Hari Ini", with "Besok" / "Besok Lusa"
+      quick picks plus a date input for anything further out. One dokter
+      (dr. Andi) also carries a one-off Pengecualian Jadwal (cuti besok) to
+      demonstrate that a date can knock out a normally-available dokter.
+    - An Appointment is always for exactly one Patient — the "Untuk Siapa?"
+      step is single-select only, never a multi-pick.
+    - "Untuk Siapa?" now covers three explicit scenarios: (1) the User
+      themself, (2) an existing Patient the User already manages (a
+      dependent), (3) a brand-new Patient entered fresh. Scenario 3 runs
+      through a fuller identity form (nama, No. HP, tanggal lahir, jenis
+      kelamin, NIK opsional+consent per ADR 0013) and simulates ADR 0020's
+      "never expose live search" rule: if the entered phone happens to
+      match an existing unlinked Patient record, an OTP goes to *that*
+      Patient's phone (not disclosed to the User) before linking; skipping
+      or failing that OTP falls back to creating a separate new Patient.
 
-  Three structurally different takes on where login/SSO sits:
-
-    A — Gerbang Masuk (auth gate before the wizard): pick "Masuk" or "Lanjutkan
-        sebagai Tamu" before anything else; a logged-in path skips identity/OTP
-        entirely and adds a "untuk siapa?" Patient picker instead.
-    B — Tamu Dulu, Tawaran Naik Kelas (guest-first, login as a late upsell): the
-        proven guest wizard runs untouched start to finish; login/account
-        creation is only offered *after* the booking is already confirmed.
-    C — Beranda Akun (persistent account-first app shell): booking is one tab
-        inside an always-on authenticated shell with a family/patient profile
-        switcher and a Riwayat (history) tab, rather than a one-off linear flow.
-
-  Switch variants with the floating bar at the bottom, the ?variant=A|B|C query
-  param, or ← / → arrow keys. Try ?variant=C to land straight on the app-shell
-  take.
+  No backend, no persistence, no real OAuth/SMS — everything is canned
+  in-memory mock data, reset on reload. Any 4-6 digit code is accepted as a
+  valid OTP. See the harness banner below for test values.
 
   Run: open this file directly in a browser (or a phone browser). Narrow the
-  window to a phone width — every variant is designed for that viewport.
+  window to a phone width — it's designed for that viewport.
 -->
 <style>
   :root { --accent:#2563eb; --accent-dark:#1d4ed8; --ink:#1c1f26; --muted:#6b7280; }
@@ -78,7 +82,7 @@
   }
   #harness-banner b { white-space: nowrap; }
 
-  #stage { display: flex; justify-content: center; padding: 0 0 90px; }
+  #stage { display: flex; justify-content: center; padding: 0 0 24px; }
   #phone {
     width: 100%;
     max-width: 420px;
@@ -89,7 +93,7 @@
     flex-direction: column;
   }
   @media (min-width: 480px) {
-    #stage { padding-top: 24px; padding-bottom: 110px; }
+    #stage { padding-top: 24px; padding-bottom: 40px; }
     #phone { min-height: 800px; border-radius: 28px; box-shadow: 0 20px 60px rgba(0,0,0,.25); overflow: hidden; }
   }
 
@@ -139,6 +143,7 @@
   }
   .card:active { background: #f2f6ff; }
   .card.sel { border-color: var(--accent); background: #f2f6ff; }
+  .card.disabled { opacity: .5; }
   .card-body { flex: 1; min-width: 0; }
   .card-title { font-weight: 700; font-size: 14.5px; }
   .card-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
@@ -150,6 +155,14 @@
   .avatar.alt { background: #16a34a; }
   .avatar.sm { width: 30px; height: 30px; font-size: 12px; }
 
+  .pill-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    flex: 1; min-width: 90px; text-align: center; padding: 12px 6px; border-radius: 12px;
+    border: 1.5px solid #e7e9ee; background: #fff; font-size: 13.5px; font-weight: 700;
+  }
+  .pill.sel { border-color: var(--accent); background: #f2f6ff; color: var(--accent); }
+  .pill.disabled { opacity: .4; }
+
   .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .slot { padding: 10px 4px; text-align: center; border-radius: 10px; border: 1.5px solid #e7e9ee; font-size: 13.5px; font-weight: 600; background: #fff; }
   .slot.booked { color: #c3c6cd; background: #f4f5f7; text-decoration: line-through; }
@@ -159,623 +172,422 @@
   .summary b { display: block; margin-bottom: 2px; }
   .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
   .badge.booked-by { background: #eef1f6; color: var(--muted); }
-  .badge.status-confirmed { background: #e8f5e9; color: #2e7d32; }
-  .badge.status-completed { background: #eef1f6; color: #475569; }
-  .badge.status-cancelled { background: #fdecea; color: #b3261e; }
 
   .banner-info { background: #fff7e6; border: 1.5px solid #f3d9ae; border-radius: 12px; padding: 10px 14px; font-size: 12.5px; line-height: 1.5; }
-  .banner-upsell { background: #eef4ff; border: 1.5px solid #bcd2ff; border-radius: 14px; padding: 14px; font-size: 13px; line-height: 1.5; }
+  .banner-note { background: #eef4ff; border: 1.5px solid #bcd2ff; border-radius: 12px; padding: 10px 14px; font-size: 12.5px; line-height: 1.5; }
 
   .check-hero { width: 64px; height: 64px; border-radius: 50%; background: #e8f5e9; color: #2e7d32; display: flex; align-items: center; justify-content: center; font-size: 32px; margin: 0 auto 6px; }
 
-  /* Variant C — app shell */
-  .shell-header {
-    display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px;
-    border-bottom: 1px solid #eef1f6;
-  }
-  .profile-chip { display: flex; align-items: center; gap: 8px; border: none; background: #f4f6fb; border-radius: 999px; padding: 6px 12px 6px 6px; font-weight: 700; font-size: 13px; }
-  .shell-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  .tabbar { display: flex; border-top: 1px solid #eef1f6; }
-  .tab { flex: 1; border: none; background: #fff; padding: 10px 4px 12px; font-size: 11px; font-weight: 600; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 3px; }
-  .tab.on { color: var(--accent); }
-  .tab .ic { font-size: 17px; }
-  .sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; z-index: 20; }
-  .sheet { width: 100%; background: #fff; border-radius: 20px 20px 0 0; padding: 18px; display: flex; flex-direction: column; gap: 10px; animation: fade .15s ease; }
-
-  /* switcher */
-  #proto-switcher {
-    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 200;
-    display: flex; align-items: center; gap: 10px; background: #14161b; color: #fff;
-    border-radius: 999px; padding: 8px 8px 8px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.35);
-    font-size: 12.5px;
-  }
-  #proto-switcher button {
-    border: none; background: #ffffff22; color: #fff; width: 30px; height: 30px; border-radius: 50%;
-    font-size: 15px; display: flex; align-items: center; justify-content: center;
-  }
-  #proto-switcher button:hover { background: #ffffff3d; }
-  #proto-switcher .label { min-width: 150px; text-align: center; font-weight: 600; }
-  #proto-switcher .label small { display: block; color: #b7bdca; font-weight: 400; font-size: 10.5px; margin-top: 1px; }
+  .consent-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .consent-row input { margin-top: 2px; flex: none; }
 </style>
 </head>
 <body>
 
 <div id="harness-banner">
-  <b>PROTOTYPE</b> — no backend · reload resets everything · test data: HP <b>081234567890</b> = existing account "Budi Santoso" (verified) · "Lanjutkan dengan Google" = new account "Dewi Lestari" (HP belum terverifikasi)
+  <b>PROTOTYPE</b> — no backend · reload resets everything · Email+Password: <b>budi@example.com</b> / sandi bebas (akun "Budi Santoso") · No. HP untuk simulasi pasien yang sudah pernah berobat: <b>081277777777</b> ("Rian Saputra")
 </div>
 
 <div id="stage"><div id="phone">
-  <div id="variantA" style="display:none;flex:1;flex-direction:column;position:relative;"></div>
-  <div id="variantB" style="display:none;flex:1;flex-direction:column;position:relative;"></div>
-  <div id="variantC" style="display:none;flex:1;flex-direction:column;position:relative;"></div>
+  <div id="app" style="display:flex;flex:1;flex-direction:column;"></div>
 </div></div>
 
-<div id="proto-switcher">
-  <button onclick="cycleVariant(-1)">&#8592;</button>
-  <div class="label" id="switcherLabel"></div>
-  <button onclick="cycleVariant(1)">&#8594;</button>
-</div>
-
 <script>
-/* ---------------- shared mock data (data only — layout stays separate per variant) ---------------- */
+/* ---------------- mock data ---------------- */
 const KLINIK = { nama: "Klinik Sehat Mandiri" };
 const LAYANAN = [
   { id: "umum", nama: "Pemeriksaan Umum", durasi: 20 },
   { id: "gigi", nama: "Gigi", durasi: 30 },
   { id: "vaksin", nama: "Vaksinasi", durasi: 15 },
 ];
+// hari: 0=Minggu..6=Sabtu, per Jadwal (recurring weekly template, CONTEXT.md).
+// pengecualian: diffDays values (0=hari ini,1=besok,2=besok lusa,...) where a
+// one-off Pengecualian Jadwal (e.g. cuti) overrides the recurring template.
 const DOKTER = [
-  { id: "bagus", nama: "dr. Bagus Wirawan", layanan: ["umum", "gigi"] },
-  { id: "siti", nama: "drg. Siti Aminah", layanan: ["gigi"] },
-  { id: "andi", nama: "dr. Andi Prasetyo", layanan: ["umum", "vaksin"] },
+  { id: "bagus", nama: "dr. Bagus Wirawan", layanan: ["umum", "gigi"], hari: [1, 2, 3, 4, 5] },
+  { id: "siti", nama: "drg. Siti Aminah", layanan: ["gigi"], hari: [2, 4, 6] },
+  { id: "andi", nama: "dr. Andi Prasetyo", layanan: ["umum", "vaksin"], hari: [0, 1, 2, 3, 4, 5, 6], pengecualian: [1] },
 ];
-function slotsFor(dokterId) {
-  const hours = ["08:00","08:30","09:00","09:30","10:00","10:30","13:00","13:30","14:00"];
-  return hours.map((h, i) => ({ time: h, booked: (dokterId.length + i) % 4 === 0 }));
+function slotsFor(dokterId, diffDays) {
+  const hours = ["08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "13:00", "13:30", "14:00"];
+  return hours.map((h, i) => ({ time: h, booked: (dokterId.length + i + diffDays) % 4 === 0 }));
 }
-// mock accounts, keyed by phone — represents already-registered Users
-const USER_DB = {
-  "081234567890": {
-    nama: "Budi Santoso", phoneVerified: true,
+function fmtLayanan(id) { return LAYANAN.find(l => l.id === id).nama; }
+function fmtDokter(id) { return DOKTER.find(d => d.id === id).nama; }
+function dokterTersediaTanggal(d) {
+  if (d.pengecualian && d.pengecualian.includes(a.dateOffsetDays)) return false;
+  return d.hari.includes(a.dateObj.getDay());
+}
+function maskPhone(phone) {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length <= 6) return phone;
+  return digits.slice(0, 4) + "••••" + digits.slice(-4);
+}
+
+// The one existing account, reachable via email+password login.
+function makeBudiAccount() {
+  return {
+    nama: "Budi Santoso", email: "budi@example.com", phone: "081234567890",
     patients: [
       { id: "p1", nama: "Budi Santoso", rel: "Anda" },
       { id: "p2", nama: "Sari Santoso", rel: "Anak · 8 th" },
     ],
-    riwayat: [
-      { layanan: "Pemeriksaan Umum", dokter: "dr. Andi Prasetyo", tanggal: "12 Jul 2026", status: "completed", untuk: "p1" },
-      { layanan: "Gigi", dokter: "drg. Siti Aminah", tanggal: "30 Mei 2026", status: "cancelled", untuk: "p2" },
-    ],
-  },
-};
-function googleSignup() {
-  // brand-new account, phone not yet verified (ADR 0015 — Google SSO defers phone verification)
-  return { nama: "Dewi Lestari", phoneVerified: false, patients: [{ id: "p1", nama: "Dewi Lestari", rel: "Anda" }], riwayat: [], isNew: true };
+  };
 }
-function fmtLayanan(id) { return LAYANAN.find(l => l.id === id).nama; }
-function fmtDokter(id) { return DOKTER.find(d => d.id === id).nama; }
-
-/* ---------------- variant switcher plumbing ---------------- */
-const VARIANTS = {
-  A: { name: "Gerbang Masuk", desc: "auth gate → wizard" },
-  B: { name: "Tamu Dulu", desc: "guest wizard → upsell login" },
-  C: { name: "Beranda Akun", desc: "app shell, booking = 1 tab" },
-};
-function currentVariant() {
-  const v = new URLSearchParams(location.search).get("variant");
-  return VARIANTS[v] ? v : "A";
+// A brand-new Google SSO signup — no phone on file yet, collected during login.
+function makeGoogleAccount(phone) {
+  return { nama: "Dewi Lestari", email: null, phone, patients: [{ id: "p1", nama: "Dewi Lestari", rel: "Anda" }] };
 }
-function showVariant(v) {
-  Object.keys(VARIANTS).forEach(k => document.getElementById("variant" + k).style.display = (k === v ? "flex" : "none"));
-  document.getElementById("switcherLabel").innerHTML = v + " — " + VARIANTS[v].name + "<small>" + VARIANTS[v].desc + "</small>";
-  const url = new URL(location.href); url.searchParams.set("variant", v);
-  history.replaceState(null, "", url);
-  if (v === "A" && !a_started) { a_started = true; a_render(); }
-  if (v === "B" && !b_started) { b_started = true; b_render(); }
-  if (v === "C" && !c_started) { c_started = true; c_render(); }
+// An existing Patient record not managed by any User yet — e.g. seen once via
+// a guest or Resepsionis-phone booking. Used to simulate ADR 0020's phone-match.
+const EXTERNAL_PATIENTS = [
+  { phone: "081277777777", nama: "Rian Saputra" },
+];
+
+/* ---------------- state machine (Variant A: Gerbang Masuk) ---------------- */
+function initialState() {
+  return {
+    step: "gate",
+    session: null,               // logged-in User, or null while guest/pending
+    pendingAccount: null,        // account object awaiting OTP confirmation at login
+    pendingPhone: "",            // phone entered for a fresh Google signup, pre-OTP
+    guestName: "", guestPhone: "",
+    layanan: null, dateObj: null, dateOffsetDays: null, dateLabel: "",
+    dokter: null, slot: null,
+    patientId: null,
+    newPatientForm: null,        // {nama, phone, dob, gender, nik} awaiting match-check
+    matchedExternal: null,       // EXTERNAL_PATIENTS entry the new-patient form matched
+    keluhan: "",
+  };
 }
-function cycleVariant(dir) {
-  const keys = Object.keys(VARIANTS);
-  const i = (keys.indexOf(currentVariant()) + dir + keys.length) % keys.length;
-  showVariant(keys[i]);
-}
-document.addEventListener("keydown", (e) => {
-  const tag = (document.activeElement || {}).tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
-  if (e.key === "ArrowLeft") cycleVariant(-1);
-  if (e.key === "ArrowRight") cycleVariant(1);
-});
+let a = initialState();
+function reset() { a = initialState(); render(); }
+function root() { return document.getElementById("app"); }
 
-/* =====================================================================
-   VARIANT A — "Gerbang Masuk": choose Masuk / Google / Tamu BEFORE the
-   wizard starts. Logged-in path swaps the identity+OTP step for a Patient
-   picker; guest path is the untouched classic wizard.
-   ===================================================================== */
-let a_started = false;
-let a = { step: "gate", session: null, layanan: null, dokter: null, slot: null, keluhan: "",
-          guestName: "", guestPhone: "", guestOtp: "", newPatientName: "", showAddPatient: false,
-          patientId: null, pendingVerifyOtp: "" };
-
-function a_reset() { a = { step: "gate", session: null, layanan: null, dokter: null, slot: null, keluhan: "",
-          guestName: "", guestPhone: "", guestOtp: "", newPatientName: "", showAddPatient: false,
-          patientId: null, pendingVerifyOtp: "" }; a_render(); }
-
-function a_root() { return document.getElementById("variantA"); }
-
-function a_render() {
-  const s = a.step;
-  let html = "";
-  if (s === "gate") html = a_screenGate();
-  else if (s === "loginPhone") html = a_screenLoginPhone();
-  else if (s === "googleWait") html = a_screenGoogleWait();
-  else if (s === "guestIdentity") html = a_screenGuestIdentity();
-  else if (s === "guestOtp") html = a_screenGuestOtp();
-  else if (s === "layanan") html = a_screenLayanan();
-  else if (s === "dokter") html = a_screenDokter();
-  else if (s === "slot") html = a_screenSlot();
-  else if (s === "patient") html = a_screenPatient();
-  else if (s === "phoneVerify") html = a_screenPhoneVerify();
-  else if (s === "confirm") html = a_screenConfirm();
-  else if (s === "done") html = a_screenDone();
-  a_root().innerHTML = html;
+function render() {
+  const screens = {
+    gate: screenGate, emailLogin: screenEmailLogin, googlePhone: screenGooglePhone,
+    googleConnecting: screenGoogleConnecting, otpLogin: screenOtpLogin,
+    guestIdentity: screenGuestIdentity, guestOtp: screenGuestOtp,
+    layanan: screenLayanan, tanggal: screenTanggal, dokter: screenDokter, slot: screenSlot,
+    patient: screenPatient, patientNewForm: screenPatientNewForm, patientMatchOtp: screenPatientMatchOtp,
+    confirm: screenConfirm, done: screenDone,
+  };
+  root().innerHTML = screens[a.step]();
 }
 
-function a_screenGate() {
+/* ---- gate & login ---- */
+function screenGate() {
   return `<div class="screen">
     <h1 class="title">${KLINIK.nama}</h1>
     <p class="subtitle">Booking appointment lebih cepat kalau Anda masuk — riwayat &amp; data pasien tersimpan. Atau lanjut sebagai tamu, tanpa akun.</p>
-    <button class="google-btn" onclick="a.step='googleWait'; a_render(); a_doGoogle();"><span class="g-dot"></span> Lanjutkan dengan Google</button>
-    <button class="secondary-btn" onclick="a.step='loginPhone'; a_render();">Masuk dengan No. HP</button>
+    <button class="google-btn" onclick="startGoogleLogin()"><span class="g-dot"></span> Lanjutkan dengan Google</button>
+    <button class="secondary-btn" onclick="a.step='emailLogin'; render();">Masuk dengan Email &amp; Kata Sandi</button>
     <div class="divider">atau</div>
-    <button class="ghost-btn" onclick="a.step='guestIdentity'; a_render();" style="margin-top:auto;">Lanjutkan sebagai Tamu →</button>
+    <button class="ghost-btn" onclick="a.step='guestIdentity'; render();" style="margin-top:auto;">Lanjutkan sebagai Tamu →</button>
   </div>`;
 }
-function a_doGoogle() {
-  setTimeout(() => {
-    a.session = googleSignup();
-    a.patientId = a.session.patients[0].id;
-    a.step = "layanan"; a_render();
-  }, 900);
+function startGoogleLogin() {
+  a.step = "googleConnecting"; render();
+  setTimeout(() => { a.step = "googlePhone"; render(); }, 900);
 }
-function a_screenGoogleWait() {
+function screenGoogleConnecting() {
   return `<div class="screen" style="align-items:center;justify-content:center;">
     <div class="g-dot" style="width:36px;height:36px;"></div>
     <p class="subtitle">Menghubungkan ke Google…</p>
   </div>`;
 }
-function a_screenLoginPhone() {
+function screenGooglePhone() {
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; a_render();">&#8592;</button><h1 class="title">Masuk</h1></div>
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; render();">&#8592;</button><h1 class="title">Verifikasi No. HP</h1></div>
+    <p class="subtitle">Google berhasil terhubung. Untuk keamanan tambahan, kami akan kirim kode OTP ke No. HP Anda.</p>
     <label class="field-label">No. HP</label>
-    <input class="field" id="a_loginPhone" placeholder="08xxxxxxxxxx" value="081234567890">
+    <input class="field" id="in_googlePhone" placeholder="08xxxxxxxxxx">
+    <button class="primary-btn" onclick="submitGooglePhone()">Kirim OTP</button>
+  </div>`;
+}
+function submitGooglePhone() {
+  const phone = document.getElementById("in_googlePhone").value.trim();
+  if (!phone) { alert("Masukkan No. HP."); return; }
+  a.pendingPhone = phone;
+  a.pendingAccount = makeGoogleAccount(phone);
+  a.step = "otpLogin"; render();
+}
+function screenEmailLogin() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; render();">&#8592;</button><h1 class="title">Masuk</h1></div>
+    <label class="field-label">Email</label>
+    <input class="field" id="in_email" placeholder="nama@email.com" value="budi@example.com">
     <label class="field-label">Kata sandi</label>
-    <input class="field" type="password" placeholder="••••••••" value="demo">
-    <button class="primary-btn" onclick="a_doLogin()">Masuk</button>
-    <p class="subtitle" style="text-align:center;margin-top:2px;">Coba 081234567890 — akun sudah ada.</p>
+    <input class="field" type="password" id="in_password" placeholder="••••••••" value="demo">
+    <button class="primary-btn" onclick="submitEmailLogin()">Masuk</button>
+    <p class="subtitle" style="text-align:center;margin-top:2px;">Coba budi@example.com — akun sudah ada.</p>
   </div>`;
 }
-function a_doLogin() {
-  const phone = document.getElementById("a_loginPhone").value.trim();
-  const acc = USER_DB[phone];
-  if (!acc) { alert("Akun tidak ditemukan untuk demo ini — pakai 081234567890, atau coba Google."); return; }
-  a.session = acc; a.patientId = acc.patients[0].id;
-  a.step = "layanan"; a_render();
+function submitEmailLogin() {
+  const email = document.getElementById("in_email").value.trim().toLowerCase();
+  const password = document.getElementById("in_password").value;
+  if (!password) { alert("Masukkan kata sandi."); return; }
+  const acc = makeBudiAccount();
+  if (email !== acc.email) { alert("Email tidak ditemukan untuk demo ini — pakai budi@example.com, atau coba Google."); return; }
+  a.pendingPhone = acc.phone;
+  a.pendingAccount = acc;
+  a.step = "otpLogin"; render();
 }
-function a_screenGuestIdentity() {
+function screenOtpLogin() {
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; a_render();">&#8592;</button><h1 class="title">Data Anda (Tamu)</h1></div>
-    <label class="field-label">Nama</label>
-    <input class="field" id="a_guestName" placeholder="Nama lengkap">
-    <label class="field-label">No. HP</label>
-    <input class="field" id="a_guestPhone" placeholder="08xxxxxxxxxx">
-    <button class="primary-btn" onclick="a_submitGuestIdentity()">Lanjut</button>
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; a.pendingAccount=null; render();">&#8592;</button><h1 class="title">Verifikasi OTP</h1></div>
+    <p class="subtitle">Kode dikirim ke ${maskPhone(a.pendingPhone)} (demo: masukkan kode apa saja).</p>
+    <input class="field" id="in_otpLogin" placeholder="Kode 4-6 digit" maxlength="6">
+    <button class="primary-btn" onclick="submitOtpLogin()">Verifikasi &amp; Masuk</button>
   </div>`;
 }
-function a_submitGuestIdentity() {
-  a.guestName = document.getElementById("a_guestName").value.trim() || "Tamu";
-  a.guestPhone = document.getElementById("a_guestPhone").value.trim() || "0800000000";
-  a.step = "guestOtp"; a_render();
-}
-function a_screenGuestOtp() {
-  return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step='guestIdentity'; a_render();">&#8592;</button><h1 class="title">Verifikasi OTP</h1></div>
-    <p class="subtitle">Kode dikirim ke ${a.guestPhone} (demo: masukkan kode apa saja).</p>
-    <input class="field" id="a_guestOtp" placeholder="Kode 4-6 digit" maxlength="6">
-    <button class="primary-btn" onclick="a_submitGuestOtp()">Verifikasi</button>
-  </div>`;
-}
-function a_submitGuestOtp() {
-  const code = document.getElementById("a_guestOtp").value.trim();
+function submitOtpLogin() {
+  const code = document.getElementById("in_otpLogin").value.trim();
   if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
-  a.session = null; // stays a guest — no User account created
-  a.step = "layanan"; a_render();
+  a.session = a.pendingAccount;
+  a.patientId = a.session.patients[0].id;
+  a.pendingAccount = null; a.pendingPhone = "";
+  a.step = "layanan"; render();
 }
-function a_screenLayanan() {
+
+/* ---- guest path (unchanged shape from the guest-wizard prototype) ---- */
+function screenGuestIdentity() {
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a_back('layanan')">&#8592;</button><h1 class="title">Pilih Layanan</h1></div>
-    <div class="dots"><i class="on"></i><i></i><i></i><i></i></div>
-    ${LAYANAN.map(l => `<div class="card" onclick="a.layanan='${l.id}'; a.step='dokter'; a_render();">
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; render();">&#8592;</button><h1 class="title">Data Anda (Tamu)</h1></div>
+    <label class="field-label">Nama</label>
+    <input class="field" id="in_guestName" placeholder="Nama lengkap">
+    <label class="field-label">No. HP</label>
+    <input class="field" id="in_guestPhone" placeholder="08xxxxxxxxxx">
+    <button class="primary-btn" onclick="submitGuestIdentity()">Lanjut</button>
+  </div>`;
+}
+function submitGuestIdentity() {
+  a.guestName = document.getElementById("in_guestName").value.trim() || "Tamu";
+  a.guestPhone = document.getElementById("in_guestPhone").value.trim() || "0800000000";
+  a.step = "guestOtp"; render();
+}
+function screenGuestOtp() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='guestIdentity'; render();">&#8592;</button><h1 class="title">Verifikasi OTP</h1></div>
+    <p class="subtitle">Kode dikirim ke ${a.guestPhone} (demo: masukkan kode apa saja).</p>
+    <input class="field" id="in_guestOtp" placeholder="Kode 4-6 digit" maxlength="6">
+    <button class="primary-btn" onclick="submitGuestOtp()">Verifikasi</button>
+  </div>`;
+}
+function submitGuestOtp() {
+  const code = document.getElementById("in_guestOtp").value.trim();
+  if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
+  a.step = "layanan"; render();
+}
+
+/* ---- booking wizard ---- */
+function screenLayanan() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="reset();">&#8592;</button><h1 class="title">Pilih Layanan</h1></div>
+    <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+    ${LAYANAN.map(l => `<div class="card" onclick="a.layanan='${l.id}'; a.dokter=null; a.slot=null; a.step='tanggal'; render();">
       <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit</div></div>
     </div>`).join("")}
   </div>`;
 }
-function a_back(from) {
-  if (from === "layanan") { a.step = a.session || a.guestOtp ? "gate" : "gate"; a_reset(); return; }
+
+function selectDateOffset(n) {
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n);
+  applyDate(d, n);
 }
-function a_screenDokter() {
-  const list = DOKTER.filter(d => d.layanan.includes(a.layanan));
+function selectDateCustom(value) {
+  if (!value) return;
+  const [y, m, d] = value.split("-").map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((dateObj - today) / 86400000);
+  applyDate(dateObj, diffDays);
+}
+function applyDate(dateObj, diffDays) {
+  a.dateObj = dateObj; a.dateOffsetDays = diffDays;
+  a.dateLabel = diffDays === 0 ? "Hari Ini" : diffDays === 1 ? "Besok" : diffDays === 2 ? "Besok Lusa"
+    : dateObj.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  a.dokter = null; a.slot = null;
+  a.step = "dokter"; render();
+}
+function screenTanggal() {
+  const todayIso = new Date().toISOString().slice(0, 10);
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step='layanan'; a_render();">&#8592;</button><h1 class="title">Pilih Dokter</h1></div>
-    <div class="dots"><i class="on"></i><i class="on"></i><i></i><i></i></div>
-    ${list.map(d => `<div class="card" onclick="a.dokter='${d.id}'; a.step='slot'; a_render();">
+    <div class="topbar"><button class="back-btn" onclick="a.step='layanan'; render();">&#8592;</button><h1 class="title">Pilih Tanggal</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+    <p class="subtitle">Jadwal dokter berbeda tiap hari — pilih tanggal dulu supaya hanya dokter yang praktik hari itu ditampilkan.</p>
+    <div class="pill-row">
+      <button class="pill" onclick="selectDateOffset(0)">Hari Ini</button>
+      <button class="pill" onclick="selectDateOffset(1)">Besok</button>
+      <button class="pill" onclick="selectDateOffset(2)">Besok Lusa</button>
+    </div>
+    <label class="field-label">atau tanggal lain</label>
+    <input class="field" type="date" min="${todayIso}" onchange="selectDateCustom(this.value)">
+  </div>`;
+}
+
+function screenDokter() {
+  const all = DOKTER.filter(d => d.layanan.includes(a.layanan));
+  const tersedia = all.filter(dokterTersediaTanggal);
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='tanggal'; render();">&#8592;</button><h1 class="title">Pilih Dokter</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+    <p class="subtitle">${fmtLayanan(a.layanan)} · ${a.dateLabel}</p>
+    ${tersedia.length === 0 ? `
+      <div class="banner-info">Tidak ada dokter ${fmtLayanan(a.layanan)} yang praktik pada ${a.dateLabel} (jadwal mingguan / cuti). Coba tanggal lain.</div>
+      <button class="secondary-btn" onclick="a.step='tanggal'; render();">Pilih Tanggal Lain</button>
+    ` : tersedia.map(d => `<div class="card" onclick="a.dokter='${d.id}'; a.slot=null; a.step='slot'; render();">
       <div class="avatar">${d.nama[3]}</div>
       <div class="card-body"><div class="card-title">${d.nama}</div><div class="card-sub">${fmtLayanan(a.layanan)}</div></div>
     </div>`).join("")}
+    ${all.length > tersedia.length ? `<p class="subtitle">${all.length - tersedia.length} dokter lain tidak praktik pada tanggal ini.</p>` : ""}
   </div>`;
 }
-function a_screenSlot() {
+function screenSlot() {
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step='dokter'; a_render();">&#8592;</button><h1 class="title">Pilih Jam — Hari Ini</h1></div>
-    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+    <div class="topbar"><button class="back-btn" onclick="a.step='dokter'; render();">&#8592;</button><h1 class="title">Pilih Jam</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+    <p class="subtitle">${fmtDokter(a.dokter)} · ${a.dateLabel}</p>
     <div class="slot-grid">
-      ${slotsFor(a.dokter).map(sl => sl.booked
+      ${slotsFor(a.dokter, a.dateOffsetDays).map(sl => sl.booked
         ? `<div class="slot booked">${sl.time}</div>`
-        : `<div class="slot" onclick="a.slot='${sl.time}'; a_afterSlot();">${sl.time}</div>`).join("")}
+        : `<div class="slot" onclick="a.slot='${sl.time}'; afterSlot();">${sl.time}</div>`).join("")}
     </div>
   </div>`;
 }
-function a_afterSlot() {
+function afterSlot() {
   a.step = a.session ? "patient" : "confirm";
-  a_render();
+  render();
 }
-function a_screenPatient() {
+
+/* ---- "Untuk Siapa?" — exactly one Patient per Appointment ---- */
+function screenPatient() {
   const patients = a.session.patients;
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step='slot'; a_render();">&#8592;</button><h1 class="title">Untuk Siapa?</h1></div>
-    <p class="subtitle">Masuk sebagai ${a.session.nama}. Pilih siapa yang akan diperiksa.</p>
-    ${patients.map(p => `<div class="card ${a.patientId===p.id?'sel':''}" onclick="a.patientId='${p.id}'; a_render();">
+    <div class="topbar"><button class="back-btn" onclick="a.step='slot'; render();">&#8592;</button><h1 class="title">Untuk Siapa?</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    <p class="subtitle">Masuk sebagai ${a.session.nama}. Satu Appointment hanya untuk satu pasien — untuk anggota keluarga lain, buat booking terpisah.</p>
+    ${patients.map(p => `<div class="card ${a.patientId===p.id?'sel':''}" onclick="a.patientId='${p.id}'; render();">
       <div class="avatar ${p.rel==='Anda'?'':'alt'}">${p.nama[0]}</div>
       <div class="card-body"><div class="card-title">${p.nama}</div><div class="card-sub">${p.rel}</div></div>
     </div>`).join("")}
-    ${a.showAddPatient ? `
-      <label class="field-label">Nama orang baru</label>
-      <input class="field" id="a_newPatientName" placeholder="Nama lengkap">
-      <button class="secondary-btn" onclick="a_addPatient()">Simpan &amp; pilih</button>
-    ` : `<button class="ghost-btn" onclick="a.showAddPatient=true; a_render();">+ Tambah orang lain</button>`}
-    <button class="primary-btn" onclick="a_afterPatient()">Lanjut</button>
+    <button class="ghost-btn" onclick="selectedGender=null; a.step='patientNewForm'; render();">+ Tambah pasien baru</button>
+    <button class="primary-btn" ${a.patientId ? "" : "disabled"} onclick="afterPatient()">Lanjut</button>
   </div>`;
 }
-function a_addPatient() {
-  const name = document.getElementById("a_newPatientName").value.trim();
-  if (!name) return;
-  const id = "new" + Date.now();
-  a.session.patients.push({ id, nama: name, rel: "Baru ditambahkan" });
-  a.patientId = id; a.showAddPatient = false; a_render();
+function afterPatient() {
+  if (!a.patientId) return;
+  a.step = "confirm"; render();
 }
-function a_afterPatient() {
-  a.step = (a.session.isNew && !a.session.phoneVerified) ? "phoneVerify" : "confirm";
-  a_render();
-}
-function a_screenPhoneVerify() {
+function screenPatientNewForm() {
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step='patient'; a_render();">&#8592;</button><h1 class="title">Verifikasi No. HP</h1></div>
-    <div class="banner-info">Ini appointment pertama Anda, jadi No. HP perlu diverifikasi sekarang (WhatsApp OTP dipakai untuk pengingat appointment).</div>
-    <input class="field" placeholder="08xxxxxxxxxx" id="a_verifyPhone" value="0899-0000-0000">
-    <input class="field" id="a_verifyOtp" placeholder="Kode OTP (demo: bebas)">
-    <button class="primary-btn" onclick="a_doVerify()">Verifikasi</button>
+    <div class="topbar"><button class="back-btn" onclick="a.step='patient'; render();">&#8592;</button><h1 class="title">Pasien Baru</h1></div>
+    <p class="subtitle">Masukkan data orang yang akan diperiksa (anak, orang tua, dsb).</p>
+    <label class="field-label">Nama</label>
+    <input class="field" id="in_npNama" placeholder="Nama lengkap">
+    <label class="field-label">No. HP</label>
+    <input class="field" id="in_npPhone" placeholder="08xxxxxxxxxx">
+    <p class="subtitle" style="margin:0;">Coba 081277777777 untuk simulasi pasien yang sudah pernah berobat di sini.</p>
+    <label class="field-label">Tanggal Lahir</label>
+    <input class="field" type="date" id="in_npDob">
+    <label class="field-label">Jenis Kelamin</label>
+    <div class="pill-row">
+      <button class="pill ${selectedGender==='L'?'sel':''}" id="pill_L" onclick="selectGender('L')">Laki-laki</button>
+      <button class="pill ${selectedGender==='P'?'sel':''}" id="pill_P" onclick="selectGender('P')">Perempuan</button>
+    </div>
+    <label class="field-label">NIK (opsional)</label>
+    <input class="field" id="in_npNik" maxlength="16" placeholder="16 digit" oninput="toggleNikConsent()">
+    <label class="consent-row" id="nikConsentRow" style="display:none;">
+      <input type="checkbox" id="in_npNikConsent">
+      Saya setuju NIK ini disimpan Klinik untuk keperluan verifikasi identitas &amp; kesiapan SATU SEHAT.
+    </label>
+    <button class="primary-btn" onclick="submitNewPatientForm()">Lanjut</button>
   </div>`;
 }
-function a_doVerify() {
-  const code = document.getElementById("a_verifyOtp").value.trim();
-  if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
-  a.session.phoneVerified = true;
-  a.step = "confirm"; a_render();
+let selectedGender = null;
+function selectGender(g) {
+  selectedGender = g;
+  document.getElementById("pill_L").classList.toggle("sel", g === "L");
+  document.getElementById("pill_P").classList.toggle("sel", g === "P");
 }
-function a_screenConfirm() {
+function toggleNikConsent() {
+  const nik = document.getElementById("in_npNik").value.trim();
+  document.getElementById("nikConsentRow").style.display = nik ? "flex" : "none";
+}
+function submitNewPatientForm() {
+  const nama = document.getElementById("in_npNama").value.trim();
+  const phone = document.getElementById("in_npPhone").value.trim();
+  const dob = document.getElementById("in_npDob").value;
+  const nik = document.getElementById("in_npNik").value.trim();
+  if (!nama || !phone) { alert("Nama dan No. HP wajib diisi."); return; }
+  if (nik && !document.getElementById("in_npNikConsent").checked) {
+    alert("Karena NIK diisi, centang dulu persetujuan penyimpanan NIK di bawahnya.");
+    return;
+  }
+  a.newPatientForm = { nama, phone, dob, gender: selectedGender, nik };
+  const match = EXTERNAL_PATIENTS.find(p => p.phone === phone);
+  if (match) {
+    a.matchedExternal = match;
+    a.step = "patientMatchOtp"; render();
+  } else {
+    finalizeNewPatient(false);
+  }
+}
+function finalizeNewPatient(linked) {
+  const id = "new" + a.session.patients.length;
+  if (linked) {
+    a.session.patients.push({ id, nama: a.matchedExternal.nama, rel: "Ditautkan · riwayat sebelumnya ada" });
+  } else {
+    a.session.patients.push({ id, nama: a.newPatientForm.nama, rel: "Baru ditambahkan" });
+  }
+  a.patientId = id;
+  a.newPatientForm = null; a.matchedExternal = null;
+  a.step = "patient"; render();
+}
+function screenPatientMatchOtp() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='patientNewForm'; render();">&#8592;</button><h1 class="title">Konfirmasi Diperlukan</h1></div>
+    <div class="banner-note">No. HP yang dimasukkan cocok dengan Patient yang sudah pernah berobat di sini. Untuk menjaga privasi, kode OTP dikirim ke nomor tersebut — bukan ke Anda — untuk konfirmasi keterkaitan sebelum riwayatnya ditautkan.</div>
+    <input class="field" id="in_matchOtp" placeholder="Kode OTP dari pasien tersebut" maxlength="6">
+    <button class="primary-btn" onclick="submitMatchOtp()">Verifikasi &amp; Tautkan</button>
+    <button class="ghost-btn" onclick="finalizeNewPatient(false)">Lewati — buat Patient baru terpisah</button>
+  </div>`;
+}
+function submitMatchOtp() {
+  const code = document.getElementById("in_matchOtp").value.trim();
+  if (!code) { alert('Masukkan kode OTP, atau pilih "Lewati" di bawah.'); return; }
+  finalizeNewPatient(true);
+}
+
+/* ---- confirm & done ---- */
+function screenConfirm() {
   const patientName = a.session ? a.session.patients.find(p => p.id === a.patientId).nama : a.guestName;
   const bookedBy = a.session ? `User (${a.session.nama})` : "Guest Patient";
   return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="a.step = a.session ? 'patient' : 'guestOtp'; a_render();">&#8592;</button><h1 class="title">Konfirmasi</h1></div>
+    <div class="topbar"><button class="back-btn" onclick="a.step = a.session ? 'patient' : 'slot'; render();">&#8592;</button><h1 class="title">Konfirmasi</h1></div>
     <div class="summary">
       <b>${fmtLayanan(a.layanan)}</b> dengan ${fmtDokter(a.dokter)}<br>
-      Hari ini, ${a.slot} · Pasien: ${patientName}<br>
+      ${a.dateLabel}, ${a.slot} · Pasien: ${patientName}<br>
       <span class="badge booked-by">Booked By: ${bookedBy}</span>
     </div>
     <label class="field-label">Keluhan (opsional)</label>
-    <textarea class="field" id="a_keluhan" rows="2" placeholder="Ceritakan keluhan Anda…"></textarea>
-    <button class="primary-btn" onclick="a.keluhan=document.getElementById('a_keluhan').value; a.step='done'; a_render();">Konfirmasi Booking</button>
+    <textarea class="field" id="in_keluhan" rows="2" placeholder="Ceritakan keluhan Anda…"></textarea>
+    <button class="primary-btn" onclick="a.keluhan=document.getElementById('in_keluhan').value; a.step='done'; render();">Konfirmasi Booking</button>
   </div>`;
 }
-function a_screenDone() {
+function screenDone() {
+  const patientName = a.session ? a.session.patients.find(p => p.id === a.patientId).nama : a.guestName;
   return `<div class="screen" style="align-items:center;text-align:center;justify-content:center;">
     <div class="check-hero">&#10003;</div>
     <h1 class="title">Booking Terkonfirmasi</h1>
-    <p class="subtitle">${fmtLayanan(a.layanan)} · ${fmtDokter(a.dokter)} · ${a.slot}</p>
-    <button class="secondary-btn" style="margin-top:16px;" onclick="a_reset();">Booking lagi (reset demo)</button>
+    <p class="subtitle">${fmtLayanan(a.layanan)} · ${fmtDokter(a.dokter)}<br>${a.dateLabel}, ${a.slot} · Pasien: ${patientName}</p>
+    <button class="secondary-btn" style="margin-top:16px;" onclick="reset();">Booking lagi (reset demo)</button>
   </div>`;
-}
-
-/* =====================================================================
-   VARIANT B — "Tamu Dulu, Tawaran Naik Kelas": the classic guest wizard
-   runs start to finish untouched; login/account creation only appears
-   AFTER the booking is already confirmed, as an optional upsell.
-   ===================================================================== */
-let b_started = false;
-let b = { step: "layanan", layanan: null, dokter: null, slot: null, name: "", phone: "", otp: "",
-          upsellChoice: null, loggedInName: null };
-
-function b_reset() { b = { step: "layanan", layanan: null, dokter: null, slot: null, name: "", phone: "", otp: "",
-          upsellChoice: null, loggedInName: null }; b_render(); }
-function b_root() { return document.getElementById("variantB"); }
-function b_render() {
-  const s = b.step;
-  let html = "";
-  if (s === "layanan") html = b_screenLayanan();
-  else if (s === "dokter") html = b_screenDokter();
-  else if (s === "slot") html = b_screenSlot();
-  else if (s === "identity") html = b_screenIdentity();
-  else if (s === "otp") html = b_screenOtp();
-  else if (s === "done") html = b_screenDone();
-  b_root().innerHTML = html;
-}
-function b_screenLayanan() {
-  return `<div class="screen">
-    <h1 class="title">${KLINIK.nama}</h1>
-    <p class="subtitle">Booking langsung — belum perlu akun.</p>
-    <div class="dots"><i class="on"></i><i></i><i></i><i></i></div>
-    ${LAYANAN.map(l => `<div class="card" onclick="b.layanan='${l.id}'; b.step='dokter'; b_render();">
-      <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit</div></div>
-    </div>`).join("")}
-  </div>`;
-}
-function b_screenDokter() {
-  const list = DOKTER.filter(d => d.layanan.includes(b.layanan));
-  return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="b.step='layanan'; b_render();">&#8592;</button><h1 class="title">Pilih Dokter</h1></div>
-    <div class="dots"><i class="on"></i><i class="on"></i><i></i><i></i></div>
-    ${list.map(d => `<div class="card" onclick="b.dokter='${d.id}'; b.step='slot'; b_render();">
-      <div class="avatar">${d.nama[3]}</div>
-      <div class="card-body"><div class="card-title">${d.nama}</div><div class="card-sub">${fmtLayanan(b.layanan)}</div></div>
-    </div>`).join("")}
-  </div>`;
-}
-function b_screenSlot() {
-  return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="b.step='dokter'; b_render();">&#8592;</button><h1 class="title">Pilih Jam — Hari Ini</h1></div>
-    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
-    <div class="slot-grid">
-      ${slotsFor(b.dokter).map(sl => sl.booked
-        ? `<div class="slot booked">${sl.time}</div>`
-        : `<div class="slot" onclick="b.slot='${sl.time}'; b.step='identity'; b_render();">${sl.time}</div>`).join("")}
-    </div>
-  </div>`;
-}
-function b_screenIdentity() {
-  return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="b.step='slot'; b_render();">&#8592;</button><h1 class="title">Data Pasien</h1></div>
-    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
-    <label class="field-label">Nama</label>
-    <input class="field" id="b_name" placeholder="Nama lengkap">
-    <label class="field-label">No. HP</label>
-    <input class="field" id="b_phone" placeholder="08xxxxxxxxxx" value="081234567890">
-    <p class="subtitle" style="margin:0;">Coba 081234567890 untuk simulasi HP yang sudah punya akun.</p>
-    <button class="primary-btn" onclick="b_submitIdentity()">Lanjut</button>
-  </div>`;
-}
-function b_submitIdentity() {
-  b.name = document.getElementById("b_name").value.trim() || "Tamu";
-  b.phone = document.getElementById("b_phone").value.trim() || "0800000000";
-  b.step = "otp"; b_render();
-}
-function b_screenOtp() {
-  return `<div class="screen">
-    <div class="topbar"><button class="back-btn" onclick="b.step='identity'; b_render();">&#8592;</button><h1 class="title">Verifikasi OTP</h1></div>
-    <p class="subtitle">Kode dikirim ke ${b.phone} (demo: masukkan kode apa saja).</p>
-    <input class="field" id="b_otp" placeholder="Kode 4-6 digit" maxlength="6">
-    <button class="primary-btn" onclick="b_submitOtp()">Verifikasi &amp; Booking</button>
-  </div>`;
-}
-function b_submitOtp() {
-  const code = document.getElementById("b_otp").value.trim();
-  if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
-  b.step = "done"; b_render();
-}
-function b_screenDone() {
-  const existing = USER_DB[b.phone];
-  return `<div class="screen" style="text-align:center;">
-    <div class="check-hero">&#10003;</div>
-    <h1 class="title">Booking Terkonfirmasi</h1>
-    <p class="subtitle">${fmtLayanan(b.layanan)} · ${fmtDokter(b.dokter)} · ${b.slot}<br>
-      <span class="badge booked-by">Booked By: Guest Patient</span></p>
-    ${b.upsellChoice ? b_screenUpsellDone() : (existing ? b_upsellExisting() : b_upsellNew())}
-  </div>`;
-}
-function b_upsellExisting() {
-  const acc = USER_DB[b.phone];
-  return `<div class="banner-upsell" style="text-align:left;">
-    No. HP ini terhubung ke akun <b>${acc.nama}</b>. Booking ini otomatis tersimpan ke riwayatnya (ADR 0017) — masuk untuk melihatnya sekarang?
-    <div style="height:8px;"></div>
-    <button class="primary-btn" style="margin:0;" onclick="b.upsellChoice='logged-in'; b_render();">Masuk sekarang</button>
-    <button class="ghost-btn" onclick="b.upsellChoice='skipped'; b_render();">Nanti saja</button>
-  </div>`;
-}
-function b_upsellNew() {
-  return `<div class="banner-upsell" style="text-align:left;">
-    Simpan riwayat booking ini &amp; lewati isi data lain kali — buat akun dengan No. HP ini, tidak perlu isi ulang apa pun.
-    <div style="height:8px;"></div>
-    <button class="google-btn" onclick="b.loggedInName='${b.name}'; b.upsellChoice='created'; b_render();"><span class="g-dot"></span> Lanjutkan dengan Google</button>
-    <div style="height:6px;"></div>
-    <button class="secondary-btn" onclick="b.loggedInName='${b.name}'; b.upsellChoice='created'; b_render();">Pakai No. HP ini, atur sandi nanti</button>
-    <button class="ghost-btn" onclick="b.upsellChoice='skipped'; b_render();">Tidak, terima kasih</button>
-  </div>`;
-}
-function b_screenUpsellDone() {
-  if (b.upsellChoice === "skipped") return `<p class="subtitle">Tidak masalah — booking Anda tetap tersimpan sebagai riwayat Tamu di HP ini.</p><button class="secondary-btn" onclick="b_reset();">Booking lagi (reset demo)</button>`;
-  if (b.upsellChoice === "logged-in") return `<p class="subtitle">Masuk sebagai ${USER_DB[b.phone].nama} — riwayat lengkap kini terlihat di akun.</p><button class="secondary-btn" onclick="b_reset();">Booking lagi (reset demo)</button>`;
-  return `<p class="subtitle">Akun untuk ${b.loggedInName} dibuat — booking ini &amp; riwayat sebelumnya di No. HP ini otomatis tertaut (ADR 0017).</p><button class="secondary-btn" onclick="b_reset();">Booking lagi (reset demo)</button>`;
-}
-
-/* =====================================================================
-   VARIANT C — "Beranda Akun": an always-on authenticated app shell.
-   Booking is one tab among Beranda / Booking Baru / Riwayat, with a
-   family/patient profile switcher up top — not a one-off linear wizard.
-   ===================================================================== */
-let c_started = false;
-let c = { loggedIn: false, session: null, activePatientId: null, tab: "home", showSwitcher: false,
-          bk: { step: null, layanan: null, dokter: null, slot: null, keluhan: "" } };
-
-function c_reset() { c = { loggedIn: false, session: null, activePatientId: null, tab: "home", showSwitcher: false,
-          bk: { step: null, layanan: null, dokter: null, slot: null, keluhan: "" } }; c_render(); }
-function c_root() { return document.getElementById("variantC"); }
-function c_render() {
-  c_root().innerHTML = c.loggedIn ? c_shell() : c_loggedOut();
-}
-function c_loggedOut() {
-  return `<div class="screen">
-    <h1 class="title">${KLINIK.nama}</h1>
-    <div class="banner-info">Masuk untuk booking lebih cepat &amp; lihat riwayat semua anggota keluarga di satu tempat.</div>
-    <button class="google-btn" onclick="c_googleLogin()"><span class="g-dot"></span> Lanjutkan dengan Google</button>
-    <button class="secondary-btn" onclick="c_phoneLogin()">Masuk dengan No. HP (081234567890)</button>
-    <div class="divider">atau</div>
-    <button class="ghost-btn" style="margin-top:auto;" onclick="c_guestBookingNotice()">Booking sebagai Tamu →</button>
-  </div>`;
-}
-function c_guestBookingNotice() {
-  alert("Di variant ini, booking tamu memakai wizard klasik yang sama seperti Variant A/B — tidak digambar ulang di sini supaya fokus ke pola app-shell akun.");
-}
-function c_googleLogin() {
-  c.session = googleSignup(); c.activePatientId = c.session.patients[0].id; c.loggedIn = true; c.tab = "home"; c_render();
-}
-function c_phoneLogin() {
-  c.session = USER_DB["081234567890"]; c.activePatientId = c.session.patients[0].id; c.loggedIn = true; c.tab = "home"; c_render();
-}
-function c_activePatient() { return c.session.patients.find(p => p.id === c.activePatientId); }
-function c_shell() {
-  const p = c_activePatient();
-  return `<div style="display:flex;flex-direction:column;flex:1;position:relative;">
-    <div class="shell-header">
-      <button class="profile-chip" onclick="c.showSwitcher=true; c_render();">
-        <span class="avatar sm ${p.rel==='Anda'?'':'alt'}">${p.nama[0]}</span> ${p.nama.split(" ")[0]} &#9662;
-      </button>
-      <button class="back-btn" title="Keluar" onclick="c_reset();">&#9099;</button>
-    </div>
-    <div class="shell-body">${c_tabContent()}</div>
-    <div class="tabbar">
-      <button class="tab ${c.tab==='home'?'on':''}" onclick="c.tab='home'; c_render();"><span class="ic">&#8962;</span>Beranda</button>
-      <button class="tab ${c.tab==='book'?'on':''}" onclick="c.tab='book'; c.bk={step:'layanan',layanan:null,dokter:null,slot:null,keluhan:''}; c_render();"><span class="ic">&#128197;</span>Booking Baru</button>
-      <button class="tab ${c.tab==='history'?'on':''}" onclick="c.tab='history'; c_render();"><span class="ic">&#128336;</span>Riwayat</button>
-      <button class="tab ${c.tab==='account'?'on':''}" onclick="c.tab='account'; c_render();"><span class="ic">&#128100;</span>Akun</button>
-    </div>
-    ${c.showSwitcher ? c_switcherSheet() : ""}
-  </div>`;
-}
-function c_switcherSheet() {
-  return `<div class="sheet-backdrop" onclick="c.showSwitcher=false; c_render();">
-    <div class="sheet" onclick="event.stopPropagation();">
-      <b style="font-size:14px;">Booking / lihat riwayat untuk siapa?</b>
-      ${c.session.patients.map(p => `<div class="card ${p.id===c.activePatientId?'sel':''}" onclick="c.activePatientId='${p.id}'; c.showSwitcher=false; c_render();">
-        <div class="avatar ${p.rel==='Anda'?'':'alt'}">${p.nama[0]}</div>
-        <div class="card-body"><div class="card-title">${p.nama}</div><div class="card-sub">${p.rel}</div></div>
-      </div>`).join("")}
-      <div class="card" onclick="c_addDependent();">
-        <div class="avatar" style="background:#eef1f6;color:#475569;">+</div>
-        <div class="card-body"><div class="card-title">Tambah orang lain</div><div class="card-sub">Anak, orang tua, dsb.</div></div>
-      </div>
-    </div>
-  </div>`;
-}
-function c_addDependent() {
-  const name = prompt("Nama orang baru:");
-  if (!name) return;
-  const id = "new" + Date.now();
-  c.session.patients.push({ id, nama: name, rel: "Baru ditambahkan" });
-  c.activePatientId = id; c.showSwitcher = false; c_render();
-}
-function c_tabContent() {
-  if (c.tab === "home") return c_homeTab();
-  if (c.tab === "book") return c_bookTab();
-  if (c.tab === "history") return c_historyTab();
-  if (c.tab === "account") return c_accountTab();
-}
-function c_homeTab() {
-  const p = c_activePatient();
-  return `<h1 class="title">Halo, ${c.session.nama.split(" ")[0]}</h1>
-    ${!c.session.phoneVerified ? `<div class="banner-info">No. HP belum diverifikasi — akan diminta saat booking appointment pertama.</div>` : ""}
-    <div class="card" onclick="c.tab='book'; c.bk={step:'layanan',layanan:null,dokter:null,slot:null,keluhan:''}; c_render();">
-      <div class="avatar">&#128197;</div>
-      <div class="card-body"><div class="card-title">Booking baru untuk ${p.nama.split(" ")[0]}</div><div class="card-sub">${LAYANAN.length} layanan tersedia</div></div>
-    </div>
-    <div class="card" onclick="c.tab='history'; c_render();">
-      <div class="avatar alt">&#128336;</div>
-      <div class="card-body"><div class="card-title">Riwayat appointment</div><div class="card-sub">${c.session.riwayat.length} tercatat</div></div>
-    </div>`;
-}
-function c_bookTab() {
-  const p = c_activePatient();
-  const s = c.bk.step;
-  let inner = "";
-  if (s === "layanan") inner = `
-    <p class="subtitle">Booking untuk <b>${p.nama}</b>.</p>
-    ${LAYANAN.map(l => `<div class="card" onclick="c.bk.layanan='${l.id}'; c.bk.step='dokter'; c_render();">
-      <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit</div></div>
-    </div>`).join("")}`;
-  else if (s === "dokter") inner = `
-    <div class="topbar"><button class="back-btn" onclick="c.bk.step='layanan'; c_render();">&#8592;</button><h1 class="title" style="font-size:15px;">Pilih Dokter</h1></div>
-    ${DOKTER.filter(d => d.layanan.includes(c.bk.layanan)).map(d => `<div class="card" onclick="c.bk.dokter='${d.id}'; c.bk.step='slot'; c_render();">
-      <div class="avatar">${d.nama[3]}</div>
-      <div class="card-body"><div class="card-title">${d.nama}</div><div class="card-sub">${fmtLayanan(c.bk.layanan)}</div></div>
-    </div>`).join("")}`;
-  else if (s === "slot") inner = `
-    <div class="topbar"><button class="back-btn" onclick="c.bk.step='dokter'; c_render();">&#8592;</button><h1 class="title" style="font-size:15px;">Pilih Jam</h1></div>
-    <div class="slot-grid">${slotsFor(c.bk.dokter).map(sl => sl.booked
-      ? `<div class="slot booked">${sl.time}</div>`
-      : `<div class="slot" onclick="c.bk.slot='${sl.time}'; c.bk.step='confirm'; c_render();">${sl.time}</div>`).join("")}</div>`;
-  else if (s === "confirm") inner = `
-    <div class="topbar"><button class="back-btn" onclick="c.bk.step='slot'; c_render();">&#8592;</button><h1 class="title" style="font-size:15px;">Konfirmasi</h1></div>
-    <div class="summary"><b>${fmtLayanan(c.bk.layanan)}</b> dengan ${fmtDokter(c.bk.dokter)}<br>
-      Hari ini, ${c.bk.slot} · Pasien: ${p.nama}<br>
-      <span class="badge booked-by">Booked By: User (${c.session.nama})</span></div>
-    <label class="field-label">Keluhan (opsional)</label>
-    <textarea class="field" id="c_keluhan" rows="2" placeholder="Ceritakan keluhan…"></textarea>
-    <button class="primary-btn" style="margin-top:8px;" onclick="c_confirmBooking()">Konfirmasi Booking</button>`;
-  else if (s === "done") inner = `
-    <div style="text-align:center;">
-      <div class="check-hero">&#10003;</div>
-      <h1 class="title">Terkonfirmasi</h1>
-      <p class="subtitle">${fmtLayanan(c.bk.layanan)} · ${fmtDokter(c.bk.dokter)} · ${c.bk.slot} untuk ${p.nama}</p>
-      <button class="secondary-btn" onclick="c.tab='history'; c_render();">Lihat di Riwayat</button>
-    </div>`;
-  return `<h1 class="title" style="font-size:17px;">${s==='layanan'?'Booking Baru':''}</h1>${inner}`;
-}
-function c_confirmBooking() {
-  const p = c_activePatient();
-  c.session.riwayat.unshift({ layanan: fmtLayanan(c.bk.layanan), dokter: fmtDokter(c.bk.dokter), tanggal: "Hari ini", status: "confirmed", untuk: p.id });
-  c.bk.step = "done"; c_render();
-}
-function c_historyTab() {
-  const p = c_activePatient();
-  const items = c.session.riwayat.filter(r => r.untuk === p.id);
-  return `<h1 class="title">Riwayat — ${p.nama.split(" ")[0]}</h1>
-    ${items.length === 0 ? `<p class="subtitle">Belum ada riwayat untuk ${p.nama}.</p>` :
-      items.map(r => `<div class="card" style="align-items:flex-start;">
-        <div class="avatar" style="background:#eef1f6;color:#475569;">&#128336;</div>
-        <div class="card-body">
-          <div class="card-title">${r.layanan}</div>
-          <div class="card-sub">${r.dokter} · ${r.tanggal}</div>
-          <span class="badge status-${r.status}">${r.status}</span>
-        </div>
-      </div>`).join("")}`;
-}
-function c_accountTab() {
-  return `<h1 class="title">Akun</h1>
-    <div class="card"><div class="avatar">${c.session.nama[0]}</div>
-      <div class="card-body"><div class="card-title">${c.session.nama}</div>
-        <div class="card-sub">No. HP ${c.session.phoneVerified ? "terverifikasi" : "<b>belum terverifikasi</b>"}</div></div></div>
-    <div class="card-sub" style="padding:0 4px;">Mengelola ${c.session.patients.length} profil Patient (${c.session.patients.map(p=>p.nama).join(", ")}).</div>
-    <button class="secondary-btn" onclick="c_reset();">Keluar (reset demo)</button>`;
 }
 
 /* ---------------- boot ---------------- */
-showVariant(currentVariant());
+render();
 </script>
 </body>
 </html>
