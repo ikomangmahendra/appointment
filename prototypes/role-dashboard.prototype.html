@@ -193,7 +193,7 @@ function buildModel(role) {
       { label: 'Selesai', value: selesai, tone: 'good' },
       { label: 'Sedang Berjalan', value: berjalan, tone: 'warn' },
       { label: 'Dokter Aktif', value: dokterAktif, tone: 'neutral' },
-      { label: 'Perlu Dijadwal Ulang', value: perluUlang.length, tone: perluUlang.length ? 'bad' : 'neutral' },
+      { label: 'Perlu Dijadwal Ulang', value: perluUlang.length, tone: perluUlang.length ? 'bad' : 'neutral', narrow: true },
     ];
     const appointmentItems = APPOINTMENTS_TODAY.slice().sort(timeSort).map(a => ({
       id: a.id,
@@ -337,7 +337,8 @@ function buildModel(role) {
 // Shared leaf renderers (small, intentionally reused — not full layouts)
 // ---------------------------------------------------------------------------
 function statCard(s) {
-  return `<div class="bg-white rounded-xl border border-slate-200 p-4">
+  const width = s.narrow ? 'flex-none w-[132px]' : 'flex-1 min-w-[140px]';
+  return `<div class="${width} bg-white rounded-xl border border-slate-200 p-4">
     <div class="text-xs text-slate-400 mb-1">${esc(s.label)}</div>
     <div class="text-2xl font-semibold ${toneClass(s.tone)}">${s.value}</div>
   </div>`;
@@ -417,7 +418,7 @@ function renderDashboard() {
     <div class="mb-1"><div class="text-xs uppercase tracking-wide text-slate-400">${esc(KLINIK.name)} · ${esc(KLINIK.today)}</div><h1 class="text-lg font-semibold">Dashboard</h1></div>
     <div class="flex flex-wrap gap-2 my-4">${roleSelectorTabs()}</div>
     <div class="mb-4"><div class="font-medium">${esc(m.roleLabel)}</div><div class="text-sm text-slate-500">${esc(m.roleDesc)}</div></div>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">${m.stats.map(statCard).join('')}</div>
+    <div class="flex flex-wrap gap-3 mb-5">${m.stats.map(statCard).join('')}</div>
     <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
       ${sectionPanel(mainSection, true)}
       <div class="space-y-4">${restSections.map(s => sectionPanel(s, false)).join('')}</div>
