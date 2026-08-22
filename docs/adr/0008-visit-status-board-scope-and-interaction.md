@@ -1,0 +1,13 @@
+# Visit Status Board: card scope, appointment-status interplay, and interaction model
+
+Each card on the Visit Status Board represents one Appointment, not one Patient — a Patient with two same-day Appointments gets two independent cards, consistent with Visit Status being an Appointment-level property (ADR 0002). The board is scoped to the viewing staff's own Klinik and its current operating day (Jam Operasional): `cancelled`/`rescheduled` Appointments never appear, and `no-show` Appointments are removed immediately once marked — the board is a live working view of today's foot traffic, not a historical log.
+
+Within a Klinik, the board is further scoped by role: a Resepsionis sees one combined board across all Layanan (Check-In happens before a patient is queued into any specific Layanan), while a Staf Layanan sees only the board for their own Layanan — consistent with Tutup Layanan already being a per-Layanan action (ADR 0010) and with Staf Layanan being assigned to a specific Layanan. Each Layanan's board header displays the Layanan's name, its on-duty Staf Layanan (one assignment per shift, not tracked per-Appointment), the Dokter(s) currently on duty for that Layanan today, and the Klinik's current local date/time with its timezone label (WIB/WITA/WIT) — informational only, not a further filter; a Layanan with multiple Dokter working in parallel still shows one combined board, not one board per Dokter.
+
+Visit Status transitions are triggered by explicit, role-scoped action buttons, not drag-and-drop. A free drag would let a card cross into another role's stage in one gesture with no natural place to enforce which actor is allowed to make that particular transition.
+
+Live updates are via polling against the Spring Boot backend (ADR 0006), not push (WebSocket/SSE) — a much smaller lift for a front-desk board where a few seconds of staleness doesn't matter. The polling interval is Admin Klinik-configurable per Klinik (default 15s, bounded 5–60s), so a busier clinic can tune responsiveness without every clinic paying the server cost of the fastest setting.
+
+A `menunggu` card's wait is flagged (shown in red) once it passes Target Waktu Tunggu, a fixed, Admin Klinik-configurable threshold (default 15 minutes) — not the board's own live-computed "rata-rata tunggu" KPI. Comparing against the live average would be circular and unstable: the flag would shift every time someone entered or left the queue, regardless of whether that particular patient's wait actually changed.
+
+The prototype (`prototypes/kanban-visit-status.prototype.html`) is the reference for the board's visual shape (card columns + KPI bar) but not for its data semantics — see ADR 0007 for where its dummy data diverges from the corrected Visit Status model.
