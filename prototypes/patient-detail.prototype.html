@@ -21,6 +21,11 @@
   before this becomes real (and updating CONTEXT.md / an ADR if the auth
   model is actually changing to include email+password).
 
+  UPDATE (feedback round 2 — consolidation with the phone-booking-ui
+  prototype): the header now has a "Buat Booking" button that jumps to
+  phone-booking-ui.prototype.html?patientId=<id>, so a Resepsionis looking
+  up a patient here can go straight into booking a call for them.
+
   This file has its own copy of PATIENTS_DB (see patient-management's for
   the "real" shared shape) with one patient given 13 visits to demonstrate
   pagination, and one left with zero visits to demonstrate the empty state.
@@ -246,7 +251,7 @@ function render() {
   if (!p) {
     app.innerHTML = `<div class="max-w-xl mx-auto pt-16 px-4 text-center">
       <div class="text-sm text-slate-500 mb-3">Pasien tidak ditemukan${currentId ? ` (id=${currentId})` : ''}.</div>
-      <a href="patient-management.prototype.html?variant=A" class="text-sm text-blue-700 underline">← Kembali ke Daftar Pasien</a>
+      <a href="patient-management.prototype.html" class="text-sm text-blue-700 underline">← Kembali ke Daftar Pasien</a>
     </div>`;
     return;
   }
@@ -256,17 +261,18 @@ function render() {
     : renderProfilSection(p);
 
   app.innerHTML = `<div class="max-w-4xl mx-auto pt-8 px-4 pb-16">
-    <a href="patient-management.prototype.html?variant=A" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
+    <a href="patient-management.prototype.html" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
 
     <div class="bg-white rounded-xl border border-slate-200 p-5 mt-3 mb-4 flex items-center gap-4">
       <div class="w-14 h-14 rounded-full bg-slate-800 text-white flex items-center justify-center text-xl shrink-0">${initials(p.name)}</div>
-      <div>
+      <div class="flex-1">
         <div class="flex items-center gap-2">
           <h1 class="text-xl font-semibold">${esc(p.name)}</h1>
           ${genderIcon(p.gender)}
         </div>
         <div class="text-xs text-slate-400">Pasien #${p.id}</div>
       </div>
+      <a href="phone-booking-ui.prototype.html?patientId=${p.id}" class="text-sm bg-emerald-600 text-white px-3 py-2 rounded-md hover:bg-emerald-700 shrink-0">📅 Buat Booking</a>
     </div>
 
     ${duplicateBanner(p)}

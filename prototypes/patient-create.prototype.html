@@ -18,6 +18,14 @@
   file — see patient-management.prototype.html for the shared list/detail
   data these would come from in the real app.
 
+  UPDATE (feedback round 2 — consolidation with the phone-booking-ui
+  prototype): the "pasien tersimpan" recap now also offers "Buat Booking
+  untuk Pasien Ini", which hands the freshly-created (never-persisted, no
+  numeric id yet) patient off to phone-booking-ui.prototype.html via
+  ?newPatientName=&newPatientPhone=&... query params — the flow a
+  Resepsionis actually follows when a caller turns out to be a new patient:
+  create the record, then immediately book the call they rang in for.
+
   Run: open this file directly in a browser (double-click / File > Open).
 -->
 <script src="https://cdn.tailwindcss.com"></script>
@@ -82,7 +90,7 @@ function addressSearchBlock() {
 function renderForm() {
   const d = ui.draft;
   return `<div class="max-w-2xl mx-auto pt-10 px-4 pb-16">
-    <a href="patient-management.prototype.html?variant=A" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
+    <a href="patient-management.prototype.html" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
     <div class="mt-2 mb-6"><div class="text-xs uppercase tracking-wide text-slate-400">Admin Klinik · Patient Management</div><h1 class="text-lg font-semibold">Pasien Baru</h1></div>
 
     <div class="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
@@ -99,16 +107,27 @@ function renderForm() {
       </div>
       <div class="flex gap-2 pt-2">
         <button data-action="save" class="text-sm bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">Simpan Pasien</button>
-        <a href="patient-management.prototype.html?variant=A" class="text-sm text-slate-500 underline self-center">Batal</a>
+        <a href="patient-management.prototype.html" class="text-sm text-slate-500 underline self-center">Batal</a>
       </div>
     </div>
   </div>`;
 }
 
+function bookingHandoffUrl(p) {
+  const params = new URLSearchParams({
+    newPatientName: p.name || '',
+    newPatientPhone: p.phone || '',
+    newPatientNik: p.nik || '',
+    newPatientDob: p.dob || '',
+    newPatientGender: p.gender || '',
+  });
+  return `phone-booking-ui.prototype.html?${params.toString()}`;
+}
+
 function renderSuccess() {
   const p = ui.submitted;
   return `<div class="max-w-2xl mx-auto pt-10 px-4 pb-16">
-    <a href="patient-management.prototype.html?variant=A" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
+    <a href="patient-management.prototype.html" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
     <div class="mt-6 bg-white rounded-xl border border-emerald-200 p-6" data-anim="in">
       <div class="text-emerald-700 font-medium mb-4">✓ Pasien baru tersimpan (prototipe — tidak benar-benar disimpan)</div>
       <div class="grid grid-cols-2 gap-y-2 text-sm">
@@ -119,9 +138,10 @@ function renderSuccess() {
         <div class="text-slate-400">Jenis Kelamin</div><div>${p.gender === 'P' ? 'Perempuan' : p.gender === 'L' ? 'Laki-laki' : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
         <div class="text-slate-400">Alamat</div><div>${p.address && p.address.street ? `${esc(p.address.street)}${[p.address.kelurahan, p.address.kecamatan, p.address.kota, p.address.provinsi].filter(Boolean).length || p.address.kodePos ? `<div class="text-xs text-slate-500">${[p.address.kelurahan, p.address.kecamatan, p.address.kota, p.address.provinsi].filter(Boolean).map(esc).join(', ')} ${esc(p.address.kodePos)}</div>` : ''}` : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
       </div>
-      <div class="flex gap-3 mt-5">
-        <a href="patient-management.prototype.html?variant=A" class="text-sm bg-slate-800 text-white px-4 py-2 rounded-md hover:bg-slate-900">Ke Daftar Pasien</a>
-        <button data-action="add-another" class="text-sm text-blue-700 underline">+ Tambah pasien lagi</button>
+      <div class="flex flex-wrap gap-3 mt-5">
+        <a href="${bookingHandoffUrl(p)}" class="text-sm bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700">📅 Buat Booking untuk Pasien Ini</a>
+        <a href="patient-management.prototype.html" class="text-sm bg-slate-800 text-white px-4 py-2 rounded-md hover:bg-slate-900">Ke Daftar Pasien</a>
+        <button data-action="add-another" class="text-sm text-blue-700 underline self-center">+ Tambah pasien lagi</button>
       </div>
     </div>
   </div>`;
