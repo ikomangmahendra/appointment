@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Pasien Baru</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Sibling route to patient-management.prototype.html (feedback: "buatkan
+  route baru untuk membuat pasien baru" instead of the old inline form).
+  A dedicated page for creating a Patient, including breaking the address
+  down into structured sub-fields fillable via a Google-Places-style
+  search simulate (see ADDRESS_SUGGESTIONS below — canned, no real API).
+
+  No backend: submitting just shows a recap. This file has its own copy of
+  the small address-capture bits so it stays a single double-clickable
+  file — see patient-management.prototype.html for the shared list/detail
+  data these would come from in the real app.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '<span class="text-slate-400 italic">belum diisi</span>'; }
+
+function mkAddress(street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId) {
+  return { street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId,
+    formatted: `${street}, ${kelurahan}, ${kecamatan}, ${kota}, ${provinsi} ${kodePos}` };
+}
+function emptyAddress() { return { street: '', kelurahan: '', kecamatan: '', kota: '', provinsi: '', kodePos: '', lat: null, lng: null, placeId: null, formatted: '' }; }
+
+const ADDRESS_SUGGESTIONS = [
+  mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'),
+  mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'),
+  mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'),
+  mkAddress('Jl. Anggrek No. 8', 'Cigadung', 'Cibeunying Kidul', 'Bandung', 'Jawa Barat', '40191', -6.8848, 107.6298, 'place_anggrek_8'),
+  mkAddress('Jl. Mawar No. 1', 'Merdeka', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9147, 107.6098, 'place_mawar_1'),
+  mkAddress('Jl. Kamboja No. 3', 'Sukajadi', 'Sukajadi', 'Bandung', 'Jawa Barat', '40163', -6.8879, 107.5893, 'place_kamboja_3'),
+  mkAddress('Jl. Asia Afrika No. 8', 'Braga', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9218, 107.6086, 'place_asiaafrika_8'),
+];
+
+function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', gender: 'L', address: null }; }
+
+let ui = { draft: emptyDraft(), addressSearch: '', submitted: null };
+
+function addressSearchBlock() {
+  const q = ui.addressSearch.trim();
+  const suggestions = q.length >= 3 ? ADDRESS_SUGGESTIONS.filter(s => s.formatted.toLowerCase().includes(q.toLowerCase())) : [];
+  const addr = ui.draft.address;
+  return `<div class="space-y-2">
+    <div class="relative">
+      <input data-bind="addressSearch" value="${esc(ui.addressSearch)}" placeholder="Cari alamat (Google Maps)..." class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      ${suggestions.length ? `<div data-anim="in" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 max-h-48 overflow-y-auto">
+        ${suggestions.map(s => `<div data-action="pick-address" data-place-id="${s.placeId}" class="cursor-pointer px-3 py-2 text-sm hover:bg-blue-50 border-b border-slate-100 last:border-0">📍 ${esc(s.formatted)}</div>`).join('')}
+      </div>` : ''}
+      ${q.length >= 3 && !suggestions.length ? `<div class="absolute left-0 right-0 mt-1 bg-white border border-dashed border-slate-300 rounded-md p-3 text-xs text-slate-400 z-10">Tidak ditemukan — coba kata kunci lain atau isi manual di bawah.</div>` : ''}
+    </div>
+    ${addr ? `<div data-anim="in" class="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200 rounded-md p-3">
+      <label class="block text-xs text-slate-400 col-span-2">Jalan<input data-bind="address.street" value="${esc(addr.street)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kelurahan<input data-bind="address.kelurahan" value="${esc(addr.kelurahan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kecamatan<input data-bind="address.kecamatan" value="${esc(addr.kecamatan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kota/Kabupaten<input data-bind="address.kota" value="${esc(addr.kota)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Provinsi<input data-bind="address.provinsi" value="${esc(addr.provinsi)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kode Pos<input data-bind="address.kodePos" value="${esc(addr.kodePos)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <button data-action="clear-address" class="col-span-2 text-xs text-slate-400 underline text-left">Hapus &amp; cari ulang</button>
+    </div>` : `<button data-action="manual-address" class="text-xs text-blue-600 underline">+ Isi alamat manual (tanpa pencarian)</button>`}
+  </div>`;
+}
+
+function renderForm() {
+  const d = ui.draft;
+  return `<div class="max-w-2xl mx-auto pt-10 px-4 pb-16">
+    <a href="patient-management.prototype.html?variant=A" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
+    <div class="mt-2 mb-6"><div class="text-xs uppercase tracking-wide text-slate-400">Admin Klinik · Patient Management</div><h1 class="text-lg font-semibold">Pasien Baru</h1></div>
+
+    <div class="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <label class="block text-xs text-slate-500">Nama<input data-bind="name" value="${esc(d.name)}" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+        <label class="block text-xs text-slate-500">Telepon<input data-bind="phone" value="${esc(d.phone)}" placeholder="08..." class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+        <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="nik" value="${esc(d.nik)}" placeholder="16 digit" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+        <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="dob" type="date" value="${esc(d.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+        <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="gender" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"><option value="L" ${d.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${d.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
+      </div>
+      <div>
+        <div class="text-xs text-slate-500 mb-1">Alamat</div>
+        ${addressSearchBlock()}
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button data-action="save" class="text-sm bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">Simpan Pasien</button>
+        <a href="patient-management.prototype.html?variant=A" class="text-sm text-slate-500 underline self-center">Batal</a>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSuccess() {
+  const p = ui.submitted;
+  return `<div class="max-w-2xl mx-auto pt-10 px-4 pb-16">
+    <a href="patient-management.prototype.html?variant=A" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
+    <div class="mt-6 bg-white rounded-xl border border-emerald-200 p-6" data-anim="in">
+      <div class="text-emerald-700 font-medium mb-4">✓ Pasien baru tersimpan (prototipe — tidak benar-benar disimpan)</div>
+      <div class="grid grid-cols-2 gap-y-2 text-sm">
+        <div class="text-slate-400">Nama</div><div>${esc(p.name)}</div>
+        <div class="text-slate-400">Telepon</div><div>${esc(p.phone)}</div>
+        <div class="text-slate-400">NIK</div><div class="font-mono">${p.nik ? esc(p.nik) : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
+        <div class="text-slate-400">Tgl Lahir</div><div>${fmtDate(p.dob)}</div>
+        <div class="text-slate-400">Jenis Kelamin</div><div>${p.gender === 'P' ? 'Perempuan' : 'Laki-laki'}</div>
+        <div class="text-slate-400">Alamat</div><div>${p.address && p.address.street ? `${esc(p.address.street)}${[p.address.kelurahan, p.address.kecamatan, p.address.kota, p.address.provinsi].filter(Boolean).length || p.address.kodePos ? `<div class="text-xs text-slate-500">${[p.address.kelurahan, p.address.kecamatan, p.address.kota, p.address.provinsi].filter(Boolean).map(esc).join(', ')} ${esc(p.address.kodePos)}</div>` : ''}` : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
+      </div>
+      <div class="flex gap-3 mt-5">
+        <a href="patient-management.prototype.html?variant=A" class="text-sm bg-slate-800 text-white px-4 py-2 rounded-md hover:bg-slate-900">Ke Daftar Pasien</a>
+        <button data-action="add-another" class="text-sm text-blue-700 underline">+ Tambah pasien lagi</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  document.getElementById('app').innerHTML = ui.submitted ? renderSuccess() : renderForm();
+}
+
+function applyBind(e) {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  const parts = bind.split('.');
+  if (parts[0] === 'address') ui.draft.address[parts[1]] = e.target.value;
+  else if (bind === 'addressSearch') ui.addressSearch = e.target.value;
+  else ui.draft[bind] = e.target.value;
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  switch (t.dataset.action) {
+    case 'pick-address': {
+      const s = ADDRESS_SUGGESTIONS.find(a => a.placeId === t.dataset.placeId);
+      if (s) ui.draft.address = { ...s };
+      ui.addressSearch = '';
+      break;
+    }
+    case 'manual-address': ui.draft.address = emptyAddress(); break;
+    case 'clear-address': ui.draft.address = null; ui.addressSearch = ''; break;
+    case 'save':
+      ui.submitted = { ...ui.draft };
+      break;
+    case 'add-another':
+      ui.draft = emptyDraft(); ui.addressSearch = ''; ui.submitted = null;
+      break;
+  }
+  render();
+});
+
+document.addEventListener('input', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName === 'SELECT') return;
+  applyBind(e);
+  const bind = e.target.dataset.bind;
+  const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
+  render();
+  const el = document.querySelector(`[data-bind="${bind}"]`);
+  if (el && el.type !== 'date') { el.focus(); el.setSelectionRange(selStart, selEnd); }
+  else if (el) el.focus();
+});
+
+document.addEventListener('change', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName !== 'SELECT') return;
+  applyBind(e);
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

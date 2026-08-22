@@ -22,6 +22,13 @@
     B — Split kartu & detail (always-on master-detail, side-by-side compare)
     C — Pencarian spotlight + halaman profil penuh (no default list; search-first)
 
+  UPDATE (feedback on option A): gender field + filter, address broken down
+  into structured sub-fields fillable via a Google-Places-style search
+  simulate, and viewing a Patient now navigates to a real sibling page
+  instead of a slide-over — see patient-create.prototype.html and
+  patient-detail.prototype.html next to this file (Variant A links to both;
+  B/C keep their inline drawer/panel behaviour, now address-aware).
+
   Run: open this file directly in a browser (double-click / File > Open).
 -->
 <script src="https://cdn.tailwindcss.com"></script>
@@ -32,8 +39,6 @@
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
   [data-anim="in"] { animation: fade-in .15s ease-out; }
   @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
-  .drawer-enter { animation: slide-in .18s ease-out; }
-  @keyframes slide-in { from { transform: translateX(16px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
@@ -46,24 +51,45 @@
 // Canned domain data (see CONTEXT.md) — just enough to make the UI feel real.
 // Patient shape loosely follows docs/adr/0005 (optional NIK, SATU SEHAT-ish).
 // ---------------------------------------------------------------------------
+// Address shape mirrors what a Google Places Autocomplete pick would give
+// you (formatted string + parsed components + place_id + lat/lng) — see
+// feedback: "breakdown alamat ... hasil pencarian dari google address".
+function mkAddress(street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId) {
+  return { street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId,
+    formatted: `${street}, ${kelurahan}, ${kecamatan}, ${kota}, ${provinsi} ${kodePos}` };
+}
+function emptyAddress() { return { street: '', kelurahan: '', kecamatan: '', kota: '', provinsi: '', kodePos: '', lat: null, lng: null, placeId: null, formatted: '' }; }
+
+// A handful of canned Google-Places-style results for the address search
+// simulate — see addressSearchBlock().
+const ADDRESS_SUGGESTIONS = [
+  mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'),
+  mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'),
+  mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'),
+  mkAddress('Jl. Anggrek No. 8', 'Cigadung', 'Cibeunying Kidul', 'Bandung', 'Jawa Barat', '40191', -6.8848, 107.6298, 'place_anggrek_8'),
+  mkAddress('Jl. Mawar No. 1', 'Merdeka', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9147, 107.6098, 'place_mawar_1'),
+  mkAddress('Jl. Kamboja No. 3', 'Sukajadi', 'Sukajadi', 'Bandung', 'Jawa Barat', '40163', -6.8879, 107.5893, 'place_kamboja_3'),
+  mkAddress('Jl. Asia Afrika No. 8', 'Braga', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9218, 107.6086, 'place_asiaafrika_8'),
+];
+
 let PATIENTS_DB = [
-  { id: 1, name: 'Siti Rahma', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', address: 'Jl. Melati No. 12, Bandung', akunPasien: true, visits: [
+  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', address: mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'), akunPasien: true, visits: [
     { date: '2026-07-02', layanan: 'Pemeriksaan Umum', dokter: 'dr. Amelia Putri', status: 'completed' },
     { date: '2026-03-19', layanan: 'Vaksinasi', dokter: 'dr. Amelia Putri', status: 'completed' },
   ] },
-  { id: 2, name: 'Budi Santoso', phone: '081298765432', nik: null, dob: '1985-11-03', address: 'Jl. Kenanga No. 5, Bandung', akunPasien: false, visits: [] , duplicateOf: 3},
-  { id: 3, name: 'Budi Santosa', phone: '081298765431', nik: null, dob: '1985-11-03', address: 'Jl. Kenanga No. 5, Bandung', akunPasien: false, visits: [
+  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), akunPasien: false, visits: [] , duplicateOf: 3},
+  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), akunPasien: false, visits: [
     { date: '2026-06-14', layanan: 'Vaksinasi', dokter: 'dr. Bagus Santoso', status: 'completed' },
   ], duplicateOf: 2 },
-  { id: 4, name: 'Citra Dewi', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', address: 'Jl. Anggrek No. 8, Bandung', akunPasien: true, visits: [
+  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', address: mkAddress('Jl. Anggrek No. 8', 'Cigadung', 'Cibeunying Kidul', 'Bandung', 'Jawa Barat', '40191', -6.8848, 107.6298, 'place_anggrek_8'), akunPasien: true, visits: [
     { date: '2026-08-10', layanan: 'Konsultasi Gigi', dokter: 'dr. Bagus Santoso', status: 'confirmed' },
   ] },
-  { id: 5, name: 'Dimas Wijaya', phone: '081422233344', nik: null, dob: '1979-09-15', address: 'Jl. Mawar No. 1, Bandung', akunPasien: false, visits: [
+  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', address: mkAddress('Jl. Mawar No. 1', 'Merdeka', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9147, 107.6098, 'place_mawar_1'), akunPasien: false, visits: [
     { date: '2026-01-05', layanan: 'Fisioterapi', dokter: 'dr. Dimas Wijaya', status: 'no-show' },
   ] },
-  { id: 6, name: 'Eka Putri', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', address: 'Jl. Melati No. 20, Bandung', akunPasien: true, visits: [] },
-  { id: 7, name: 'Eka Putry', phone: '081533344456', nik: null, dob: '2001-12-01', address: 'Jl. Melati No. 20, Bandung', akunPasien: false, visits: [], duplicateOf: 6 },
-  { id: 8, name: 'Fajar Ramadhan', phone: '081644455566', nik: null, dob: '1993-04-08', address: 'Jl. Kamboja No. 3, Bandung', akunPasien: false, visits: [
+  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), akunPasien: true, visits: [] },
+  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), akunPasien: false, visits: [], duplicateOf: 6 },
+  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', address: mkAddress('Jl. Kamboja No. 3', 'Sukajadi', 'Sukajadi', 'Bandung', 'Jawa Barat', '40163', -6.8879, 107.5893, 'place_kamboja_3'), akunPasien: false, visits: [
     { date: '2026-05-22', layanan: 'Pemeriksaan Umum', dokter: 'dr. Citra Dewi', status: 'completed' },
   ] },
 ];
@@ -95,18 +121,20 @@ function statusPill(status) {
 let ui = {
   query: '',
   filter: 'all', // 'all' | 'duplicates'
+  genderFilter: 'all', // 'all' | 'L' | 'P' — Variant A only
   selectedId: 1,
   profileTab: 'profil', // 'profil' | 'riwayat' | 'akun'
   editing: false,
   editDraft: null,
   creating: false,
   createDraft: null,
+  addressSearch: '', // transient text for the address search-simulate box
   // Variant C only: which "page" is showing
   page: 'search', // 'search' | 'profile' | 'duplicates' | 'compare'
   comparePair: null,
 };
 
-function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', address: '' }; }
+function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', gender: 'L', address: null }; }
 
 function matches(p, q) {
   if (!q) return true;
@@ -114,29 +142,66 @@ function matches(p, q) {
   return p.name.toLowerCase().includes(q) || p.phone.includes(q) || (p.nik || '').includes(q);
 }
 
-function visiblePatients(query, filter) {
+function visiblePatients(query, filter, gender) {
   let list = PATIENTS_DB.filter(p => matches(p, query));
   if (filter === 'duplicates') list = list.filter(p => p.duplicateOf);
+  if (gender && gender !== 'all') list = list.filter(p => p.gender === gender);
   return list;
 }
 
-function startEdit(p) { ui.editing = true; ui.editDraft = { name: p.name, phone: p.phone, nik: p.nik || '', dob: p.dob, address: p.address }; }
+function startEdit(p) { ui.editing = true; ui.editDraft = { name: p.name, phone: p.phone, nik: p.nik || '', dob: p.dob, gender: p.gender, address: p.address ? { ...p.address } : null }; ui.addressSearch = ''; }
 function saveEdit() {
   const p = byId(ui.selectedId);
-  if (p && ui.editDraft) Object.assign(p, ui.editDraft, { nik: ui.editDraft.nik || null });
-  ui.editing = false; ui.editDraft = null;
+  if (p && ui.editDraft) {
+    p.name = ui.editDraft.name; p.phone = ui.editDraft.phone; p.nik = ui.editDraft.nik || null;
+    p.dob = ui.editDraft.dob; p.gender = ui.editDraft.gender; p.address = ui.editDraft.address;
+  }
+  ui.editing = false; ui.editDraft = null; ui.addressSearch = '';
 }
 function saveCreate() {
   const d = ui.createDraft;
-  const p = { id: nextId++, name: d.name.trim() || 'Pasien Baru', phone: d.phone.trim(), nik: d.nik.trim() || null, dob: d.dob || '', address: d.address.trim(), akunPasien: false, visits: [] };
+  const p = { id: nextId++, name: d.name.trim() || 'Pasien Baru', phone: d.phone.trim(), nik: d.nik.trim() || null, dob: d.dob || '', gender: d.gender || 'L', address: d.address || emptyAddress(), akunPasien: false, visits: [] };
   PATIENTS_DB.push(p);
-  ui.creating = false; ui.createDraft = null; ui.selectedId = p.id; ui.profileTab = 'profil';
+  ui.creating = false; ui.createDraft = null; ui.addressSearch = ''; ui.selectedId = p.id; ui.profileTab = 'profil';
   return p;
 }
 
 // ---------------------------------------------------------------------------
 // Shared bits: profile detail (fields differ slightly per variant's chrome)
 // ---------------------------------------------------------------------------
+function genderLabel(g) { return g === 'P' ? 'Perempuan' : 'Laki-laki'; }
+
+function addressLines(addr) {
+  if (!addr || !addr.street) return '<span class="text-slate-400 italic">belum diisi</span>';
+  return `<div>${esc(addr.street)}</div>
+    <div class="text-xs text-slate-500">${esc(addr.kelurahan || '-')}, ${esc(addr.kecamatan || '-')}</div>
+    <div class="text-xs text-slate-500">${esc(addr.kota || '-')}, ${esc(addr.provinsi || '-')} ${esc(addr.kodePos || '')}</div>`;
+}
+
+// Google-Places-style address capture: search box + canned suggestions that
+// fill structured sub-fields, which stay directly editable afterward.
+// bindPrefix is e.g. "edit.address" or "create.address".
+function addressSearchBlock(bindPrefix, addr) {
+  const q = (ui.addressSearch || '').trim();
+  const suggestions = q.length >= 3 ? ADDRESS_SUGGESTIONS.filter(s => s.formatted.toLowerCase().includes(q.toLowerCase())) : [];
+  return `<div class="space-y-2">
+    <div class="relative">
+      <input data-bind="addressSearch" value="${esc(ui.addressSearch)}" placeholder="Cari alamat (Google Maps)..." class="w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      ${suggestions.length ? `<div data-anim="in" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 max-h-40 overflow-y-auto">
+        ${suggestions.map(s => `<div data-action="pick-address" data-prefix="${bindPrefix}" data-place-id="${s.placeId}" class="cursor-pointer px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-100 last:border-0">📍 ${esc(s.formatted)}</div>`).join('')}
+      </div>` : ''}
+    </div>
+    ${addr ? `<div class="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200 rounded-md p-2">
+      <label class="block text-xs text-slate-400 col-span-2">Jalan<input data-bind="${bindPrefix}.street" value="${esc(addr.street)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1 text-xs" /></label>
+      <label class="block text-xs text-slate-400">Kelurahan<input data-bind="${bindPrefix}.kelurahan" value="${esc(addr.kelurahan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1 text-xs" /></label>
+      <label class="block text-xs text-slate-400">Kecamatan<input data-bind="${bindPrefix}.kecamatan" value="${esc(addr.kecamatan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1 text-xs" /></label>
+      <label class="block text-xs text-slate-400">Kota/Kabupaten<input data-bind="${bindPrefix}.kota" value="${esc(addr.kota)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1 text-xs" /></label>
+      <label class="block text-xs text-slate-400">Provinsi<input data-bind="${bindPrefix}.provinsi" value="${esc(addr.provinsi)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1 text-xs" /></label>
+      <label class="block text-xs text-slate-400">Kode Pos<input data-bind="${bindPrefix}.kodePos" value="${esc(addr.kodePos)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1 text-xs" /></label>
+    </div>` : `<button data-action="manual-address" data-prefix="${bindPrefix}" class="text-xs text-blue-600 underline">+ Isi alamat manual (tanpa pencarian)</button>`}
+  </div>`;
+}
+
 function profileFields(p, draft) {
   if (draft) {
     return `<div class="grid grid-cols-2 gap-3">
@@ -144,7 +209,11 @@ function profileFields(p, draft) {
       <label class="block text-xs text-slate-500">Telepon<input data-bind="edit.phone" value="${esc(draft.phone)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
       <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="edit.nik" value="${esc(draft.nik)}" placeholder="16 digit" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
       <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="edit.dob" type="date" value="${esc(draft.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
-      <label class="block text-xs text-slate-500 col-span-2">Alamat<input data-bind="edit.address" value="${esc(draft.address)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="edit.gender" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm bg-white"><option value="L" ${draft.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${draft.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
+      <div class="col-span-2">
+        <div class="text-xs text-slate-500 mb-1">Alamat</div>
+        ${addressSearchBlock('edit.address', draft.address)}
+      </div>
     </div>
     <div class="flex gap-2 mt-3">
       <button data-action="save-edit" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700">Simpan</button>
@@ -155,7 +224,8 @@ function profileFields(p, draft) {
     <div class="text-slate-400">Telepon</div><div>${esc(p.phone)}</div>
     <div class="text-slate-400">NIK</div><div class="font-mono">${p.nik ? esc(p.nik) : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
     <div class="text-slate-400">Tgl Lahir</div><div>${fmtDate(p.dob)}</div>
-    <div class="text-slate-400">Alamat</div><div>${esc(p.address)}</div>
+    <div class="text-slate-400">Jenis Kelamin</div><div>${genderLabel(p.gender)}</div>
+    <div class="text-slate-400">Alamat</div><div>${addressLines(p.address)}</div>
     <div class="text-slate-400">Akun Pasien</div><div>${p.akunPasien ? '<span class="text-emerald-600">✓ Aktif — bisa login</span>' : '<span class="text-slate-400">Belum ada</span>'}</div>
   </div>
   <button data-action="start-edit" class="mt-3 text-xs bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-900">Edit data</button>`;
@@ -190,7 +260,7 @@ function compareCard(pair) {
           <div class="font-medium text-sm">${esc(p.name)}</div>
         </div>
         <div class="space-y-1.5 text-sm">
-          ${rows.map(([label, key]) => `<div><span class="text-slate-400 text-xs">${label}: </span>${key === 'dob' ? fmtDate(p[key]) : esc(p[key])}</div>`).join('')}
+          ${rows.map(([label, key]) => `<div><span class="text-slate-400 text-xs">${label}: </span>${key === 'dob' ? fmtDate(p[key]) : key === 'address' ? esc(p.address.formatted) : esc(p[key])}</div>`).join('')}
         </div>
       </div>`).join('')}
   </div>
@@ -205,17 +275,17 @@ function compareCard(pair) {
 // Variant A — Direktori tabel + panel geser (dense table -> slide-over)
 // ===========================================================================
 function renderVariantA() {
-  const list = visiblePatients(ui.query, ui.filter);
+  const list = visiblePatients(ui.query, ui.filter, ui.genderFilter);
   const dupCount = PATIENTS_DB.filter(p => p.duplicateOf).length;
-  const sel = ui.creating ? null : byId(ui.selectedId);
 
   const rows = list.map(p => {
     const lv = lastVisit(p);
-    return `<tr data-action="select-row" data-id="${p.id}" class="cursor-pointer border-b border-slate-100 hover:bg-blue-50/60 ${ui.selectedId === p.id && !ui.creating ? 'bg-blue-50' : ''}">
+    return `<tr data-action="goto-detail" data-id="${p.id}" class="cursor-pointer border-b border-slate-100 hover:bg-blue-50/60">
       <td class="py-2.5 px-3">
         <div class="font-medium text-sm">${esc(p.name)} ${p.duplicateOf ? '<span class="text-amber-500" title="Duplicate Candidate">⚠</span>' : ''}</div>
         <div class="text-xs text-slate-400">${esc(p.phone)}</div>
       </td>
+      <td class="py-2.5 px-3 text-sm text-slate-500">${p.gender === 'P' ? 'P' : 'L'}</td>
       <td class="py-2.5 px-3 text-sm font-mono text-slate-500">${p.nik ? esc(p.nik) : '<span class="italic text-slate-300">—</span>'}</td>
       <td class="py-2.5 px-3 text-sm text-slate-500">${fmtDate(p.dob)}</td>
       <td class="py-2.5 px-3 text-sm">${p.akunPasien ? '<span class="text-emerald-600">Aktif</span>' : '<span class="text-slate-300">—</span>'}</td>
@@ -223,38 +293,19 @@ function renderVariantA() {
     </tr>`;
   }).join('');
 
-  const drawer = sel ? `<div id="drawer" class="drawer-enter fixed top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl border-l border-slate-200 z-40 overflow-y-auto">
-    <div class="p-5">
-      <div class="flex items-start justify-between mb-4">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-slate-800 text-white flex items-center justify-center text-sm">${initials(sel.name)}</div>
-          <div><div class="font-semibold">${esc(sel.name)}</div><div class="text-xs text-slate-400">Pasien #${sel.id}</div></div>
-        </div>
-        <button data-action="close-drawer" class="text-slate-400 hover:text-slate-700">✕</button>
-      </div>
-      ${duplicateBanner(sel)}
-      ${ui.editing ? profileFields(sel, ui.editDraft) : `
-        <div class="flex gap-1 mb-3 border-b border-slate-200">
-          ${['profil','riwayat'].map(t => `<button data-action="set-tab" data-tab="${t}" class="px-3 py-2 text-sm border-b-2 -mb-px ${ui.profileTab === t ? 'border-blue-600 text-blue-700 font-medium' : 'border-transparent text-slate-500'}">${t === 'profil' ? 'Profil' : 'Riwayat Kunjungan'}</button>`).join('')}
-        </div>
-        ${ui.profileTab === 'riwayat' ? visitHistory(sel) : profileFields(sel, null)}
-      `}
-    </div>
-  </div>` : '';
-
   return `<div class="max-w-6xl mx-auto pt-8 px-4">
     <div class="mb-4 flex items-center justify-between">
       <div><div class="text-xs uppercase tracking-wide text-slate-400">Admin Klinik · Patient Management</div><h1 class="text-lg font-semibold">Variant A — Direktori tabel</h1></div>
-      <button data-action="open-create" class="text-sm bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700">+ Pasien Baru</button>
+      <a href="patient-create.prototype.html" class="text-sm bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 inline-block">+ Pasien Baru</a>
     </div>
 
-    ${ui.creating ? `<div data-anim="in" class="bg-white rounded-xl border border-blue-200 p-5 mb-4">
-      <div class="font-medium text-sm mb-3">Pasien baru</div>
-      ${createForm()}
-    </div>` : ''}
-
-    <div class="flex items-center gap-3 mb-3">
-      <input data-bind="query" value="${esc(ui.query)}" placeholder="Cari nama, telepon, atau NIK..." class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+    <div class="flex flex-wrap items-center gap-3 mb-3">
+      <input data-bind="query" value="${esc(ui.query)}" placeholder="Cari nama, telepon, atau NIK..." class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <div class="flex gap-1 bg-white border border-slate-200 rounded-lg p-1">
+        <button data-action="set-gender-filter" data-gender="all" class="text-xs px-2.5 py-1 rounded-md ${ui.genderFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Semua Gender</button>
+        <button data-action="set-gender-filter" data-gender="L" class="text-xs px-2.5 py-1 rounded-md ${ui.genderFilter === 'L' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Laki-laki</button>
+        <button data-action="set-gender-filter" data-gender="P" class="text-xs px-2.5 py-1 rounded-md ${ui.genderFilter === 'P' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Perempuan</button>
+      </div>
       <div class="flex gap-1 bg-white border border-slate-200 rounded-lg p-1">
         <button data-action="set-filter" data-filter="all" class="text-xs px-2.5 py-1 rounded-md ${ui.filter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Semua</button>
         <button data-action="set-filter" data-filter="duplicates" class="text-xs px-2.5 py-1 rounded-md ${ui.filter === 'duplicates' ? 'bg-amber-500 text-white' : 'text-slate-500'}">⚠ Kandidat Duplikat (${dupCount})</button>
@@ -264,14 +315,12 @@ function renderVariantA() {
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <table class="w-full">
         <thead><tr class="text-left text-xs text-slate-400 border-b border-slate-200">
-          <th class="py-2 px-3 font-medium">Pasien</th><th class="py-2 px-3 font-medium">NIK</th><th class="py-2 px-3 font-medium">Tgl Lahir</th><th class="py-2 px-3 font-medium">Akun Pasien</th><th class="py-2 px-3 font-medium">Kunjungan Terakhir</th>
+          <th class="py-2 px-3 font-medium">Pasien</th><th class="py-2 px-3 font-medium">Gender</th><th class="py-2 px-3 font-medium">NIK</th><th class="py-2 px-3 font-medium">Tgl Lahir</th><th class="py-2 px-3 font-medium">Akun Pasien</th><th class="py-2 px-3 font-medium">Kunjungan Terakhir</th>
         </tr></thead>
-        <tbody>${rows || `<tr><td colspan="5" class="py-8 text-center text-sm text-slate-400">Tidak ada pasien cocok.</td></tr>`}</tbody>
+        <tbody>${rows || `<tr><td colspan="6" class="py-8 text-center text-sm text-slate-400">Tidak ada pasien cocok.</td></tr>`}</tbody>
       </table>
     </div>
-  </div>
-  ${drawer}
-  ${sel ? '<div data-action="close-drawer" class="fixed inset-0 bg-black/10 z-30"></div>' : ''}`;
+  </div>`;
 }
 
 // ===========================================================================
@@ -349,7 +398,11 @@ function createForm() {
     <label class="block text-xs text-slate-500">Telepon<input data-bind="create.phone" value="${esc(d.phone)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
     <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="create.nik" value="${esc(d.nik)}" placeholder="16 digit" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
     <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="create.dob" type="date" value="${esc(d.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
-    <label class="block text-xs text-slate-500 col-span-2">Alamat<input data-bind="create.address" value="${esc(d.address)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+    <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="create.gender" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm bg-white"><option value="L" ${d.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${d.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
+    <div class="col-span-2">
+      <div class="text-xs text-slate-500 mb-1">Alamat</div>
+      ${addressSearchBlock('create.address', d.address)}
+    </div>
   </div>
   <div class="flex gap-2 mt-3">
     <button data-action="save-create" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700">Simpan Pasien</button>
@@ -461,7 +514,7 @@ function currentVariant() {
 
 function resetUiForVariantSwitch() {
   ui.editing = false; ui.editDraft = null; ui.creating = false; ui.createDraft = null;
-  ui.page = 'search'; ui.profileTab = 'profil';
+  ui.page = 'search'; ui.profileTab = 'profil'; ui.addressSearch = '';
 }
 
 function setVariant(v) {
@@ -499,20 +552,33 @@ document.addEventListener('click', (e) => {
   switch (action) {
     case 'switch-prev': return cycle(-1);
     case 'switch-next': return cycle(1);
+    case 'goto-detail': location.href = `patient-detail.prototype.html?id=${t.dataset.id}`; return;
     case 'select-row':
     case 'pick-result':
       ui.selectedId = Number(t.dataset.id); ui.editing = false; ui.creating = false; ui.profileTab = 'profil';
       if (currentVariant() === 'C') ui.page = 'profile';
       break;
-    case 'close-drawer': ui.selectedId = ui.editing ? ui.selectedId : null; ui.editing = false; break;
     case 'set-tab': ui.profileTab = t.dataset.tab; break;
     case 'set-filter': ui.filter = t.dataset.filter; break;
+    case 'set-gender-filter': ui.genderFilter = t.dataset.gender; break;
     case 'start-edit': startEdit(byId(ui.selectedId)); break;
     case 'save-edit': saveEdit(); break;
-    case 'cancel-edit': ui.editing = false; ui.editDraft = null; break;
-    case 'open-create': ui.creating = true; ui.createDraft = emptyDraft(); ui.createDraft.name = t.dataset.prefillName || ''; ui.editing = false; break;
-    case 'cancel-create': ui.creating = false; ui.createDraft = null; break;
+    case 'cancel-edit': ui.editing = false; ui.editDraft = null; ui.addressSearch = ''; break;
+    case 'open-create': ui.creating = true; ui.createDraft = emptyDraft(); ui.createDraft.name = t.dataset.prefillName || ''; ui.editing = false; ui.addressSearch = ''; break;
+    case 'cancel-create': ui.creating = false; ui.createDraft = null; ui.addressSearch = ''; break;
     case 'save-create': { const p = saveCreate(); if (currentVariant() === 'C') ui.page = 'profile'; break; }
+    case 'pick-address': {
+      const s = ADDRESS_SUGGESTIONS.find(a => a.placeId === t.dataset.placeId);
+      const target = t.dataset.prefix.startsWith('edit') ? ui.editDraft : ui.createDraft;
+      if (s && target) target.address = { ...s };
+      ui.addressSearch = '';
+      break;
+    }
+    case 'manual-address': {
+      const target = t.dataset.prefix.startsWith('edit') ? ui.editDraft : ui.createDraft;
+      if (target) target.address = emptyAddress();
+      break;
+    }
     case 'go-duplicates': ui.page = 'duplicates'; break;
     case 'back-to-search': ui.page = 'search'; break;
     case 'back-to-duplicates': ui.page = 'duplicates'; ui.comparePair = null; break;
@@ -525,19 +591,32 @@ document.addEventListener('click', (e) => {
   render();
 });
 
-document.addEventListener('input', (e) => {
+function applyBind(e) {
   const bind = e.target.dataset.bind;
   if (!bind) return;
-  const [group, field] = bind.includes('.') ? bind.split('.') : [null, bind];
-  if (group === 'edit') ui.editDraft[field] = e.target.value;
-  else if (group === 'create') ui.createDraft[field] = e.target.value;
-  else ui[bind] = e.target.value;
+  const parts = bind.split('.');
+  const group = parts[0];
+  let target = group === 'edit' ? ui.editDraft : group === 'create' ? ui.createDraft : null;
+  if (!target) { ui[bind] = e.target.value; return; }
+  for (let i = 1; i < parts.length - 1; i++) target = target[parts[i]];
+  target[parts[parts.length - 1]] = e.target.value;
+}
 
+document.addEventListener('input', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName === 'SELECT') return;
+  applyBind(e);
+  const bind = e.target.dataset.bind;
   const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
   render();
   const el = document.querySelector(`[data-bind="${bind}"]`);
   if (el && el.type !== 'date') { el.focus(); el.setSelectionRange(selStart, selEnd); }
   else if (el) el.focus();
+});
+
+document.addEventListener('change', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName !== 'SELECT') return;
+  applyBind(e);
+  render();
 });
 
 document.addEventListener('keydown', (e) => {
