@@ -1,3 +1,7 @@
+---
+status: superseded by ADR 0016 (same guarantee, enforced server-side instead of client-side)
+---
+
 # Slot Hold protects a Slot for the duration of one booking attempt
 
 A Patient's booking flow selects a Slot several steps before the booking is actually confirmed — identity entry and OTP verification both happen after Slot selection. Without protection, two Patients could select the same Slot in that window and both proceed to OTP, with only one able to complete the booking. A Slot Hold claims the Slot the moment it's selected and releases it automatically if the booking isn't completed within the hold duration, which is a per-Klinik setting (default 5 minutes, bounded 2-15 minutes) rather than a fixed platform-wide constant — clinics differ in how often a popular Slot is contested.
