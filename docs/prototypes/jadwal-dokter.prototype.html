@@ -344,15 +344,34 @@ const JadwalModel = (() => {
     );
   }
 
-  function terapkanDenganCekKonflik(state, aksiLabel, buatStateHipotesis, paksa) {
+  function terapkanDenganCekKonflik(state, aksiLabel, buatStateHipotesis, paksa, alasan) {
     const hipotesis = buatStateHipotesis(state);
     const konflik = cariKonflik(hipotesis, state);
+    const konflikTerblokir = konflik.filter(a => a.visitStatus !== 'belum-tiba');
+
+    if (konflikTerblokir.length > 0) {
+      // Pasien sudah tiba secara fisik — tidak boleh dipaksa dengan cara apa pun.
+      return {
+        ...state,
+        pendingKonflik: null,
+        log: [...state.log, { level: 'error', text: `✗ "${aksiLabel}" ditolak total — pasien sudah tiba di klinik (${konflikTerblokir.map(a => `${a.pasien}: ${a.visitStatus}`).join(', ')}). Ubah jadwal ini tidak masuk akal lagi lewat back-office; tangani langsung di klinik.` }],
+      };
+    }
 
     if (konflik.length > 0 && !paksa) {
       return {
         ...state,
         pendingKonflik: { aksiLabel, appointments: konflik, terapkan: buatStateHipotesis },
         log: [...state.log, { level: 'warn', text: `⚠️ "${aksiLabel}" ditunda — ${konflik.length} appointment akan kehilangan slotnya. Menunggu keputusan admin.` }],
+      };
+    }
+
+    if (konflik.length > 0 && paksa && !(alasan || '').trim()) {
+      // Tetap tahan sebagai pendingKonflik supaya admin tinggal isi alasan dan coba lagi.
+      return {
+        ...state,
+        pendingKonflik: { aksiLabel, appointments: konflik, terapkan: buatStateHipotesis },
+        log: [...state.log, { level: 'error', text: `✗ Belum bisa lanjut paksa — alasan wajib diisi untuk audit log.` }],
       };
     }
 
@@ -373,7 +392,10 @@ const JadwalModel = (() => {
         ...state.log,
         { level: 'info', text: `✓ ${aksiLabel}` },
         ...(konflik.length > 0
-          ? [{ level: 'warn', text: `  → ${konflik.length} appointment ditandai "perlu dijadwal ulang" (bukan dihapus/diubah diam-diam): ${konflik.map(a => a.pasien).join(', ')}` }]
+          ? [
+              { level: 'warn', text: `  → ${konflik.length} appointment ditandai "perlu dijadwal ulang" (bukan dihapus/diubah diam-diam): ${konflik.map(a => a.pasien).join(', ')}` },
+              { level: 'info', text: `  → Alasan paksa (audit log): "${alasan.trim()}"` },
+            ]
           : []),
       ],
     };
@@ -406,7 +428,8 @@ const JadwalModel = (() => {
           state,
           `Hapus blok jadwal ${blok.hari} ${blok.mulai}–${blok.selesai}`,
           s => ({ ...s, jadwal: s.jadwal.filter(b => b.id !== action.id) }),
-          action.paksa
+          action.paksa,
+          action.alasan
         );
       }
 
@@ -426,7 +449,8 @@ const JadwalModel = (() => {
             ...s,
             pengecualian: [...s.pengecualian, { id: 'p' + Math.random().toString(36).slice(2, 8), tanggal, tipe, mulai, selesai }],
           }),
-          action.paksa
+          action.paksa,
+          action.alasan
         );
       }
 
@@ -437,7 +461,8 @@ const JadwalModel = (() => {
           state,
           `Hapus pengecualian ${p.tanggal}`,
           s => ({ ...s, pengecualian: s.pengecualian.filter(x => x.id !== action.id) }),
-          action.paksa
+          action.paksa,
+          action.alasan
         );
       }
 
@@ -448,17 +473,30 @@ const JadwalModel = (() => {
           state,
           label,
           s => ({ ...s, jamOperasional: { ...s.jamOperasional, [hari]: tutupHari ? null : { buka, tutup } } }),
-          action.paksa
+          action.paksa,
+          action.alasan
         );
       }
 
       case 'LANJUTKAN_PAKSA': {
         if (!state.pendingKonflik) return state;
-        return reduce({ ...state, pendingKonflik: null }, { ...action.aksiAsli, paksa: true });
+        return reduce(state, { ...action.aksiAsli, paksa: true, alasan: action.alasan });
       }
 
       case 'BATALKAN_KONFLIK': {
         return { ...state, pendingKonflik: null, log: [...state.log, { level: 'info', text: '↩ Perubahan dibatalkan oleh admin, tidak ada appointment yang terdampak.' }] };
+      }
+
+      case 'TANDAI_TIBA': {
+        // Aksi demo: mensimulasikan pasien sudah check-in, di luar cakupan prototype ini
+        // (lihat prototype appointment-visit-status untuk model Visit Status sesungguhnya).
+        const appt = state.appointments.find(a => a.id === action.id);
+        if (!appt) return state;
+        return {
+          ...state,
+          appointments: state.appointments.map(a => a.id === action.id ? { ...a, visitStatus: 'menunggu' } : a),
+          log: [...state.log, { level: 'info', text: `✓ (demo) ${appt.pasien} ditandai sudah tiba di klinik.` }],
+        };
       }
 
       case 'BUAT_APPOINTMENT': {
@@ -474,7 +512,7 @@ const JadwalModel = (() => {
           ...state,
           appointments: [
             ...state.appointments,
-            { id: 'a' + Math.random().toString(36).slice(2, 8), tanggal, mulai: slot.mulai, selesai: slot.selesai, layananId, pasien, status: 'confirmed' },
+            { id: 'a' + Math.random().toString(36).slice(2, 8), tanggal, mulai: slot.mulai, selesai: slot.selesai, layananId, pasien, status: 'confirmed', visitStatus: 'belum-tiba' },
           ],
           log: [...state.log, { level: 'info', text: `✓ Appointment dibuat: ${pasien}, ${tanggal} ${slot.mulai}–${slot.selesai} (${layanan.nama}).` }],
         };
@@ -512,7 +550,7 @@ function seedAwal() {
     jadwal: [{ id: 'j-seed', hari: 'Senin', mulai: '08:00', selesai: '12:00' }],
     pengecualian: [],
     appointments: [
-      { id: 'a-seed', tanggal: seninDepan, mulai: '09:00', selesai: '09:30', layananId: 'l1', pasien: 'Budi', status: 'confirmed' },
+      { id: 'a-seed', tanggal: seninDepan, mulai: '09:00', selesai: '09:30', layananId: 'l1', pasien: 'Budi', status: 'confirmed', visitStatus: 'belum-tiba' },
     ],
     pendingKonflik: null,
     log: [{ level: 'info', text: 'Kondisi awal dimuat: dr. Sari punya jadwal Senin 08:00–12:00, dan Budi sudah punya appointment Senin 09:00.' }],
@@ -562,8 +600,18 @@ const SKENARIO = [
     langkah: [
       { label: 'Coba hapus blok jadwal Senin 08:00–12:00', run: () => dispatch({ type: 'HAPUS_JADWAL', id: 'j-seed' }) },
       { label: 'Lihat peringatan konflik yang muncul', run: () => {} },
-      { label: 'Admin memutuskan: lanjutkan paksa', run: () => dispatch({ type: 'LANJUTKAN_PAKSA', aksiAsli: { type: 'HAPUS_JADWAL', id: 'j-seed' } }) },
+      { label: 'Admin memutuskan: lanjutkan paksa (dengan alasan)', run: () => dispatch({ type: 'LANJUTKAN_PAKSA', aksiAsli: { type: 'HAPUS_JADWAL', id: 'j-seed' }, alasan: 'Blok jadwal Senin pagi tidak lagi dibutuhkan, sudah dikonfirmasi ke Budi via telepon.' }) },
       { label: 'Lihat status appointment Budi berubah', run: () => {} },
+    ],
+  },
+  {
+    key: 'sudah-tiba',
+    judul: 'Diblokir total: pasien sudah tiba',
+    deskripsi: 'Sama seperti skenario di atas, tapi kali ini Budi sudah check-in di klinik saat perubahan jadwal dicoba. Kasus ini tidak boleh bisa dipaksa sama sekali — mengubah jadwal lewat back-office tidak masuk akal lagi begitu pasiennya sudah berdiri di depan meja resepsionis.',
+    langkah: [
+      { label: '(demo) Tandai Budi sudah tiba di klinik', run: () => dispatch({ type: 'TANDAI_TIBA', id: 'a-seed' }) },
+      { label: 'Coba hapus blok jadwal Senin 08:00–12:00', run: () => dispatch({ type: 'HAPUS_JADWAL', id: 'j-seed' }) },
+      { label: 'Lihat log — ditolak total, tidak ada opsi "paksa"', run: () => {} },
     ],
   },
   {
@@ -583,7 +631,7 @@ const SKENARIO = [
     langkah: [
       { label: 'Tambah pengecualian "cuti" untuk Senin depan', run: () => dispatch({ type: 'TAMBAH_PENGECUALIAN', tanggal: state._seninDepan, tipe: 'cuti', mulai: null, selesai: null }) },
       { label: 'Lihat peringatan konflik', run: () => {} },
-      { label: 'Admin konfirmasi cuti tetap berlaku (paksa)', run: () => dispatch({ type: 'LANJUTKAN_PAKSA', aksiAsli: { type: 'TAMBAH_PENGECUALIAN', tanggal: state._seninDepan, tipe: 'cuti', mulai: null, selesai: null } }) },
+      { label: 'Admin konfirmasi cuti tetap berlaku (paksa, dengan alasan)', run: () => dispatch({ type: 'LANJUTKAN_PAKSA', aksiAsli: { type: 'TAMBAH_PENGECUALIAN', tanggal: state._seninDepan, tipe: 'cuti', mulai: null, selesai: null }, alasan: 'Dokter mendadak sakit, cuti dikonfirmasi pagi ini.' }) },
       { label: 'Lihat slot Senin depan — kosong karena cuti', run: () => { setSlotViewer(state._seninDepan, 'l1'); renderSlots(); } },
     ],
   },
@@ -691,16 +739,21 @@ function renderPengecualian() {
 
 function renderAppointments() {
   const tbl = document.getElementById('tblAppointments');
-  let html = '<tr><th>Tanggal</th><th>Jam</th><th>Layanan</th><th>Pasien</th><th>Status</th></tr>';
-  if (state.appointments.length === 0) html += '<tr><td colspan="5" class="empty">Belum ada appointment.</td></tr>';
+  let html = '<tr><th>Tanggal</th><th>Jam</th><th>Layanan</th><th>Pasien</th><th>Status</th><th>Visit Status</th><th></th></tr>';
+  if (state.appointments.length === 0) html += '<tr><td colspan="7" class="empty">Belum ada appointment.</td></tr>';
   for (const a of state.appointments) {
     const layanan = state.layanan.find(l => l.id === a.layananId);
     html += `<tr>
       <td>${a.tanggal}</td><td>${a.mulai}–${a.selesai}</td><td>${layanan ? layanan.nama : '?'}</td><td>${a.pasien}</td>
       <td><span class="badge ${a.status}">${a.status === 'confirmed' ? 'confirmed' : 'perlu dijadwal ulang'}</span></td>
+      <td>${a.visitStatus}</td>
+      <td>${a.visitStatus === 'belum-tiba' ? `<button data-tandai-tiba="${a.id}">Tandai tiba (demo)</button>` : ''}</td>
     </tr>`;
   }
   tbl.innerHTML = html;
+  tbl.querySelectorAll('[data-tandai-tiba]').forEach(btn => {
+    btn.onclick = () => dispatch({ type: 'TANDAI_TIBA', id: btn.getAttribute('data-tandai-tiba') });
+  });
 }
 
 function renderPendingKonflik() {
@@ -711,11 +764,17 @@ function renderPendingKonflik() {
     <div class="conflict-banner">
       <h4>⚠️ Konflik: "${aksiLabel}" akan memengaruhi appointment yang sudah dikonfirmasi</h4>
       <ul>${appointments.map(a => `<li>${a.pasien} — ${a.tanggal} ${a.mulai}–${a.selesai}</li>`).join('')}</ul>
+      <label for="alasanPaksa">Alasan (wajib, untuk audit log)</label>
+      <input id="alasanPaksa" style="width:100%;margin-bottom:10px" placeholder="mis. Dokter cuti mendadak, sudah dikonfirmasi via telepon">
       <button data-batal-konflik>Batalkan perubahan</button>
       <button class="primary" data-paksa-konflik>Lanjutkan &amp; tandai "perlu dijadwal ulang"</button>
     </div>`;
   el.querySelector('[data-batal-konflik]').onclick = () => dispatch({ type: 'BATALKAN_KONFLIK' });
-  el.querySelector('[data-paksa-konflik]').onclick = () => dispatch({ type: 'LANJUTKAN_PAKSA', aksiAsli: lastAksiUntukKonflik });
+  el.querySelector('[data-paksa-konflik]').onclick = () => dispatch({
+    type: 'LANJUTKAN_PAKSA',
+    aksiAsli: lastAksiUntukKonflik,
+    alasan: document.getElementById('alasanPaksa').value,
+  });
 }
 
 function renderSlots() {

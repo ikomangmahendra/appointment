@@ -51,7 +51,7 @@ _Avoid_: Schedule, Availability
 A one-off override to a Dokter's Jadwal for a specific date (e.g. cuti, extra practice hours), taking precedence over the recurring template.
 
 **Jam Operasional**:
-A Klinik's own opening hours and holiday calendar, independent of any single Dokter's Jadwal. A Slot is only bookable when it falls within both the Klinik's Jam Operasional and the relevant Dokter's Jadwal.
+A Klinik's own opening hours and holiday calendar, independent of any single Dokter's Jadwal. A Slot is only bookable when it falls within both the Klinik's Jam Operasional and the relevant Dokter's Jadwal. Editing any of Jadwal, Pengecualian Jadwal, or Jam Operasional in a way that would orphan an already-`confirmed` Appointment requires an explicit, reasoned admin override rather than silently dropping or moving that Appointment — see [ADR 0018](docs/adr/0018-jadwal-conflict-flags-appointment-for-reschedule.md).
 
 **Slot**:
 A discrete, bookable unit of time for one Dokter, sized to the duration of a specific Layanan.
