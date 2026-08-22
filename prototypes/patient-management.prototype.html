@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Patient Management</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the "Patient Management" screen look like for a
+  Resepsionis / Admin Klinik — browsing, searching, viewing, editing, and
+  creating Patient records, and reviewing the Duplicate Candidate queue?
+  Three structurally different variants, switchable via ?variant=A|B|C on
+  this single static file. No backend, no persistence — patient data is
+  canned and edits only live in memory for the session. See CONTEXT.md for
+  domain terms (Patient, NIK, Akun Pasien, Patient Matching, Duplicate
+  Candidate, Patient Merge) and docs/adr/0004 for the actual matching rule
+  this UI only *represents the shape of*, never implements.
+
+  Variants:
+    A — Direktori tabel + panel geser (dense table, click a row -> slide-over)
+    B — Split kartu & detail (always-on master-detail, side-by-side compare)
+    C — Pencarian spotlight + halaman profil penuh (no default list; search-first)
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .switcher-btn:focus { outline: none; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+  .drawer-enter { animation: slide-in .18s ease-out; }
+  @keyframes slide-in { from { transform: translateX(16px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
+
+<div id="app"></div>
+<div id="switcher"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md) — just enough to make the UI feel real.
+// Patient shape loosely follows docs/adr/0005 (optional NIK, SATU SEHAT-ish).
+// ---------------------------------------------------------------------------
+let PATIENTS_DB = [
+  { id: 1, name: 'Siti Rahma', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', address: 'Jl. Melati No. 12, Bandung', akunPasien: true, visits: [
+    { date: '2026-07-02', layanan: 'Pemeriksaan Umum', dokter: 'dr. Amelia Putri', status: 'completed' },
+    { date: '2026-03-19', layanan: 'Vaksinasi', dokter: 'dr. Amelia Putri', status: 'completed' },
+  ] },
+  { id: 2, name: 'Budi Santoso', phone: '081298765432', nik: null, dob: '1985-11-03', address: 'Jl. Kenanga No. 5, Bandung', akunPasien: false, visits: [] , duplicateOf: 3},
+  { id: 3, name: 'Budi Santosa', phone: '081298765431', nik: null, dob: '1985-11-03', address: 'Jl. Kenanga No. 5, Bandung', akunPasien: false, visits: [
+    { date: '2026-06-14', layanan: 'Vaksinasi', dokter: 'dr. Bagus Santoso', status: 'completed' },
+  ], duplicateOf: 2 },
+  { id: 4, name: 'Citra Dewi', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', address: 'Jl. Anggrek No. 8, Bandung', akunPasien: true, visits: [
+    { date: '2026-08-10', layanan: 'Konsultasi Gigi', dokter: 'dr. Bagus Santoso', status: 'confirmed' },
+  ] },
+  { id: 5, name: 'Dimas Wijaya', phone: '081422233344', nik: null, dob: '1979-09-15', address: 'Jl. Mawar No. 1, Bandung', akunPasien: false, visits: [
+    { date: '2026-01-05', layanan: 'Fisioterapi', dokter: 'dr. Dimas Wijaya', status: 'no-show' },
+  ] },
+  { id: 6, name: 'Eka Putri', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', address: 'Jl. Melati No. 20, Bandung', akunPasien: true, visits: [] },
+  { id: 7, name: 'Eka Putry', phone: '081533344456', nik: null, dob: '2001-12-01', address: 'Jl. Melati No. 20, Bandung', akunPasien: false, visits: [], duplicateOf: 6 },
+  { id: 8, name: 'Fajar Ramadhan', phone: '081644455566', nik: null, dob: '1993-04-08', address: 'Jl. Kamboja No. 3, Bandung', akunPasien: false, visits: [
+    { date: '2026-05-22', layanan: 'Pemeriksaan Umum', dokter: 'dr. Citra Dewi', status: 'completed' },
+  ] },
+];
+let nextId = 9;
+
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function initials(name) { return name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+function fmtDate(d) { return d ? new Date(d + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '<span class="text-slate-400 italic">belum diisi</span>'; }
+function byId(id) { return PATIENTS_DB.find(p => p.id === id) || null; }
+function lastVisit(p) { return p.visits.length ? p.visits[p.visits.length - 1] : null; }
+function duplicatePairs() {
+  const seen = new Set(); const pairs = [];
+  PATIENTS_DB.forEach(p => {
+    if (p.duplicateOf && !seen.has(p.id) && !seen.has(p.duplicateOf)) {
+      pairs.push([p, byId(p.duplicateOf)]); seen.add(p.id); seen.add(p.duplicateOf);
+    }
+  });
+  return pairs;
+}
+function statusPill(status) {
+  const map = { completed: 'bg-emerald-100 text-emerald-700', confirmed: 'bg-blue-100 text-blue-700', 'no-show': 'bg-red-100 text-red-700', cancelled: 'bg-slate-100 text-slate-500', rescheduled: 'bg-amber-100 text-amber-700' };
+  return `<span class="text-[11px] px-1.5 py-0.5 rounded ${map[status] || 'bg-slate-100 text-slate-500'}">${esc(status)}</span>`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared state — one "session" of browsing/editing patients, shared across
+// variants so flipping the switcher compares layouts on the SAME task.
+// ---------------------------------------------------------------------------
+let ui = {
+  query: '',
+  filter: 'all', // 'all' | 'duplicates'
+  selectedId: 1,
+  profileTab: 'profil', // 'profil' | 'riwayat' | 'akun'
+  editing: false,
+  editDraft: null,
+  creating: false,
+  createDraft: null,
+  // Variant C only: which "page" is showing
+  page: 'search', // 'search' | 'profile' | 'duplicates' | 'compare'
+  comparePair: null,
+};
+
+function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', address: '' }; }
+
+function matches(p, q) {
+  if (!q) return true;
+  q = q.toLowerCase();
+  return p.name.toLowerCase().includes(q) || p.phone.includes(q) || (p.nik || '').includes(q);
+}
+
+function visiblePatients(query, filter) {
+  let list = PATIENTS_DB.filter(p => matches(p, query));
+  if (filter === 'duplicates') list = list.filter(p => p.duplicateOf);
+  return list;
+}
+
+function startEdit(p) { ui.editing = true; ui.editDraft = { name: p.name, phone: p.phone, nik: p.nik || '', dob: p.dob, address: p.address }; }
+function saveEdit() {
+  const p = byId(ui.selectedId);
+  if (p && ui.editDraft) Object.assign(p, ui.editDraft, { nik: ui.editDraft.nik || null });
+  ui.editing = false; ui.editDraft = null;
+}
+function saveCreate() {
+  const d = ui.createDraft;
+  const p = { id: nextId++, name: d.name.trim() || 'Pasien Baru', phone: d.phone.trim(), nik: d.nik.trim() || null, dob: d.dob || '', address: d.address.trim(), akunPasien: false, visits: [] };
+  PATIENTS_DB.push(p);
+  ui.creating = false; ui.createDraft = null; ui.selectedId = p.id; ui.profileTab = 'profil';
+  return p;
+}
+
+// ---------------------------------------------------------------------------
+// Shared bits: profile detail (fields differ slightly per variant's chrome)
+// ---------------------------------------------------------------------------
+function profileFields(p, draft) {
+  if (draft) {
+    return `<div class="grid grid-cols-2 gap-3">
+      <label class="block text-xs text-slate-500">Nama<input data-bind="edit.name" value="${esc(draft.name)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">Telepon<input data-bind="edit.phone" value="${esc(draft.phone)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="edit.nik" value="${esc(draft.nik)}" placeholder="16 digit" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="edit.dob" type="date" value="${esc(draft.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+      <label class="block text-xs text-slate-500 col-span-2">Alamat<input data-bind="edit.address" value="${esc(draft.address)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+    </div>
+    <div class="flex gap-2 mt-3">
+      <button data-action="save-edit" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700">Simpan</button>
+      <button data-action="cancel-edit" class="text-xs text-slate-500 underline">Batal</button>
+    </div>`;
+  }
+  return `<div class="grid grid-cols-2 gap-y-2 text-sm">
+    <div class="text-slate-400">Telepon</div><div>${esc(p.phone)}</div>
+    <div class="text-slate-400">NIK</div><div class="font-mono">${p.nik ? esc(p.nik) : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
+    <div class="text-slate-400">Tgl Lahir</div><div>${fmtDate(p.dob)}</div>
+    <div class="text-slate-400">Alamat</div><div>${esc(p.address)}</div>
+    <div class="text-slate-400">Akun Pasien</div><div>${p.akunPasien ? '<span class="text-emerald-600">✓ Aktif — bisa login</span>' : '<span class="text-slate-400">Belum ada</span>'}</div>
+  </div>
+  <button data-action="start-edit" class="mt-3 text-xs bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-900">Edit data</button>`;
+}
+
+function duplicateBanner(p) {
+  if (!p.duplicateOf) return '';
+  const other = byId(p.duplicateOf);
+  return `<div data-anim="in" class="border border-amber-300 bg-amber-50 rounded-lg p-3 text-xs space-y-1.5 mb-3">
+    <div class="text-amber-800">⚠ <strong>Duplicate Candidate</strong> — kemungkinan sama dengan <strong>${esc(other.name)}</strong> (${esc(other.phone)}). Tidak digabung otomatis (bukan match NIK) — perlu ditinjau manual.</div>
+    <button data-action="open-compare" data-a="${p.id}" data-b="${other.id}" class="text-amber-800 underline">Bandingkan &amp; tinjau →</button>
+  </div>`;
+}
+
+function visitHistory(p) {
+  if (!p.visits.length) return `<div class="text-sm text-slate-400 italic">Belum ada riwayat kunjungan.</div>`;
+  return `<div class="space-y-2">${p.visits.slice().reverse().map(v => `
+    <div class="flex items-center justify-between border border-slate-200 rounded-md px-3 py-2 text-sm">
+      <div><div class="font-medium">${esc(v.layanan)}</div><div class="text-xs text-slate-500">${fmtDate(v.date)} · ${esc(v.dokter)}</div></div>
+      ${statusPill(v.status)}
+    </div>`).join('')}</div>`;
+}
+
+function compareCard(pair) {
+  const [a, b] = pair;
+  const rows = [['Nama', 'name'], ['Telepon', 'phone'], ['Tgl Lahir', 'dob'], ['Alamat', 'address']];
+  return `<div class="grid grid-cols-2 gap-4">
+    ${[a, b].map(p => `
+      <div class="border border-slate-200 rounded-lg p-4 bg-white">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="w-8 h-8 rounded-full bg-slate-800 text-white text-xs flex items-center justify-center">${initials(p.name)}</div>
+          <div class="font-medium text-sm">${esc(p.name)}</div>
+        </div>
+        <div class="space-y-1.5 text-sm">
+          ${rows.map(([label, key]) => `<div><span class="text-slate-400 text-xs">${label}: </span>${key === 'dob' ? fmtDate(p[key]) : esc(p[key])}</div>`).join('')}
+        </div>
+      </div>`).join('')}
+  </div>
+  <div class="mt-4 flex gap-2">
+    <button data-action="ack-not-dup" class="text-xs bg-white border border-slate-300 px-3 py-1.5 rounded-md hover:bg-slate-50">Bukan orang yang sama</button>
+    <button data-action="ack-merge-stub" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700">Gabungkan (Patient Merge) →</button>
+  </div>
+  <div class="text-xs text-slate-400 mt-2">Prototipe UI saja — aksi di atas tidak benar-benar menggabungkan data. Lihat docs/adr/0004.</div>`;
+}
+
+// ===========================================================================
+// Variant A — Direktori tabel + panel geser (dense table -> slide-over)
+// ===========================================================================
+function renderVariantA() {
+  const list = visiblePatients(ui.query, ui.filter);
+  const dupCount = PATIENTS_DB.filter(p => p.duplicateOf).length;
+  const sel = ui.creating ? null : byId(ui.selectedId);
+
+  const rows = list.map(p => {
+    const lv = lastVisit(p);
+    return `<tr data-action="select-row" data-id="${p.id}" class="cursor-pointer border-b border-slate-100 hover:bg-blue-50/60 ${ui.selectedId === p.id && !ui.creating ? 'bg-blue-50' : ''}">
+      <td class="py-2.5 px-3">
+        <div class="font-medium text-sm">${esc(p.name)} ${p.duplicateOf ? '<span class="text-amber-500" title="Duplicate Candidate">⚠</span>' : ''}</div>
+        <div class="text-xs text-slate-400">${esc(p.phone)}</div>
+      </td>
+      <td class="py-2.5 px-3 text-sm font-mono text-slate-500">${p.nik ? esc(p.nik) : '<span class="italic text-slate-300">—</span>'}</td>
+      <td class="py-2.5 px-3 text-sm text-slate-500">${fmtDate(p.dob)}</td>
+      <td class="py-2.5 px-3 text-sm">${p.akunPasien ? '<span class="text-emerald-600">Aktif</span>' : '<span class="text-slate-300">—</span>'}</td>
+      <td class="py-2.5 px-3 text-sm text-slate-500">${lv ? fmtDate(lv.date) : '<span class="italic text-slate-300">Belum pernah</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  const drawer = sel ? `<div id="drawer" class="drawer-enter fixed top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl border-l border-slate-200 z-40 overflow-y-auto">
+    <div class="p-5">
+      <div class="flex items-start justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full bg-slate-800 text-white flex items-center justify-center text-sm">${initials(sel.name)}</div>
+          <div><div class="font-semibold">${esc(sel.name)}</div><div class="text-xs text-slate-400">Pasien #${sel.id}</div></div>
+        </div>
+        <button data-action="close-drawer" class="text-slate-400 hover:text-slate-700">✕</button>
+      </div>
+      ${duplicateBanner(sel)}
+      ${ui.editing ? profileFields(sel, ui.editDraft) : `
+        <div class="flex gap-1 mb-3 border-b border-slate-200">
+          ${['profil','riwayat'].map(t => `<button data-action="set-tab" data-tab="${t}" class="px-3 py-2 text-sm border-b-2 -mb-px ${ui.profileTab === t ? 'border-blue-600 text-blue-700 font-medium' : 'border-transparent text-slate-500'}">${t === 'profil' ? 'Profil' : 'Riwayat Kunjungan'}</button>`).join('')}
+        </div>
+        ${ui.profileTab === 'riwayat' ? visitHistory(sel) : profileFields(sel, null)}
+      `}
+    </div>
+  </div>` : '';
+
+  return `<div class="max-w-6xl mx-auto pt-8 px-4">
+    <div class="mb-4 flex items-center justify-between">
+      <div><div class="text-xs uppercase tracking-wide text-slate-400">Admin Klinik · Patient Management</div><h1 class="text-lg font-semibold">Variant A — Direktori tabel</h1></div>
+      <button data-action="open-create" class="text-sm bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700">+ Pasien Baru</button>
+    </div>
+
+    ${ui.creating ? `<div data-anim="in" class="bg-white rounded-xl border border-blue-200 p-5 mb-4">
+      <div class="font-medium text-sm mb-3">Pasien baru</div>
+      ${createForm()}
+    </div>` : ''}
+
+    <div class="flex items-center gap-3 mb-3">
+      <input data-bind="query" value="${esc(ui.query)}" placeholder="Cari nama, telepon, atau NIK..." class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <div class="flex gap-1 bg-white border border-slate-200 rounded-lg p-1">
+        <button data-action="set-filter" data-filter="all" class="text-xs px-2.5 py-1 rounded-md ${ui.filter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-500'}">Semua</button>
+        <button data-action="set-filter" data-filter="duplicates" class="text-xs px-2.5 py-1 rounded-md ${ui.filter === 'duplicates' ? 'bg-amber-500 text-white' : 'text-slate-500'}">⚠ Kandidat Duplikat (${dupCount})</button>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <table class="w-full">
+        <thead><tr class="text-left text-xs text-slate-400 border-b border-slate-200">
+          <th class="py-2 px-3 font-medium">Pasien</th><th class="py-2 px-3 font-medium">NIK</th><th class="py-2 px-3 font-medium">Tgl Lahir</th><th class="py-2 px-3 font-medium">Akun Pasien</th><th class="py-2 px-3 font-medium">Kunjungan Terakhir</th>
+        </tr></thead>
+        <tbody>${rows || `<tr><td colspan="5" class="py-8 text-center text-sm text-slate-400">Tidak ada pasien cocok.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </div>
+  ${drawer}
+  ${sel ? '<div data-action="close-drawer" class="fixed inset-0 bg-black/10 z-30"></div>' : ''}`;
+}
+
+// ===========================================================================
+// Variant B — Split kartu & detail (always-on master-detail)
+// ===========================================================================
+function renderVariantB() {
+  const list = visiblePatients(ui.query, ui.filter);
+  const sel = ui.creating ? null : byId(ui.selectedId);
+  const dupCount = PATIENTS_DB.filter(p => p.duplicateOf).length;
+
+  const cards = list.map(p => `
+    <div data-action="select-row" data-id="${p.id}" class="cursor-pointer p-3 rounded-lg border ${ui.selectedId === p.id && !ui.creating ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'}">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-full bg-slate-700 text-white text-xs flex items-center justify-center shrink-0">${initials(p.name)}</div>
+        <div class="min-w-0">
+          <div class="text-sm font-medium truncate">${esc(p.name)} ${p.duplicateOf ? '<span class="text-amber-500">⚠</span>' : ''}</div>
+          <div class="text-xs text-slate-400 truncate">${esc(p.phone)}</div>
+        </div>
+      </div>
+    </div>`).join('');
+
+  let detail = '';
+  if (ui.creating) {
+    detail = `<div class="bg-white rounded-xl border border-blue-200 p-5"><div class="font-medium text-sm mb-3">Pasien baru</div>${createForm()}</div>`;
+  } else if (sel) {
+    detail = `<div class="bg-white rounded-xl border border-slate-200 p-5" data-anim="in">
+      <div class="flex items-start justify-between mb-3">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-full bg-slate-800 text-white flex items-center justify-center">${initials(sel.name)}</div>
+          <div><div class="font-semibold text-lg">${esc(sel.name)}</div><div class="text-xs text-slate-400">Pasien #${sel.id} ${sel.akunPasien ? '· Akun Pasien aktif' : ''}</div></div>
+        </div>
+      </div>
+      ${duplicateBanner(sel)}
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div>
+          <div class="text-xs font-medium text-slate-500 mb-2">Data Pribadi</div>
+          ${ui.editing ? profileFields(sel, ui.editDraft) : profileFields(sel, null)}
+        </div>
+        <div>
+          <div class="text-xs font-medium text-slate-500 mb-2">Riwayat Kunjungan</div>
+          ${visitHistory(sel)}
+        </div>
+      </div>
+    </div>`;
+  } else {
+    detail = `<div class="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400">Pilih pasien di sebelah kiri.</div>`;
+  }
+
+  return `<div class="max-w-6xl mx-auto pt-8 px-4">
+    <div class="mb-4 flex items-center justify-between">
+      <div><div class="text-xs uppercase tracking-wide text-slate-400">Admin Klinik · Patient Management</div><h1 class="text-lg font-semibold">Variant B — Split kartu &amp; detail</h1></div>
+      <button data-action="open-create" class="text-sm bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700">+ Pasien Baru</button>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
+      <div class="space-y-2">
+        <input data-bind="query" value="${esc(ui.query)}" placeholder="Cari..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        <div class="flex gap-1">
+          <button data-action="set-filter" data-filter="all" class="flex-1 text-xs px-2 py-1.5 rounded-md border ${ui.filter === 'all' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-300 text-slate-500'}">Semua</button>
+          <button data-action="set-filter" data-filter="duplicates" class="flex-1 text-xs px-2 py-1.5 rounded-md border ${ui.filter === 'duplicates' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-slate-300 text-slate-500'}">⚠ Duplikat (${dupCount})</button>
+        </div>
+        <div class="space-y-1.5 max-h-[520px] overflow-y-auto pr-1">${cards || `<div class="text-sm text-slate-400 text-center py-6">Tidak ada hasil.</div>`}</div>
+      </div>
+      <div>${detail}</div>
+    </div>
+  </div>`;
+}
+
+// ===========================================================================
+// Variant C — Pencarian spotlight + halaman profil penuh (search-first)
+// ===========================================================================
+function createForm() {
+  const d = ui.createDraft;
+  return `<div class="grid grid-cols-2 gap-3">
+    <label class="block text-xs text-slate-500">Nama<input data-bind="create.name" value="${esc(d.name)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+    <label class="block text-xs text-slate-500">Telepon<input data-bind="create.phone" value="${esc(d.phone)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+    <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="create.nik" value="${esc(d.nik)}" placeholder="16 digit" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+    <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="create.dob" type="date" value="${esc(d.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+    <label class="block text-xs text-slate-500 col-span-2">Alamat<input data-bind="create.address" value="${esc(d.address)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
+  </div>
+  <div class="flex gap-2 mt-3">
+    <button data-action="save-create" class="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700">Simpan Pasien</button>
+    <button data-action="cancel-create" class="text-xs text-slate-500 underline">Batal</button>
+  </div>`;
+}
+
+function renderVariantC() {
+  const dupPairs = duplicatePairs();
+
+  if (ui.page === 'compare' && ui.comparePair) {
+    const pair = [byId(ui.comparePair[0]), byId(ui.comparePair[1])];
+    return `<div class="max-w-2xl mx-auto pt-10 px-4">
+      <button data-action="back-to-duplicates" class="text-xs text-slate-500 underline mb-4">← Kembali ke antrian duplikat</button>
+      <h1 class="text-lg font-semibold mb-4">Tinjau Duplicate Candidate</h1>
+      ${compareCard(pair)}
+    </div>`;
+  }
+
+  if (ui.page === 'duplicates') {
+    return `<div class="max-w-2xl mx-auto pt-10 px-4">
+      <button data-action="back-to-search" class="text-xs text-slate-500 underline mb-4">← Kembali ke pencarian</button>
+      <h1 class="text-lg font-semibold mb-1">Antrian Tinjau Duplikat</h1>
+      <div class="text-sm text-slate-500 mb-4">${dupPairs.length} pasangan menunggu tinjauan manual (bukan match NIK, tidak digabung otomatis).</div>
+      <div class="space-y-2">${dupPairs.map(([a, b]) => `
+        <div class="bg-white border border-amber-200 rounded-lg p-3 flex items-center justify-between">
+          <div class="text-sm">⚠ <strong>${esc(a.name)}</strong> &amp; <strong>${esc(b.name)}</strong> <span class="text-slate-400 text-xs">(${esc(a.phone)} / ${esc(b.phone)})</span></div>
+          <button data-action="open-compare" data-a="${a.id}" data-b="${b.id}" class="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-md hover:bg-amber-600">Bandingkan</button>
+        </div>`).join('') || '<div class="text-sm text-slate-400">Tidak ada kandidat duplikat saat ini.</div>'}
+      </div>
+    </div>`;
+  }
+
+  if (ui.page === 'profile') {
+    const p = byId(ui.selectedId);
+    if (!p) { ui.page = 'search'; return renderVariantC(); }
+    const tabs = ['profil', 'riwayat', 'akun'];
+    return `<div class="max-w-2xl mx-auto pt-10 px-4">
+      <button data-action="back-to-search" class="text-xs text-slate-500 underline mb-4">← Kembali ke pencarian</button>
+      <div class="flex items-center gap-3 mb-1">
+        <div class="w-12 h-12 rounded-full bg-slate-800 text-white flex items-center justify-center text-lg">${initials(p.name)}</div>
+        <div><h1 class="text-xl font-semibold">${esc(p.name)}</h1><div class="text-xs text-slate-400">Pasien #${p.id}</div></div>
+      </div>
+      <div class="mt-4">${duplicateBanner(p)}</div>
+      <div class="flex gap-1 border-b border-slate-200 mb-4">
+        ${tabs.map(t => `<button data-action="set-tab" data-tab="${t}" class="px-3 py-2 text-sm border-b-2 -mb-px ${ui.profileTab === t ? 'border-blue-600 text-blue-700 font-medium' : 'border-transparent text-slate-500'}">${t === 'profil' ? 'Profil' : t === 'riwayat' ? 'Riwayat Kunjungan' : 'Akun Pasien'}</button>`).join('')}
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-5">
+        ${ui.profileTab === 'riwayat' ? visitHistory(p) : ''}
+        ${ui.profileTab === 'akun' ? (p.akunPasien ? `<div class="text-sm text-emerald-700">✓ Akun aktif — pasien dapat login dan mengelola Appointment sendiri.</div>` : `<div class="text-sm text-slate-500">Pasien ini belum memiliki Akun Pasien (belum pernah login sendiri). Dicatat oleh Resepsionis dari panggilan/kunjungan.</div>`) : ''}
+        ${ui.profileTab === 'profil' ? (ui.editing ? profileFields(p, ui.editDraft) : profileFields(p, null)) : ''}
+      </div>
+    </div>`;
+  }
+
+  // page === 'search' (default landing)
+  const q = ui.query.trim();
+  const results = q.length >= 2 ? visiblePatients(q, 'all') : [];
+  return `<div class="max-w-xl mx-auto pt-16 px-4 text-center">
+    <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">Resepsionis · Patient Management</div>
+    <h1 class="text-lg font-semibold mb-6">Variant C — Pencarian spotlight</h1>
+
+    <div class="relative">
+      <input data-bind="query" value="${esc(ui.query)}" autofocus placeholder="Cari nama, telepon, atau NIK pasien..."
+        class="w-full text-base border border-slate-300 rounded-xl px-4 py-3.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      ${results.length ? `<div data-anim="in" class="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-lg text-left overflow-hidden z-10">
+        ${results.map(p => `<div data-action="pick-result" data-id="${p.id}" class="cursor-pointer px-4 py-2.5 hover:bg-blue-50 border-b border-slate-100 last:border-0 flex items-center justify-between">
+          <div><span class="text-sm font-medium">${esc(p.name)}</span> ${p.duplicateOf ? '<span class="text-amber-500 text-xs">⚠</span>' : ''}<div class="text-xs text-slate-400">${esc(p.phone)}${p.nik ? ' · NIK terverifikasi' : ''}</div></div>
+        </div>`).join('')}
+      </div>` : ''}
+      ${q.length >= 2 && !results.length ? `<div data-anim="in" class="absolute left-0 right-0 mt-1.5 bg-white border border-dashed border-slate-300 rounded-xl p-4 text-left text-sm z-10">
+        <div class="text-slate-500 mb-2">Tidak ditemukan.</div>
+        <button data-action="open-create" data-prefill-name="${esc(q)}" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-900">+ Buat pasien baru "${esc(q)}"</button>
+      </div>` : ''}
+    </div>
+
+    <div class="flex items-center justify-center gap-3 mt-6 text-sm">
+      <button data-action="open-create" class="text-blue-700 underline">+ Pasien baru</button>
+      <span class="text-slate-300">·</span>
+      <button data-action="go-duplicates" class="text-amber-700 underline">⚠ Antrian Tinjau Duplikat (${dupPairs.length})</button>
+    </div>
+
+    ${ui.creating ? `<div data-anim="in" class="mt-6 bg-white rounded-xl border border-blue-200 p-5 text-left">
+      <div class="font-medium text-sm mb-3">Pasien baru</div>
+      ${createForm()}
+    </div>` : ''}
+
+    <div class="text-xs text-slate-400 mt-8">Pasien yang sering dicari:</div>
+    <div class="flex flex-wrap justify-center gap-2 mt-2">
+      ${PATIENTS_DB.slice(0, 5).map(p => `<button data-action="pick-result" data-id="${p.id}" class="text-xs bg-white border border-slate-200 rounded-full px-3 py-1.5 hover:border-blue-400">${esc(p.name)}</button>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Wiring: variant switch, delegated events, floating switcher bar
+// ---------------------------------------------------------------------------
+const VARIANTS = {
+  A: { name: 'Direktori tabel', render: renderVariantA },
+  B: { name: 'Split kartu & detail', render: renderVariantB },
+  C: { name: 'Pencarian spotlight', render: renderVariantC },
+};
+const ORDER = ['A', 'B', 'C'];
+
+function currentVariant() {
+  const v = new URLSearchParams(location.search).get('variant');
+  return VARIANTS[v] ? v : 'A';
+}
+
+function resetUiForVariantSwitch() {
+  ui.editing = false; ui.editDraft = null; ui.creating = false; ui.createDraft = null;
+  ui.page = 'search'; ui.profileTab = 'profil';
+}
+
+function setVariant(v) {
+  const url = new URL(location.href);
+  url.searchParams.set('variant', v);
+  history.replaceState({}, '', url);
+  resetUiForVariantSwitch();
+  render();
+}
+
+function render() {
+  document.getElementById('app').innerHTML = VARIANTS[currentVariant()].render();
+  renderSwitcher();
+}
+
+function renderSwitcher() {
+  const v = currentVariant();
+  document.getElementById('switcher').innerHTML = `
+    <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-900 text-white rounded-full shadow-lg px-4 py-2.5">
+      <button data-action="switch-prev" class="switcher-btn w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center" aria-label="Variant sebelumnya">←</button>
+      <span class="text-sm font-medium px-1">${v} <span class="text-slate-300 font-normal">(${VARIANTS[v].name})</span></span>
+      <button data-action="switch-next" class="switcher-btn w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center" aria-label="Variant berikutnya">→</button>
+    </div>`;
+}
+
+function cycle(dir) {
+  const i = ORDER.indexOf(currentVariant());
+  setVariant(ORDER[(i + dir + ORDER.length) % ORDER.length]);
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  const action = t.dataset.action;
+  switch (action) {
+    case 'switch-prev': return cycle(-1);
+    case 'switch-next': return cycle(1);
+    case 'select-row':
+    case 'pick-result':
+      ui.selectedId = Number(t.dataset.id); ui.editing = false; ui.creating = false; ui.profileTab = 'profil';
+      if (currentVariant() === 'C') ui.page = 'profile';
+      break;
+    case 'close-drawer': ui.selectedId = ui.editing ? ui.selectedId : null; ui.editing = false; break;
+    case 'set-tab': ui.profileTab = t.dataset.tab; break;
+    case 'set-filter': ui.filter = t.dataset.filter; break;
+    case 'start-edit': startEdit(byId(ui.selectedId)); break;
+    case 'save-edit': saveEdit(); break;
+    case 'cancel-edit': ui.editing = false; ui.editDraft = null; break;
+    case 'open-create': ui.creating = true; ui.createDraft = emptyDraft(); ui.createDraft.name = t.dataset.prefillName || ''; ui.editing = false; break;
+    case 'cancel-create': ui.creating = false; ui.createDraft = null; break;
+    case 'save-create': { const p = saveCreate(); if (currentVariant() === 'C') ui.page = 'profile'; break; }
+    case 'go-duplicates': ui.page = 'duplicates'; break;
+    case 'back-to-search': ui.page = 'search'; break;
+    case 'back-to-duplicates': ui.page = 'duplicates'; ui.comparePair = null; break;
+    case 'open-compare': ui.comparePair = [Number(t.dataset.a), Number(t.dataset.b)]; ui.page = 'compare'; break;
+    case 'ack-not-dup': case 'ack-merge-stub':
+      // Prototype stub: real logic is docs/adr/0004's job, not this UI's.
+      if (currentVariant() === 'C') { ui.page = 'duplicates'; ui.comparePair = null; }
+      break;
+  }
+  render();
+});
+
+document.addEventListener('input', (e) => {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  const [group, field] = bind.includes('.') ? bind.split('.') : [null, bind];
+  if (group === 'edit') ui.editDraft[field] = e.target.value;
+  else if (group === 'create') ui.createDraft[field] = e.target.value;
+  else ui[bind] = e.target.value;
+
+  const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
+  render();
+  const el = document.querySelector(`[data-bind="${bind}"]`);
+  if (el && el.type !== 'date') { el.focus(); el.setSelectionRange(selStart, selEnd); }
+  else if (el) el.focus();
+});
+
+document.addEventListener('keydown', (e) => {
+  const tag = document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+
+window.addEventListener('popstate', render);
+render();
+</script>
+</body>
+</html>
