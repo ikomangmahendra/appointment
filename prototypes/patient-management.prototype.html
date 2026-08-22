@@ -11,7 +11,7 @@
   Resepsionis / Admin Klinik — browsing, searching, and jumping into a
   Patient record or straight into a phone booking? No backend, no
   persistence — patient data is canned. See CONTEXT.md for domain terms
-  (Patient, NIK, Akun Pasien, Patient Matching, Duplicate Candidate).
+  (Patient, User, NIK, Patient Matching, Duplicate Candidate).
 
   UPDATE (feedback round 2 — consolidation with the phone-booking-ui
   prototype):
@@ -55,23 +55,23 @@
 // on the "same" person across files.
 // ---------------------------------------------------------------------------
 const PATIENTS_DB = [
-  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', akunPasien: true, visits: [
+  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', hasUser: true, visits: [
     { date: '2026-07-02', layanan: 'Pemeriksaan Umum' },
     { date: '2026-03-19', layanan: 'Vaksinasi' },
   ] },
-  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', akunPasien: false, visits: [], duplicateOf: 3 },
-  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', akunPasien: false, visits: [
+  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', hasUser: false, visits: [], duplicateOf: 3 },
+  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', hasUser: false, visits: [
     { date: '2026-06-14', layanan: 'Vaksinasi' },
   ], duplicateOf: 2 },
-  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', akunPasien: true, visits: [
+  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', hasUser: true, visits: [
     { date: '2026-08-10', layanan: 'Konsultasi Gigi' },
   ] },
-  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', akunPasien: false, visits: [
+  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', hasUser: false, visits: [
     { date: '2026-01-05', layanan: 'Fisioterapi' },
   ] },
-  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', akunPasien: true, visits: [] },
-  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', akunPasien: false, visits: [], duplicateOf: 6 },
-  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', akunPasien: false, visits: [
+  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', hasUser: true, visits: [] },
+  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', hasUser: false, visits: [], duplicateOf: 6 },
+  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', hasUser: false, visits: [
     { date: '2026-05-22', layanan: 'Pemeriksaan Umum' },
   ] },
 ];
@@ -115,7 +115,7 @@ function render() {
       <td class="py-2.5 px-3 text-sm text-slate-500">${p.gender === 'P' ? 'P' : p.gender === 'L' ? 'L' : '<span class="italic text-slate-300">—</span>'}</td>
       <td class="py-2.5 px-3 text-sm font-mono text-slate-500">${p.nik ? esc(p.nik) : '<span class="italic text-slate-300">—</span>'}</td>
       <td class="py-2.5 px-3 text-sm text-slate-500">${fmtDate(p.dob)}</td>
-      <td class="py-2.5 px-3 text-sm">${p.akunPasien ? '<span class="text-emerald-600">Aktif</span>' : '<span class="text-slate-300">—</span>'}</td>
+      <td class="py-2.5 px-3 text-sm">${p.hasUser ? '<span class="text-emerald-600">Terhubung</span>' : '<span class="text-slate-300">—</span>'}</td>
       <td class="py-2.5 px-3 text-sm text-slate-500">${lv ? fmtDate(lv.date) : '<span class="italic text-slate-300">Belum pernah</span>'}</td>
       <td class="py-2.5 px-3 text-sm text-right">
         <a href="phone-booking-ui.prototype.html?patientId=${p.id}" data-action="stop" class="inline-block text-xs bg-emerald-600 text-white px-2.5 py-1.5 rounded-md hover:bg-emerald-700">📅 Booking</a>
@@ -145,7 +145,7 @@ function render() {
     <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <table class="w-full">
         <thead><tr class="text-left text-xs text-slate-400 border-b border-slate-200">
-          <th class="py-2 px-3 font-medium">Pasien</th><th class="py-2 px-3 font-medium">Gender</th><th class="py-2 px-3 font-medium">NIK</th><th class="py-2 px-3 font-medium">Tgl Lahir</th><th class="py-2 px-3 font-medium">Akun Pasien</th><th class="py-2 px-3 font-medium">Kunjungan Terakhir</th><th class="py-2 px-3 font-medium"></th>
+          <th class="py-2 px-3 font-medium">Pasien</th><th class="py-2 px-3 font-medium">Gender</th><th class="py-2 px-3 font-medium">NIK</th><th class="py-2 px-3 font-medium">Tgl Lahir</th><th class="py-2 px-3 font-medium">User</th><th class="py-2 px-3 font-medium">Kunjungan Terakhir</th><th class="py-2 px-3 font-medium"></th>
         </tr></thead>
         <tbody>${rows || `<tr><td colspan="7" class="py-8 text-center text-sm text-slate-400">Tidak ada pasien cocok.</td></tr>`}</tbody>
       </table>

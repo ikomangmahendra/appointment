@@ -11,15 +11,19 @@
   detail pasien di page baru"). A simple header (name + gender as an icon)
   sits above vertical tabs for the three sections: Profil, Riwayat Kunjungan
   (sorted by most recent, 10 per page — server-side pagination in the real
-  app, faked client-side here over canned data), and Akun Pasien.
+  app, faked client-side here over canned data), and User Terkait.
 
-  NOTE ON AKUN PASIEN: CONTEXT.md defines Akun Pasien as a phone-number +
-  OTP credential — it does not mention email or a password. The requested
-  "email" and "password expiration" fields below are rendered as asked, but
-  they don't match that definition yet. Flagging this rather than silently
-  building against a model CONTEXT.md doesn't describe — worth confirming
-  before this becomes real (and updating CONTEXT.md / an ADR if the auth
-  model is actually changing to include email+password).
+  UPDATE (fixing a flagged contradiction): this section used to be called
+  "Akun Pasien" and showed email + password expiration directly on a
+  Patient — flagged at the time as not matching CONTEXT.md's phone+OTP-only
+  definition. That's now resolved by ADR-0015: User is a separate concept
+  from Patient, and one User can manage several Patient profiles. This
+  section shows the User linked to this Patient (if any) — their phone/
+  email verification status, which login methods they've set up (Google
+  SSO and/or email+password, both optional per ADR-0015), and how many
+  other Patient profiles that same User manages. A Patient with no linked
+  User (most walk-ins and phone bookings) shows neither email nor password
+  at all, since neither belongs to a Patient in this model.
 
   UPDATE (feedback round 2 — consolidation with the phone-booking-ui
   prototype): the header now has a "Buat Booking" button that jumps to
@@ -31,8 +35,8 @@
   pagination, and one left with zero visits to demonstrate the empty state.
 
   Run: open this file directly in a browser (double-click / File > Open).
-  Try: ?id=1 (paginated history), ?id=6 (empty history), ?id=2 (Duplicate
-  Candidate banner, no Akun Pasien).
+  Try: ?id=1 (paginated history, User manages another Patient too), ?id=6
+  (empty history), ?id=2 (Duplicate Candidate banner, no linked User).
 -->
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
@@ -85,24 +89,24 @@ const SITI_VISITS = [
 ];
 
 let PATIENTS_DB = [
-  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', address: mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'), akunPasien: true, visits: SITI_VISITS,
-    account: { email: 'siti.rahma@example.com', lastLoginAt: '2026-08-18T09:24:00', passwordExpiresAt: '2026-09-03' } },
-  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), akunPasien: false, visits: [], duplicateOf: 3, account: null },
-  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), akunPasien: false, visits: [
+  { id: 1, name: 'Siti Rahma', gender: 'P', phone: '081234567890', nik: '3201012345670001', dob: '1990-05-12', address: mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'), visits: SITI_VISITS,
+    user: { phone: '081234567890', phoneVerified: true, email: 'siti.rahma@example.com', emailVerified: true, loginMethods: ['google'], lastLoginAt: '2026-08-18T09:24:00', managesOtherPatients: 1 } },
+  { id: 2, name: 'Budi Santoso', gender: 'L', phone: '081298765432', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), visits: [], duplicateOf: 3, user: null },
+  { id: 3, name: 'Budi Santosa', gender: 'L', phone: '081298765431', nik: null, dob: '1985-11-03', address: mkAddress('Jl. Kenanga No. 5', 'Cihapit', 'Bandung Wetan', 'Bandung', 'Jawa Barat', '40114', -6.9034, 107.6156, 'place_kenanga_5'), visits: [
     { date: '2026-06-14', layanan: 'Vaksinasi', dokter: 'dr. Bagus Santoso', status: 'completed' },
-  ], duplicateOf: 2, account: null },
-  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', address: mkAddress('Jl. Anggrek No. 8', 'Cigadung', 'Cibeunying Kidul', 'Bandung', 'Jawa Barat', '40191', -6.8848, 107.6298, 'place_anggrek_8'), akunPasien: true, visits: [
+  ], duplicateOf: 2, user: null },
+  { id: 4, name: 'Citra Dewi', gender: 'P', phone: '081311122233', nik: '3201014567890002', dob: '1998-02-27', address: mkAddress('Jl. Anggrek No. 8', 'Cigadung', 'Cibeunying Kidul', 'Bandung', 'Jawa Barat', '40191', -6.8848, 107.6298, 'place_anggrek_8'), visits: [
     { date: '2026-08-10', layanan: 'Konsultasi Gigi', dokter: 'dr. Bagus Santoso', status: 'confirmed' },
-  ], account: { email: 'citra.dewi@example.com', lastLoginAt: null, passwordExpiresAt: '2026-08-25' } },
-  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', address: mkAddress('Jl. Mawar No. 1', 'Merdeka', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9147, 107.6098, 'place_mawar_1'), akunPasien: false, visits: [
+  ], user: { phone: '081311122233', phoneVerified: true, email: 'citra.dewi@example.com', emailVerified: false, loginMethods: ['email-password'], lastLoginAt: null, managesOtherPatients: 0 } },
+  { id: 5, name: 'Dimas Wijaya', gender: 'L', phone: '081422233344', nik: null, dob: '1979-09-15', address: mkAddress('Jl. Mawar No. 1', 'Merdeka', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9147, 107.6098, 'place_mawar_1'), visits: [
     { date: '2026-01-05', layanan: 'Fisioterapi', dokter: 'dr. Dimas Wijaya', status: 'no-show' },
-  ], account: null },
-  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), akunPasien: true, visits: [],
-    account: { email: 'eka.putri@example.com', lastLoginAt: '2026-08-01T18:02:00', passwordExpiresAt: '2026-08-20' } },
-  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), akunPasien: false, visits: [], duplicateOf: 6, account: null },
-  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', address: mkAddress('Jl. Kamboja No. 3', 'Sukajadi', 'Sukajadi', 'Bandung', 'Jawa Barat', '40163', -6.8879, 107.5893, 'place_kamboja_3'), akunPasien: false, visits: [
+  ], user: null },
+  { id: 6, name: 'Eka Putri', gender: 'P', phone: '081533344455', nik: '3201019876540003', dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), visits: [],
+    user: { phone: '081533344455', phoneVerified: true, email: 'eka.putri@example.com', emailVerified: true, loginMethods: ['google', 'email-password'], lastLoginAt: '2026-08-01T18:02:00', managesOtherPatients: 0 } },
+  { id: 7, name: 'Eka Putry', gender: 'P', phone: '081533344456', nik: null, dob: '2001-12-01', address: mkAddress('Jl. Melati No. 20', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8945, 107.6241, 'place_melati_20'), visits: [], duplicateOf: 6, user: null },
+  { id: 8, name: 'Fajar Ramadhan', gender: 'L', phone: '081644455566', nik: null, dob: '1993-04-08', address: mkAddress('Jl. Kamboja No. 3', 'Sukajadi', 'Sukajadi', 'Bandung', 'Jawa Barat', '40163', -6.8879, 107.5893, 'place_kamboja_3'), visits: [
     { date: '2026-05-22', layanan: 'Pemeriksaan Umum', dokter: 'dr. Citra Dewi', status: 'completed' },
-  ], account: null },
+  ], user: null },
 ];
 
 function byId(id) { return PATIENTS_DB.find(p => p.id === id) || null; }
@@ -123,7 +127,7 @@ const currentId = Number(new URLSearchParams(location.search).get('id')) || null
 const TABS = [
   { key: 'profil', label: 'Profil' },
   { key: 'riwayat', label: 'Riwayat Kunjungan' },
-  { key: 'akun', label: 'Akun Pasien' },
+  { key: 'akun', label: 'User Terkait' },
 ];
 
 let ui = { activeTab: 'profil', editing: false, editDraft: null, addressSearch: '', visitPage: 1 };
@@ -212,26 +216,32 @@ function renderRiwayatSection(p) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 3 — Akun Pasien
+// Section 3 — User Terkait (ADR-0015: User is separate from Patient; one
+// User can manage several Patient profiles, so this Patient links to at
+// most one User, but that User may show up here for other Patients too)
 // ---------------------------------------------------------------------------
-function passwordExpiryNote(expiresAt) {
-  const days = Math.round((new Date(expiresAt) - new Date('2026-08-22')) / 86400000);
-  if (days < 0) return `<span class="text-red-600">Kadaluarsa ${Math.abs(days)} hari lalu (${fmtDate(expiresAt)})</span>`;
-  if (days <= 7) return `<span class="text-amber-600">Kadaluarsa dalam ${days} hari (${fmtDate(expiresAt)})</span>`;
-  return `<span class="text-slate-700">Kadaluarsa ${fmtDate(expiresAt)} (${days} hari lagi)</span>`;
+function verifiedBadge(isVerified) {
+  return isVerified
+    ? `<span class="text-emerald-700">✓ Terverifikasi</span>`
+    : `<span class="text-amber-600">Belum terverifikasi</span>`;
+}
+function loginMethodsLabel(methods) {
+  const labels = { google: 'Google SSO', 'email-password': 'Email + Password' };
+  return methods.map(m => labels[m] || m).join(', ');
 }
 
 function renderAkunSection(p) {
-  if (!p.akunPasien || !p.account) {
-    return `<div class="text-sm text-slate-500">Pasien ini belum memiliki Akun Pasien — belum pernah login sendiri. Data dicatat oleh Resepsionis dari panggilan telepon atau kunjungan langsung.</div>`;
+  if (!p.user) {
+    return `<div class="text-sm text-slate-500">Pasien ini belum dikelola oleh User manapun — data dicatat oleh Resepsionis dari panggilan telepon atau kunjungan langsung, atau ini Patient dari booking tamu (HP+OTP per-booking, tanpa akun).</div>`;
   }
-  const a = p.account;
+  const u = p.user;
   return `<div class="grid grid-cols-2 gap-y-2 text-sm">
-    <div class="text-slate-400">Email</div><div>${esc(a.email)}</div>
-    <div class="text-slate-400">Terakhir Login</div><div>${a.lastLoginAt ? fmtDateTime(a.lastLoginAt) : '<span class="text-slate-400 italic">Belum pernah login</span>'}</div>
-    <div class="text-slate-400">Password</div><div>${passwordExpiryNote(a.passwordExpiresAt)}</div>
+    <div class="text-slate-400">No. HP</div><div>${esc(u.phone)} ${verifiedBadge(u.phoneVerified)}</div>
+    <div class="text-slate-400">Email</div><div>${u.email ? `${esc(u.email)} ${verifiedBadge(u.emailVerified)}` : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
+    <div class="text-slate-400">Metode Login</div><div>${loginMethodsLabel(u.loginMethods)}</div>
+    <div class="text-slate-400">Terakhir Login</div><div>${u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : '<span class="text-slate-400 italic">Belum pernah login</span>'}</div>
   </div>
-  <div class="text-[11px] text-slate-400 mt-3">⚠ Prototipe saja — CONTEXT.md mendefinisikan Akun Pasien sebagai kredensial nomor telepon + OTP, bukan email/password. Field di atas mengikuti feedback UI, perlu dikonfirmasi ke domain model sebelum diimplementasikan.</div>`;
+  ${u.managesOtherPatients > 0 ? `<div class="text-xs text-slate-500 mt-3">User ini juga mengelola ${u.managesOtherPatients} profil Pasien lain.</div>` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
