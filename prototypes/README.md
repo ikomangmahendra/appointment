@@ -23,17 +23,14 @@ This repo/branch lives at `prototype/patient-mobile-booking`, checked out in
 its own worktree — it is not on `master`, so it won't show up if you're
 browsing the main `appointment` working directory.
 
-## Switching variants
-
-Use the floating bottom bar (or `←`/`→` arrow keys) to cycle between the
-three variants, or set it directly via the URL: `?variant=A|B|C`.
+## Deep link
 
 To simulate arriving via a deep link (see `CONTEXT.md`), add:
 `?layanan=gigi&dokter=bagus`
 
 ## Verdict
 
-**Variant C — Kalender & Bottom Sheet** is the pick: calendar/time-grid-first
-browsing with service/doctor as bottom-sheet filters, plus a floating
-checkout CTA. Carry this structure into the real Angular booking flow when
-it's built; drop Variant A and B.
+**Wizard Bertahap** (linear step-by-step) is the pick, over the
+accumulating-scroll accordion and the calendar/bottom-sheet variants that
+were tried and dropped. Carry this structure into the real Angular booking
+flow when it's built.
