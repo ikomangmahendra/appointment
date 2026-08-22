@@ -51,7 +51,7 @@ const ADDRESS_SUGGESTIONS = [
   mkAddress('Jl. Asia Afrika No. 8', 'Braga', 'Sumur Bandung', 'Bandung', 'Jawa Barat', '40111', -6.9218, 107.6086, 'place_asiaafrika_8'),
 ];
 
-function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', gender: 'L', address: null }; }
+function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', gender: '', address: null }; }
 
 let ui = { draft: emptyDraft(), addressSearch: '', submitted: null };
 
@@ -91,7 +91,7 @@ function renderForm() {
         <label class="block text-xs text-slate-500">Telepon<input data-bind="phone" value="${esc(d.phone)}" placeholder="08..." class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
         <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="nik" value="${esc(d.nik)}" placeholder="16 digit" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
         <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="dob" type="date" value="${esc(d.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
-        <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="gender" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"><option value="L" ${d.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${d.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
+        <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="gender" class="mt-1 w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"><option value="" disabled ${!d.gender ? 'selected' : ''}>Pilih jenis kelamin</option><option value="L" ${d.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${d.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
       </div>
       <div>
         <div class="text-xs text-slate-500 mb-1">Alamat</div>
@@ -116,7 +116,7 @@ function renderSuccess() {
         <div class="text-slate-400">Telepon</div><div>${esc(p.phone)}</div>
         <div class="text-slate-400">NIK</div><div class="font-mono">${p.nik ? esc(p.nik) : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
         <div class="text-slate-400">Tgl Lahir</div><div>${fmtDate(p.dob)}</div>
-        <div class="text-slate-400">Jenis Kelamin</div><div>${p.gender === 'P' ? 'Perempuan' : 'Laki-laki'}</div>
+        <div class="text-slate-400">Jenis Kelamin</div><div>${p.gender === 'P' ? 'Perempuan' : p.gender === 'L' ? 'Laki-laki' : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
         <div class="text-slate-400">Alamat</div><div>${p.address && p.address.street ? `${esc(p.address.street)}${[p.address.kelurahan, p.address.kecamatan, p.address.kota, p.address.provinsi].filter(Boolean).length || p.address.kodePos ? `<div class="text-xs text-slate-500">${[p.address.kelurahan, p.address.kecamatan, p.address.kota, p.address.provinsi].filter(Boolean).map(esc).join(', ')} ${esc(p.address.kodePos)}</div>` : ''}` : '<span class="text-slate-400 italic">belum diisi</span>'}</div>
       </div>
       <div class="flex gap-3 mt-5">

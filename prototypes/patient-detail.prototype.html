@@ -8,7 +8,8 @@
   PROTOTYPE — throwaway code, do not build on top of this.
 
   Sibling route to patient-management.prototype.html (feedback: "tampilkan
-  detail pasien di page baru"). Three sections: Profil, Riwayat Kunjungan
+  detail pasien di page baru"). A simple header (name + gender as an icon)
+  sits above vertical tabs for the three sections: Profil, Riwayat Kunjungan
   (sorted by most recent, 10 per page — server-side pagination in the real
   app, faked client-side here over canned data), and Akun Pasien.
 
@@ -100,7 +101,12 @@ let PATIENTS_DB = [
 ];
 
 function byId(id) { return PATIENTS_DB.find(p => p.id === id) || null; }
-function genderLabel(g) { return g === 'P' ? 'Perempuan' : 'Laki-laki'; }
+function genderLabel(g) { return g === 'P' ? 'Perempuan' : g === 'L' ? 'Laki-laki' : 'Belum diisi'; }
+function genderIcon(g) {
+  if (g === 'P') return `<span title="Perempuan" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-pink-100 text-pink-600 text-sm shrink-0">♀</span>`;
+  if (g === 'L') return `<span title="Laki-laki" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-sm shrink-0">♂</span>`;
+  return `<span title="Jenis kelamin belum diisi" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-400 text-sm shrink-0">?</span>`;
+}
 function statusPill(status) {
   const map = { completed: 'bg-emerald-100 text-emerald-700', confirmed: 'bg-blue-100 text-blue-700', 'no-show': 'bg-red-100 text-red-700', cancelled: 'bg-slate-100 text-slate-500', rescheduled: 'bg-amber-100 text-amber-700' };
   return `<span class="text-[11px] px-1.5 py-0.5 rounded ${map[status] || 'bg-slate-100 text-slate-500'}">${esc(status)}</span>`;
@@ -109,7 +115,13 @@ function statusPill(status) {
 const PAGE_SIZE = 10;
 const currentId = Number(new URLSearchParams(location.search).get('id')) || null;
 
-let ui = { editing: false, editDraft: null, addressSearch: '', visitPage: 1 };
+const TABS = [
+  { key: 'profil', label: 'Profil' },
+  { key: 'riwayat', label: 'Riwayat Kunjungan' },
+  { key: 'akun', label: 'Akun Pasien' },
+];
+
+let ui = { activeTab: 'profil', editing: false, editDraft: null, addressSearch: '', visitPage: 1 };
 
 // ---------------------------------------------------------------------------
 // Section 1 — Profil
@@ -238,30 +250,35 @@ function render() {
     </div>`;
     return;
   }
-  app.innerHTML = `<div class="max-w-3xl mx-auto pt-8 px-4 pb-16">
+  const activeTab = TABS.find(t => t.key === ui.activeTab) || TABS[0];
+  const sectionContent = ui.activeTab === 'riwayat' ? renderRiwayatSection(p)
+    : ui.activeTab === 'akun' ? renderAkunSection(p)
+    : renderProfilSection(p);
+
+  app.innerHTML = `<div class="max-w-4xl mx-auto pt-8 px-4 pb-16">
     <a href="patient-management.prototype.html?variant=A" class="text-xs text-slate-500 underline">← Kembali ke Daftar Pasien</a>
-    <div class="flex items-center gap-3 mt-3 mb-1">
-      <div class="w-12 h-12 rounded-full bg-slate-800 text-white flex items-center justify-center text-lg">${initials(p.name)}</div>
-      <div><h1 class="text-xl font-semibold">${esc(p.name)}</h1><div class="text-xs text-slate-400">Pasien #${p.id} · ${genderLabel(p.gender)}</div></div>
+
+    <div class="bg-white rounded-xl border border-slate-200 p-5 mt-3 mb-4 flex items-center gap-4">
+      <div class="w-14 h-14 rounded-full bg-slate-800 text-white flex items-center justify-center text-xl shrink-0">${initials(p.name)}</div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-xl font-semibold">${esc(p.name)}</h1>
+          ${genderIcon(p.gender)}
+        </div>
+        <div class="text-xs text-slate-400">Pasien #${p.id}</div>
+      </div>
     </div>
-    <nav class="flex gap-4 text-xs text-blue-700 my-4">
-      <a href="#section-profil">Profil</a><a href="#section-riwayat">Riwayat Kunjungan</a><a href="#section-akun">Akun Pasien</a>
-    </nav>
+
     ${duplicateBanner(p)}
 
-    <div id="section-profil" class="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-      <div class="text-sm font-semibold mb-3">1. Profil</div>
-      ${renderProfilSection(p)}
-    </div>
-
-    <div id="section-riwayat" class="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-      <div class="text-sm font-semibold mb-3">2. Riwayat Kunjungan</div>
-      ${renderRiwayatSection(p)}
-    </div>
-
-    <div id="section-akun" class="bg-white rounded-xl border border-slate-200 p-5">
-      <div class="text-sm font-semibold mb-3">3. Akun Pasien</div>
-      ${renderAkunSection(p)}
+    <div class="grid grid-cols-1 md:grid-cols-[190px_1fr] gap-4">
+      <div class="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
+        ${TABS.map(t => `<button data-action="set-tab" data-tab="${t.key}" class="text-left whitespace-nowrap px-3 py-2.5 rounded-lg text-sm ${ui.activeTab === t.key ? 'bg-slate-900 text-white' : 'hover:bg-slate-200 text-slate-600'}">${t.label}</button>`).join('')}
+      </div>
+      <div class="bg-white rounded-xl border border-slate-200 p-5 min-h-[320px]" data-anim="in">
+        <div class="text-sm font-semibold mb-3">${activeTab.label}</div>
+        ${sectionContent}
+      </div>
     </div>
   </div>`;
 }
@@ -280,6 +297,7 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   const p = byId(currentId);
   switch (t.dataset.action) {
+    case 'set-tab': ui.activeTab = t.dataset.tab; ui.editing = false; ui.editDraft = null; break;
     case 'start-edit':
       ui.editing = true; ui.addressSearch = '';
       ui.editDraft = { name: p.name, phone: p.phone, nik: p.nik || '', dob: p.dob, gender: p.gender, address: p.address ? { ...p.address } : null };

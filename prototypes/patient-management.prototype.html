@@ -118,10 +118,13 @@ function statusPill(status) {
 // Shared state — one "session" of browsing/editing patients, shared across
 // variants so flipping the switcher compares layouts on the SAME task.
 // ---------------------------------------------------------------------------
+const TABLE_PAGE_SIZE = 5; // Variant A only
+
 let ui = {
   query: '',
   filter: 'all', // 'all' | 'duplicates'
   genderFilter: 'all', // 'all' | 'L' | 'P' — Variant A only
+  tablePage: 1, // Variant A only
   selectedId: 1,
   profileTab: 'profil', // 'profil' | 'riwayat' | 'akun'
   editing: false,
@@ -134,7 +137,7 @@ let ui = {
   comparePair: null,
 };
 
-function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', gender: 'L', address: null }; }
+function emptyDraft() { return { name: '', phone: '', nik: '', dob: '', gender: '', address: null }; }
 
 function matches(p, q) {
   if (!q) return true;
@@ -160,7 +163,7 @@ function saveEdit() {
 }
 function saveCreate() {
   const d = ui.createDraft;
-  const p = { id: nextId++, name: d.name.trim() || 'Pasien Baru', phone: d.phone.trim(), nik: d.nik.trim() || null, dob: d.dob || '', gender: d.gender || 'L', address: d.address || emptyAddress(), akunPasien: false, visits: [] };
+  const p = { id: nextId++, name: d.name.trim() || 'Pasien Baru', phone: d.phone.trim(), nik: d.nik.trim() || null, dob: d.dob || '', gender: d.gender || null, address: d.address || emptyAddress(), akunPasien: false, visits: [] };
   PATIENTS_DB.push(p);
   ui.creating = false; ui.createDraft = null; ui.addressSearch = ''; ui.selectedId = p.id; ui.profileTab = 'profil';
   return p;
@@ -169,7 +172,7 @@ function saveCreate() {
 // ---------------------------------------------------------------------------
 // Shared bits: profile detail (fields differ slightly per variant's chrome)
 // ---------------------------------------------------------------------------
-function genderLabel(g) { return g === 'P' ? 'Perempuan' : 'Laki-laki'; }
+function genderLabel(g) { return g === 'P' ? 'Perempuan' : g === 'L' ? 'Laki-laki' : '<span class="text-slate-400 italic">belum diisi</span>'; }
 
 function addressLines(addr) {
   if (!addr || !addr.street) return '<span class="text-slate-400 italic">belum diisi</span>';
@@ -278,14 +281,18 @@ function renderVariantA() {
   const list = visiblePatients(ui.query, ui.filter, ui.genderFilter);
   const dupCount = PATIENTS_DB.filter(p => p.duplicateOf).length;
 
-  const rows = list.map(p => {
+  const totalPages = Math.max(1, Math.ceil(list.length / TABLE_PAGE_SIZE));
+  const page = Math.min(ui.tablePage, totalPages);
+  const pageItems = list.slice((page - 1) * TABLE_PAGE_SIZE, page * TABLE_PAGE_SIZE);
+
+  const rows = pageItems.map(p => {
     const lv = lastVisit(p);
     return `<tr data-action="goto-detail" data-id="${p.id}" class="cursor-pointer border-b border-slate-100 hover:bg-blue-50/60">
       <td class="py-2.5 px-3">
         <div class="font-medium text-sm">${esc(p.name)} ${p.duplicateOf ? '<span class="text-amber-500" title="Duplicate Candidate">⚠</span>' : ''}</div>
         <div class="text-xs text-slate-400">${esc(p.phone)}</div>
       </td>
-      <td class="py-2.5 px-3 text-sm text-slate-500">${p.gender === 'P' ? 'P' : 'L'}</td>
+      <td class="py-2.5 px-3 text-sm text-slate-500">${p.gender === 'P' ? 'P' : p.gender === 'L' ? 'L' : '<span class="italic text-slate-300">—</span>'}</td>
       <td class="py-2.5 px-3 text-sm font-mono text-slate-500">${p.nik ? esc(p.nik) : '<span class="italic text-slate-300">—</span>'}</td>
       <td class="py-2.5 px-3 text-sm text-slate-500">${fmtDate(p.dob)}</td>
       <td class="py-2.5 px-3 text-sm">${p.akunPasien ? '<span class="text-emerald-600">Aktif</span>' : '<span class="text-slate-300">—</span>'}</td>
@@ -320,6 +327,12 @@ function renderVariantA() {
         <tbody>${rows || `<tr><td colspan="6" class="py-8 text-center text-sm text-slate-400">Tidak ada pasien cocok.</td></tr>`}</tbody>
       </table>
     </div>
+
+    ${list.length ? `<div class="flex items-center justify-between mt-3 text-xs text-slate-500">
+      <button data-action="table-prev" ${page <= 1 ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 bg-white ${page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">← Sebelumnya</button>
+      <span>Halaman ${page} dari ${totalPages} · ${list.length} pasien cocok</span>
+      <button data-action="table-next" ${page >= totalPages ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-md border border-slate-300 bg-white ${page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-50'}">Berikutnya →</button>
+    </div>` : ''}
   </div>`;
 }
 
@@ -398,7 +411,7 @@ function createForm() {
     <label class="block text-xs text-slate-500">Telepon<input data-bind="create.phone" value="${esc(d.phone)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
     <label class="block text-xs text-slate-500">NIK <span class="text-slate-400">(opsional)</span><input data-bind="create.nik" value="${esc(d.nik)}" placeholder="16 digit" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
     <label class="block text-xs text-slate-500">Tgl Lahir<input data-bind="create.dob" type="date" value="${esc(d.dob)}" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></label>
-    <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="create.gender" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm bg-white"><option value="L" ${d.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${d.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
+    <label class="block text-xs text-slate-500">Jenis Kelamin<select data-bind="create.gender" class="mt-1 w-full border border-slate-300 rounded-md px-2.5 py-1.5 text-sm bg-white"><option value="" disabled ${!d.gender ? 'selected' : ''}>Pilih jenis kelamin</option><option value="L" ${d.gender === 'L' ? 'selected' : ''}>Laki-laki</option><option value="P" ${d.gender === 'P' ? 'selected' : ''}>Perempuan</option></select></label>
     <div class="col-span-2">
       <div class="text-xs text-slate-500 mb-1">Alamat</div>
       ${addressSearchBlock('create.address', d.address)}
@@ -559,8 +572,10 @@ document.addEventListener('click', (e) => {
       if (currentVariant() === 'C') ui.page = 'profile';
       break;
     case 'set-tab': ui.profileTab = t.dataset.tab; break;
-    case 'set-filter': ui.filter = t.dataset.filter; break;
-    case 'set-gender-filter': ui.genderFilter = t.dataset.gender; break;
+    case 'set-filter': ui.filter = t.dataset.filter; ui.tablePage = 1; break;
+    case 'set-gender-filter': ui.genderFilter = t.dataset.gender; ui.tablePage = 1; break;
+    case 'table-prev': ui.tablePage = Math.max(1, ui.tablePage - 1); break;
+    case 'table-next': ui.tablePage = ui.tablePage + 1; break;
     case 'start-edit': startEdit(byId(ui.selectedId)); break;
     case 'save-edit': saveEdit(); break;
     case 'cancel-edit': ui.editing = false; ui.editDraft = null; ui.addressSearch = ''; break;
@@ -606,6 +621,7 @@ document.addEventListener('input', (e) => {
   if (!e.target.dataset.bind || e.target.tagName === 'SELECT') return;
   applyBind(e);
   const bind = e.target.dataset.bind;
+  if (bind === 'query') ui.tablePage = 1;
   const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
   render();
   const el = document.querySelector(`[data-bind="${bind}"]`);
