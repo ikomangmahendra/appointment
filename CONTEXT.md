@@ -89,6 +89,9 @@ _Avoid_: Papan Pasien, Patient board (the board tracks Appointments, not Patient
 **Durasi Layanan**:
 The elapsed time since an Appointment entered `sedang dilayani`, stopping once it reaches `selesai`. Shown per card, in that column only — unlike Waktu Tunggu, it is not part of the Visit Status Board's KPI bar.
 
+**Kapasitas Dokter**:
+A Dokter may have at most one Appointment in `sedang dilayani` at any moment — a Dokter is a person, not a queue slot. Checked across the whole Klinik, not just one Layanan, since a Dokter could in principle serve more than one Layanan the same day. "Mulai Layani" is blocked for any other Appointment booked with a Dokter who is already serving someone else. A booked Dokter who isn't actually on duty (sick, covered by a substitute) is a known gap — reassigning an Appointment to a different Dokter isn't supported yet.
+
 **Interval Pembaruan Papan**:
 A per-Klinik setting controlling how often the Visit Status Board polls for updates. Configured by Admin Klinik; defaults to 15 seconds, bounded to 5–60 seconds.
 

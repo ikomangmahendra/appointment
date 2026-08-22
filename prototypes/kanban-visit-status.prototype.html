@@ -8,7 +8,7 @@
   The other two variants have since been deleted — this file now only contains the chosen shape.
 
   This revision layers in the decisions from the grill-with-docs session that followed
-  (see CONTEXT.md and docs/adr/0002, 0007–0010):
+  (see CONTEXT.md and docs/adr/0002, 0007–0011):
     - Visit Status is FOUR stages, not five: belum_tiba -> menunggu -> sedang_dilayani -> selesai.
       (telah_tiba was merged into menunggu — ADR 0007. The old 5-stage data is gone; do not
       reintroduce a telah_tiba resting stage.)
@@ -25,6 +25,9 @@
     - A menunggu card's wait turns red past Target Waktu Tunggu — a fixed, Admin Klinik-configurable
       threshold (TARGET_WAKTU_TUNGGU_MNT), not the live-computed "rata-rata tunggu" KPI itself —
       see ADR 0008.
+    - Kapasitas Dokter: a Dokter can have at most one Appointment sedang_dilayani at a time,
+      checked Klinik-wide (dokterAlreadyServing), not just within the current Layanan — ADR 0011.
+      Reassigning an Appointment to a substitute Dokter is a known, deliberately deferred gap.
 
   Run: open this file directly in a browser (no server needed).
 -->
@@ -167,6 +170,7 @@
   }
   .card-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .card-actions button.revert { color: var(--muted); }
+  .card-actions button.disabled { color: var(--muted); cursor: not-allowed; opacity: .7; }
 
   /* modal */
   .overlay { position: fixed; inset: 0; background: rgba(15,18,25,.4); display: none; align-items: center; justify-content: center; z-index: 50; }
@@ -420,7 +424,17 @@ function updateClock() {
 }
 
 // ---------------------------------------------------------------------------
-// Card action buttons — role + status determine what's available (ADR 0008/0009)
+// Kapasitas Dokter (ADR 0011) — a Dokter can have at most one Appointment
+// `sedang_dilayani` at a time, checked Klinik-wide (across ALL Layanan, not
+// just the currently-scoped one) since a Dokter could serve more than one
+// Layanan the same day.
+// ---------------------------------------------------------------------------
+function dokterAlreadyServing(p) {
+  return PATIENTS.find(x => x.id !== p.id && !x.removed && x.dokter === p.dokter && x.status === 'sedang_dilayani');
+}
+
+// ---------------------------------------------------------------------------
+// Card action buttons — role + status determine what's available (ADR 0008/0009/0011)
 // ---------------------------------------------------------------------------
 function cardActionsHtml(p) {
   if (closedLayanan.has(p.layanan)) return '';
@@ -429,8 +443,14 @@ function cardActionsHtml(p) {
     if (p.status === 'belum_tiba') buttons.push(['primary', `transition(PATIENTS.find(x=>x.id===${p.id}),'menunggu')`, 'Check-In']);
     else if (p.status === 'menunggu') buttons.push(['revert', `transition(PATIENTS.find(x=>x.id===${p.id}),'belum_tiba')`, '↩ Batalkan Check-In']);
   } else {
-    if (p.status === 'menunggu') buttons.push(['primary', `transition(PATIENTS.find(x=>x.id===${p.id}),'sedang_dilayani')`, 'Mulai Layani']);
-    else if (p.status === 'sedang_dilayani') {
+    if (p.status === 'menunggu') {
+      const blocker = dokterAlreadyServing(p);
+      if (blocker) {
+        buttons.push(['disabled', null, 'Menunggu Dokter', `${p.dokter} sedang melayani ${blocker.name}`]);
+      } else {
+        buttons.push(['primary', `transition(PATIENTS.find(x=>x.id===${p.id}),'sedang_dilayani')`, 'Mulai Layani']);
+      }
+    } else if (p.status === 'sedang_dilayani') {
       buttons.push(['primary', `transition(PATIENTS.find(x=>x.id===${p.id}),'selesai')`, 'Selesai']);
       buttons.push(['revert', `requestRevertWithPin(PATIENTS.find(x=>x.id===${p.id}),'menunggu')`, '↩ Kembali (PIN)']);
     } else if (p.status === 'selesai') {
@@ -438,8 +458,10 @@ function cardActionsHtml(p) {
     }
   }
   if (!buttons.length) return '';
-  return `<div class="card-actions">${buttons.map(([cls, call, label]) =>
-    `<button class="${cls}" onclick="event.stopPropagation(); ${call}">${label}</button>`
+  return `<div class="card-actions">${buttons.map(([cls, call, label, title]) =>
+    cls === 'disabled'
+      ? `<button class="disabled" disabled title="${title || ''}">${label}</button>`
+      : `<button class="${cls}" onclick="event.stopPropagation(); ${call}">${label}</button>`
   ).join('')}</div>`;
 }
 
