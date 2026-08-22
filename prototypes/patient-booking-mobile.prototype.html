@@ -14,7 +14,8 @@
   the hold to expire without waiting for the real countdown.
   No real OTP/SMS — any 4-6 digit code is accepted; "Kirim ulang kode" has a 30s
   cooldown, no SMS actually goes out. OTP is re-verified on every booking, even for a
-  returning Patient — Akun Pasien has no password, so OTP verification IS the auth act.
+  returning guest Patient with no User account — this flow doesn't touch User accounts
+  at all (ADR-0015); OTP here just validates the booking itself, per-booking, every time.
   Try ?layanan=gigi&dokter=bagus to simulate arriving via a Deep Link (see CONTEXT.md).
   Run: open this file directly in a phone browser, or on desktop and narrow the window
   (or use device toolbar) — it's designed for a phone-width viewport.
