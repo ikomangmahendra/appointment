@@ -38,7 +38,7 @@ The account that performs booking actions — as distinct from Patient, who rece
 _Avoid_: Akun Pasien (retired term — see ADR 0015 for why)
 
 **Menambahkan Patient**:
-How a User adds someone to the set of Patients they manage: always by entering that person's details as if creating new — never by searching or browsing existing Patient records, which would leak whether a stranger is a patient here at all. If the details strongly match an existing Patient (the same threshold as Patient Matching, ADR 0004/0019), an OTP goes to that Patient's phone before the two are linked; unconfirmed, a separate Patient is created instead and the match falls into the ordinary Duplicate Candidate queue. See [ADR 0020](docs/adr/0020-adding-a-patient-never-exposes-live-search.md).
+How a User adds someone to the set of Patients they manage, the *first* time — always by entering that person's details as if creating new, never by searching or browsing existing Patient records, which would leak whether a stranger is a patient here at all. If the details strongly match an existing Patient (the same threshold as Patient Matching, ADR 0004/0019), an OTP goes to that Patient's phone before the two are linked; unconfirmed, a separate Patient is created instead and the match falls into the ordinary Duplicate Candidate queue. See [ADR 0020](docs/adr/0020-adding-a-patient-never-exposes-live-search.md). This is distinct from booking for a Patient the User already manages — that's a plain pick from the User's own list, no search-safety concern, since it's the User's own data.
 
 ### Scheduling & Appointments
 
