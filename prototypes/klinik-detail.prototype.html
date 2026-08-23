@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Kelola Klinik</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Sibling route to klinik-management.prototype.html. A dedicated page for
+  a Super-Admin to view/edit one Klinik's own profile (nama, alamat, zona
+  waktu), manage its Admin Klinik account lifecycle (belum ada akun ->
+  diundang -> aktif, mirroring Undangan Akun / ADR 0028), see its
+  read-only resource counts (Dokter/Layanan/staf), and toggle the Klinik's
+  own active/deactivated status — mirroring Menonaktifkan Dokter (ADR
+  0029): soft-delete only, and independent of the Admin Klinik's login
+  access (deactivating the Klinik does not by itself revoke that account,
+  same "neither implies the other" shape ADR 0029 already established one
+  level down).
+
+  This file has its own copy of the roster (see klinik-management's for
+  the "real" shared shape) so it stays a single double-clickable file.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+  Try: ?id=k1..k7 — k3/k7 are "diundang", k6 is "belum ada akun",
+  k5 is a deactivated ("nonaktif") klinik.
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+const ZONA_LIST = ['WIB', 'WITA', 'WIT'];
+
+let KLINIK = [
+  { id: 'k1', nama: 'Klinik Sehat Sentosa', alamat: 'Jl. Merdeka No. 12, Jakarta Selatan', zona: 'WIB', status: 'aktif', adminNama: 'Sari Wulandari', adminEmail: 'sari@kliniksehat.id', adminAkun: 'aktif', jumlahDokter: 8, jumlahLayanan: 6, jumlahStaf: 5 },
+  { id: 'k2', nama: 'Klinik Prima Medika', alamat: 'Jl. Sudirman No. 88, Surabaya', zona: 'WIB', status: 'aktif', adminNama: 'Budi Hartanto', adminEmail: 'budi@primamedika.id', adminAkun: 'aktif', jumlahDokter: 5, jumlahLayanan: 4, jumlahStaf: 3 },
+  { id: 'k3', nama: 'Klinik Bali Husada', alamat: 'Jl. Raya Kuta No. 45, Badung', zona: 'WITA', status: 'aktif', adminNama: 'Made Wirawan', adminEmail: null, adminAkun: 'diundang', jumlahDokter: 3, jumlahLayanan: 3, jumlahStaf: 2 },
+  { id: 'k4', nama: 'Klinik Anugerah Sehat', alamat: 'Jl. Gatot Subroto No. 21, Medan', zona: 'WIB', status: 'aktif', adminNama: 'Rina Simamora', adminEmail: 'rina@anugerahsehat.id', adminAkun: 'aktif', jumlahDokter: 6, jumlahLayanan: 5, jumlahStaf: 4 },
+  { id: 'k5', nama: 'Klinik Timur Sejahtera', alamat: 'Jl. Cendrawasih No. 7, Jayapura', zona: 'WIT', status: 'nonaktif', adminNama: 'Yosef Mansnembra', adminEmail: 'yosef@timursejahtera.id', adminAkun: 'aktif', jumlahDokter: 2, jumlahLayanan: 2, jumlahStaf: 1 },
+  { id: 'k6', nama: 'Klinik Mitra Keluarga Baru', alamat: 'Jl. Ahmad Yani No. 33, Makassar', zona: 'WITA', status: 'aktif', adminNama: null, adminEmail: null, adminAkun: 'belum ada akun', jumlahDokter: 0, jumlahLayanan: 0, jumlahStaf: 0 },
+  { id: 'k7', nama: 'Klinik Cahaya Bunda', alamat: 'Jl. Diponegoro No. 19, Semarang', zona: 'WIB', status: 'aktif', adminNama: 'Dewi Anggraini', adminEmail: 'dewi@cahayabunda.id', adminAkun: 'diundang', jumlahDokter: 4, jumlahLayanan: 3, jumlahStaf: 2 },
+];
+
+const id = new URLSearchParams(location.search).get('id') || 'k1';
+const klinik = KLINIK.find(k => k.id === id) || KLINIK[0];
+const state = { toast: null };
+
+function initials(nama) { return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+function akunBadge(akun) {
+  const map = {
+    'aktif': 'bg-emerald-100 text-emerald-700',
+    'diundang': 'bg-amber-100 text-amber-700',
+    'belum ada akun': 'bg-slate-200 text-slate-600',
+  };
+  return `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${map[akun]}">${akun}</span>`;
+}
+
+function statusBadge(status) {
+  return status === 'aktif'
+    ? `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Aktif</span>`
+    : `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-slate-200 text-slate-600">Nonaktif</span>`;
+}
+
+function saveForm(e) {
+  e.preventDefault();
+  const nama = document.getElementById('f-nama').value.trim();
+  const alamat = document.getElementById('f-alamat').value.trim();
+  const zona = document.getElementById('f-zona').value;
+  if (!nama || !alamat || !zona) { alert('Nama klinik, alamat, dan zona waktu wajib diisi.'); return; }
+  Object.assign(klinik, { nama, alamat, zona });
+  state.toast = 'Perubahan disimpan.';
+  render();
+}
+
+function undangAdmin() {
+  const nama = prompt(`Nama Admin Klinik untuk ${klinik.nama}:`, klinik.adminNama || '');
+  if (!nama) return;
+  const email = prompt(`Kirim undangan Admin Klinik ke email:`, klinik.adminEmail || '');
+  if (!email) return;
+  klinik.adminNama = nama.trim();
+  klinik.adminEmail = email.trim();
+  klinik.adminAkun = 'diundang';
+  state.toast = `Undangan Admin Klinik dikirim ke ${klinik.adminEmail}.`;
+  render();
+}
+
+function kirimUlangUndangan() {
+  state.toast = `Undangan dikirim ulang ke ${klinik.adminEmail}.`;
+  render();
+}
+
+function simulasikanLogin() {
+  klinik.adminAkun = 'aktif';
+  state.toast = '(demo) Login pertama berhasil — akun Admin Klinik aktif.';
+  render();
+}
+
+function toggleStatus() {
+  const akan = klinik.status === 'aktif' ? 'nonaktif' : 'aktif';
+  const label = akan === 'nonaktif' ? 'menonaktifkan' : 'mengaktifkan kembali';
+  if (!confirm(`Yakin ingin ${label} klinik ${klinik.nama}? Data Dokter, Layanan, dan riwayat Appointment tidak akan dihapus.`)) return;
+  klinik.status = akan;
+  state.toast = akan === 'nonaktif' ? 'Klinik dinonaktifkan. Data tetap tersimpan.' : 'Klinik diaktifkan kembali.';
+  render();
+}
+
+function render() {
+  document.getElementById('app').innerHTML = `
+    <div class="max-w-3xl mx-auto p-6">
+      <a href="klinik-management.prototype.html" class="text-sm text-slate-500 hover:underline">← Kembali ke Daftar Klinik</a>
+
+      <div class="flex items-center gap-4 mt-3 mb-6">
+        <div class="w-16 h-16 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-lg font-semibold shrink-0">${initials(klinik.nama)}</div>
+        <div class="flex-1">
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-semibold text-slate-800">${esc(klinik.nama)}</h1>
+            ${statusBadge(klinik.status)}
+          </div>
+          <p class="text-sm text-slate-500">${klinik.zona} · ${esc(klinik.alamat)}</p>
+        </div>
+      </div>
+
+      ${state.toast ? `<div class="mb-5 text-sm bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-2">${esc(state.toast)}</div>` : ''}
+
+      <div class="grid grid-cols-3 gap-4 mb-6">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <div class="text-xl font-semibold text-slate-800">${klinik.jumlahDokter}</div>
+          <div class="text-xs text-slate-500">Dokter</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <div class="text-xl font-semibold text-slate-800">${klinik.jumlahLayanan}</div>
+          <div class="text-xs text-slate-500">Layanan</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
+          <div class="text-xl font-semibold text-slate-800">${klinik.jumlahStaf}</div>
+          <div class="text-xs text-slate-500">Staf</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <form onsubmit="saveForm(event)" class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
+          <h2 class="text-sm font-semibold text-slate-700 mb-1">Profil Klinik</h2>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">Nama Klinik</label>
+            <input id="f-nama" value="${esc(klinik.nama)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">Alamat</label>
+            <textarea id="f-alamat" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">${esc(klinik.alamat)}</textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">Zona Waktu</label>
+            <select id="f-zona" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+              ${ZONA_LIST.map(z => `<option value="${z}" ${klinik.zona === z ? 'selected' : ''}>${z}</option>`).join('')}
+            </select>
+          </div>
+          <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">Simpan Perubahan</button>
+        </form>
+
+        <div class="space-y-4">
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-medium text-slate-500">Akun Admin Klinik</span>
+              ${akunBadge(klinik.adminAkun)}
+            </div>
+            <div class="text-sm text-slate-600 mb-3">${klinik.adminNama ? esc(klinik.adminNama) + (klinik.adminEmail ? ' · ' + esc(klinik.adminEmail) : '') : 'Belum ada Admin Klinik'}</div>
+            ${klinik.adminAkun === 'belum ada akun' ? `<button onclick="undangAdmin()" class="text-sm font-medium text-blue-600 hover:underline">Undang Admin Klinik →</button>` : ''}
+            ${klinik.adminAkun === 'diundang' ? `<div class="flex flex-col gap-2 items-start"><button onclick="kirimUlangUndangan()" class="text-sm font-medium text-blue-600 hover:underline">Kirim ulang undangan</button><button onclick="simulasikanLogin()" class="text-xs text-slate-400 hover:underline">(demo) tandai sudah login</button></div>` : ''}
+            ${klinik.adminAkun === 'aktif' ? `<span class="text-sm text-emerald-700">✓ Sudah bisa login</span>` : ''}
+          </div>
+
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-medium text-slate-500">Status Klinik</span>
+              ${statusBadge(klinik.status)}
+            </div>
+            <p class="text-xs text-slate-500 mb-3">${klinik.status === 'aktif' ? 'Klinik ini aktif di platform.' : 'Klinik ini nonaktif — data Dokter, Layanan, dan riwayat tetap tersimpan.'}</p>
+            <button onclick="toggleStatus()" class="text-sm font-medium ${klinik.status === 'aktif' ? 'text-red-600' : 'text-emerald-600'} hover:underline">
+              ${klinik.status === 'aktif' ? 'Nonaktifkan Klinik' : 'Aktifkan Kembali'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+render();
+</script>
+</body>
+</html>
