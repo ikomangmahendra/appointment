@@ -1,0 +1,5 @@
+# Menonaktifkan Staff generalizes to every role, with a hard floor of one active Admin Klinik
+
+The Staff Management prototype needed a deactivate action for Admin Klinik, Resepsionis, and Staf Layanan, not just Dokter. ADR 0029's reasoning — deactivation is independent of login-access revocation, and never hard-deletes the record — carries over unchanged to every Staff role: the same "on leave vs. leaving" distinction and the same orphaned-references concern apply regardless of role.
+
+One new rule beyond that generalization: a Klinik must always retain at least one active Admin Klinik. Deactivating the last one is blocked outright, not merely flagged with a confirmation warning (which the throwaway prototype used as a stand-in). A warning is bypassable by definition, and the failure mode here is severe and not self-correcting — a Klinik with zero active Admin Klinik would have nobody left able to reactivate anyone, manage Layanan/Jadwal, or invite a replacement, requiring Super-Admin intervention to recover. Blocking it is cheap (a single count check) relative to that risk.
