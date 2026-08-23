@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Klinik Staff Login</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the login page for Klinik *staff* (Admin Klinik,
+  Resepsionis, Staf Layanan, Dokter) look like — the screen that precedes
+  role-dashboard.prototype.html? Distinct from
+  booking-user-login-sso.prototype.html, which is the Patient-facing User
+  login (Google SSO / email+password, OTP-gated) for the booking app —
+  this one is staff signing into the clinic's own management side.
+
+  Per ADR 0028, staff never has a password set *for* them — Admin Klinik
+  invites by email and the staff member sets their own password via the
+  invite link, so login here is plain email + password with no "temporary
+  password" concept. Until that invite is accepted, login isn't usable yet
+  (see Undangan Akun, CONTEXT.md), which this prototype surfaces as an
+  explicit error rather than a generic "wrong password." Per ADR 0029, a
+  Dokter's login access can also be revoked independently of deactivating
+  their profile — modeled here as a separate "dinonaktifkan" account
+  status with its own error message, distinct from "diundang."
+
+  Three structurally different variants, switchable via ?variant=a|b|c:
+    A (Panel Split Klinik) — classic two-pane layout: clinic branding/copy
+      on the left, a single-step email+password form on the right.
+    B (Kartu Progresif) — one centered card, two steps: email first, which
+      "looks up" the account and greets the staff member by name/role
+      before revealing the password field. Account-status errors (belum
+      diundang diterima / dinonaktifkan) surface right after step 1,
+      before a password is even asked for.
+    C (Pilih Peran Dulu) — a role-tile picker (Admin Klinik / Resepsionis
+      / Staf Layanan / Dokter, the same four roles as
+      role-dashboard.prototype.html) is answered first; picking one
+      reveals a login form scoped to that role, with that role's demo
+      accounts hinted below it.
+
+  Canned ACCOUNTS cover all three login outcomes staff can hit: aktif
+  (logs in fine), diundang (invite sent, not yet accepted — blocked per
+  ADR 0028), dinonaktifkan (login revoked per ADR 0029). Demo credentials
+  are listed on-screen and click-to-fill, since there's no real backend to
+  check against. A successful login doesn't actually navigate anywhere —
+  it renders a "berhasil masuk" confirmation naming the role/dashboard it
+  would hand off to, matching the prototype-skill rule against wiring to
+  real navigation/mutations. Same clinic identity (Klinik Sehat Bahagia)
+  as role-dashboard.prototype.html, and the same 8-dokter roster/email
+  domain (kliniksehat.id) as dokter-management.prototype.html, so all
+  three read as one clinic.
+
+  No backend, no persistence — everything is canned in-memory data, reset
+  on reload.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  .switcher-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+<div id="switcher"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md) — same clinic identity as
+// role-dashboard.prototype.html, same dokter roster/email domain as
+// dokter-management.prototype.html.
+// ---------------------------------------------------------------------------
+const KLINIK = { name: 'Klinik Sehat Bahagia', kota: 'Bandung' };
+
+const ROLES = [
+  { key: 'admin_klinik', label: 'Admin Klinik', desc: 'Kelola Layanan, Dokter, staf, dan jam operasional' },
+  { key: 'resepsionis', label: 'Resepsionis', desc: 'Booking telepon dan Check-In pasien' },
+  { key: 'staf_layanan', label: 'Staf Layanan', desc: 'Jalankan antrian pasien di Layanan Anda' },
+  { key: 'dokter', label: 'Dokter', desc: 'Lihat jadwal praktik hari ini' },
+];
+
+const ACCOUNTS = [
+  { email: 'admin@kliniksehat.id', password: 'admin123', nama: 'Ni Made Sari', role: 'admin_klinik', status: 'aktif' },
+  { email: 'dewi@kliniksehat.id', password: 'resepsionis123', nama: 'Dewi Lestari', role: 'resepsionis', status: 'aktif' },
+  { email: 'agus@kliniksehat.id', password: 'staflayanan123', nama: 'Agus Setiawan', role: 'staf_layanan', status: 'aktif' },
+  { email: 'amelia@kliniksehat.id', password: 'dokter123', nama: 'dr. Amelia Putri', role: 'dokter', status: 'aktif' },
+  { email: 'citra@kliniksehat.id', password: null, nama: 'dr. Citra Dewi', role: 'dokter', status: 'diundang' },
+  { email: 'yusuf@kliniksehat.id', password: 'dokter123', nama: 'dr. Yusuf Hakim', role: 'dokter', status: 'dinonaktifkan' },
+];
+
+function roleLabel(key) { return ROLES.find(r => r.key === key)?.label ?? key; }
+function accountByEmail(email) { return ACCOUNTS.find(a => a.email.toLowerCase() === String(email || '').trim().toLowerCase()); }
+function initials(nama) { return nama.replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+// Shared login-attempt logic across all three variants: given an email and
+// (optionally) a password, returns { ok, stage, account, error }.
+//   stage 'found'      — account exists and is loggable-in-principle (used by
+//                         variant B to greet before asking for a password)
+//   stage 'blocked'    — account exists but can't log in at all (diundang /
+//                         dinonaktifkan) — no password will ever help
+//   stage 'success'    — password matched
+//   stage 'rejected'   — unknown email, or a blocked/known email with a
+//                         wrong password — both return the same generic
+//                         message so a login attempt never reveals whether
+//                         an email is registered
+function lookupAccount(email) {
+  const acc = accountByEmail(email);
+  if (!acc) return { ok: false, stage: 'rejected', error: 'Email atau password salah.' };
+  if (acc.status === 'diundang') {
+    return { ok: false, stage: 'blocked', account: acc, error: 'Undangan akun untuk email ini belum diterima. Cek email Anda untuk link undangan dan atur password terlebih dahulu.' };
+  }
+  if (acc.status === 'dinonaktifkan') {
+    return { ok: false, stage: 'blocked', account: acc, error: 'Akses login untuk akun ini telah dinonaktifkan. Hubungi Admin Klinik Anda.' };
+  }
+  return { ok: true, stage: 'found', account: acc };
+}
+
+function attemptLogin(email, password) {
+  const found = lookupAccount(email);
+  if (!found.ok) return found;
+  if (found.account.password !== password) return { ok: false, stage: 'rejected', error: 'Email atau password salah.' };
+  return { ok: true, stage: 'success', account: found.account };
+}
+
+const VARIANTS = [
+  { key: 'a', label: 'Panel Split Klinik' },
+  { key: 'b', label: 'Kartu Progresif' },
+  { key: 'c', label: 'Pilih Peran Dulu' },
+];
+
+// ---------------------------------------------------------------------------
+// Shared state
+// ---------------------------------------------------------------------------
+const state = {
+  variant: (new URLSearchParams(location.search).get('variant') || 'a').toLowerCase(),
+  email: '',
+  password: '',
+  step: 'email',        // variant B only: 'email' | 'password'
+  lookedUp: null,        // variant B only: result of lookupAccount() after step 1
+  selectedRole: null,    // variant C only
+  error: null,
+  success: null,         // matched account after a successful login
+  forgotOpen: false,
+  forgotEmail: '',
+  forgotSent: false,
+};
+if (!VARIANTS.some(v => v.key === state.variant)) state.variant = 'a';
+
+function resetLoginState() {
+  state.email = '';
+  state.password = '';
+  state.step = 'email';
+  state.lookedUp = null;
+  state.selectedRole = null;
+  state.error = null;
+  state.success = null;
+  state.forgotOpen = false;
+  state.forgotEmail = '';
+  state.forgotSent = false;
+}
+
+// ---------------------------------------------------------------------------
+// Shared bits
+// ---------------------------------------------------------------------------
+function demoAccountsPanel(accounts) {
+  const statusBadge = {
+    aktif: '<span class="text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded text-[10px] font-medium">aktif</span>',
+    diundang: '<span class="text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded text-[10px] font-medium">diundang</span>',
+    dinonaktifkan: '<span class="text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded text-[10px] font-medium">dinonaktifkan</span>',
+  };
+  return `
+    <div class="border border-slate-200 rounded-lg bg-slate-50 p-3 text-xs">
+      <div class="font-medium text-slate-500 mb-2">Akun demo (klik untuk isi otomatis)</div>
+      <div class="space-y-1.5">
+        ${accounts.map(a => `
+          <button data-action="fill-demo" data-email="${esc(a.email)}" data-password="${esc(a.password ?? '')}"
+                  class="w-full flex items-center justify-between gap-2 text-left px-2 py-1.5 rounded hover:bg-white border border-transparent hover:border-slate-200">
+            <span class="truncate">
+              <span class="font-medium">${esc(a.nama)}</span>
+              <span class="text-slate-400">· ${esc(roleLabel(a.role))}</span>
+            </span>
+            ${statusBadge[a.status]}
+          </button>
+        `).join('')}
+      </div>
+    </div>`;
+}
+
+function errorBanner(msg) {
+  if (!msg) return '';
+  return `<div class="bg-rose-50 border border-rose-200 text-rose-700 text-sm rounded-lg px-3 py-2">${esc(msg)}</div>`;
+}
+
+function successScreen(account) {
+  return `
+    <div class="text-center py-6">
+      <div class="w-14 h-14 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl font-semibold mx-auto mb-4">✓</div>
+      <div class="text-lg font-semibold mb-1">Berhasil masuk</div>
+      <div class="text-sm text-slate-500 mb-4">
+        Halo, <span class="font-medium text-slate-700">${esc(account.nama)}</span> — masuk sebagai
+        <span class="font-medium text-slate-700">${esc(roleLabel(account.role))}</span>.
+        Akan diarahkan ke Dashboard (lihat role-dashboard.prototype.html).
+      </div>
+      <button data-action="logout" class="text-sm text-slate-500 underline hover:text-slate-700">Keluar &amp; coba akun lain</button>
+    </div>`;
+}
+
+function forgotPasswordBlock() {
+  if (!state.forgotOpen) {
+    return `<button data-action="open-forgot" class="text-sm text-slate-500 hover:text-slate-700 underline">Lupa password?</button>`;
+  }
+  if (state.forgotSent) {
+    return `
+      <div class="bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-lg px-3 py-2">
+        Jika email tersebut terdaftar, kami sudah mengirim link reset password ke sana.
+      </div>`;
+  }
+  return `
+    <div class="border border-slate-200 rounded-lg p-3 space-y-2">
+      <div class="text-sm font-medium">Reset password</div>
+      <input data-bind="forgotEmail" type="email" placeholder="Email akun Anda" value="${esc(state.forgotEmail)}"
+             class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+      <div class="flex items-center gap-2">
+        <button data-action="submit-forgot" class="bg-slate-900 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-800">Kirim link reset</button>
+        <button data-action="close-forgot" class="text-sm text-slate-500 hover:text-slate-700">Batal</button>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// VARIANT A — Panel Split Klinik (branding kiri, form email+password kanan)
+// ---------------------------------------------------------------------------
+function renderVariantA() {
+  if (state.success) {
+    return `
+      <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">${successScreen(state.success)}</div>
+      </div>`;
+  }
+  return `
+    <div class="min-h-screen flex">
+      <div class="hidden md:flex flex-col justify-between w-1/2 bg-slate-900 text-white p-10">
+        <div class="text-lg font-semibold">${esc(KLINIK.name)}</div>
+        <div>
+          <div class="text-3xl font-semibold leading-tight mb-3">Kelola klinik Anda<br>dari satu tempat.</div>
+          <div class="text-slate-300 text-sm max-w-sm">Jadwal Dokter, Layanan, dan antrian pasien harian —
+          semua staf ${esc(KLINIK.name)} masuk lewat halaman yang sama.</div>
+        </div>
+        <div class="text-slate-500 text-xs">${esc(KLINIK.kota)} · Portal staf klinik</div>
+      </div>
+      <div class="flex-1 flex items-center justify-center p-6">
+        <div class="w-full max-w-sm">
+          <div class="md:hidden text-sm font-medium text-slate-500 mb-6">${esc(KLINIK.name)}</div>
+          <div class="text-xl font-semibold mb-1">Masuk ke Portal Staf</div>
+          <div class="text-sm text-slate-500 mb-6">Gunakan email dan password akun staf Anda.</div>
+          <form data-form="login-a" class="space-y-3">
+            <div>
+              <label class="text-xs font-medium text-slate-500">Email</label>
+              <input data-bind="email" type="email" placeholder="nama@kliniksehat.id" value="${esc(state.email)}"
+                     class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+            </div>
+            <div>
+              <label class="text-xs font-medium text-slate-500">Password</label>
+              <input data-bind="password" type="password" placeholder="••••••••" value="${esc(state.password)}"
+                     class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+            </div>
+            ${errorBanner(state.error)}
+            <button type="submit" class="w-full bg-slate-900 text-white text-sm font-medium px-3 py-2.5 rounded-lg hover:bg-slate-800">Masuk</button>
+          </form>
+          <div class="mt-3">${forgotPasswordBlock()}</div>
+          <div class="mt-6">${demoAccountsPanel(ACCOUNTS)}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// VARIANT B — Kartu Progresif (email dulu -> sapa by name/role -> password)
+// ---------------------------------------------------------------------------
+function renderVariantB() {
+  const card = (inner) => `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8">
+        <div class="text-center mb-6">
+          <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">${esc(KLINIK.name)}</div>
+          <div class="text-lg font-semibold">Masuk ke Portal Staf</div>
+        </div>
+        ${inner}
+      </div>
+    </div>`;
+
+  if (state.success) return card(successScreen(state.success));
+
+  if (state.step === 'email') {
+    return card(`
+      <form data-form="login-b-email" class="space-y-3">
+        <div>
+          <label class="text-xs font-medium text-slate-500">Email</label>
+          <input data-bind="email" type="email" placeholder="nama@kliniksehat.id" value="${esc(state.email)}" autofocus
+                 class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+        </div>
+        ${errorBanner(state.error)}
+        <button type="submit" class="w-full bg-slate-900 text-white text-sm font-medium px-3 py-2.5 rounded-lg hover:bg-slate-800">Lanjut</button>
+      </form>
+      <div class="mt-4">${demoAccountsPanel(ACCOUNTS)}</div>
+    `);
+  }
+
+  // step === 'password' — account was found and is loggable-in-principle
+  const acc = state.lookedUp.account;
+  return card(`
+    <div class="flex items-center gap-3 mb-4 p-3 bg-slate-50 rounded-lg">
+      <div class="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">${esc(initials(acc.nama))}</div>
+      <div class="min-w-0">
+        <div class="text-sm font-medium truncate">${esc(acc.nama)}</div>
+        <div class="text-xs text-slate-500">${esc(roleLabel(acc.role))} · ${esc(acc.email)}</div>
+      </div>
+    </div>
+    <form data-form="login-b-password" class="space-y-3">
+      <div>
+        <label class="text-xs font-medium text-slate-500">Password</label>
+        <input data-bind="password" type="password" placeholder="••••••••" value="${esc(state.password)}" autofocus
+               class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+      </div>
+      ${errorBanner(state.error)}
+      <button type="submit" class="w-full bg-slate-900 text-white text-sm font-medium px-3 py-2.5 rounded-lg hover:bg-slate-800">Masuk</button>
+      <button type="button" data-action="back-to-email" class="w-full text-sm text-slate-500 hover:text-slate-700">← Bukan Anda? Pakai email lain</button>
+    </form>
+    <div class="mt-3">${forgotPasswordBlock()}</div>
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// VARIANT C — Pilih Peran Dulu (role tile -> form login khusus peran itu)
+// ---------------------------------------------------------------------------
+function renderVariantC() {
+  if (state.success) {
+    return `
+      <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">${successScreen(state.success)}</div>
+      </div>`;
+  }
+
+  if (!state.selectedRole) {
+    return `
+      <div class="min-h-screen flex items-center justify-center p-4">
+        <div class="w-full max-w-lg">
+          <div class="text-center mb-8">
+            <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">${esc(KLINIK.name)}</div>
+            <div class="text-xl font-semibold">Masuk sebagai apa hari ini?</div>
+            <div class="text-sm text-slate-500 mt-1">Pilih peran Anda di klinik ini untuk melanjutkan.</div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            ${ROLES.map(r => `
+              <button data-action="pick-role" data-role="${esc(r.key)}"
+                      class="text-left bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-400 hover:shadow-sm">
+                <div class="font-medium mb-1">${esc(r.label)}</div>
+                <div class="text-xs text-slate-500">${esc(r.desc)}</div>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  const role = ROLES.find(r => r.key === state.selectedRole);
+  const roleAccounts = ACCOUNTS.filter(a => a.role === role.key);
+  return `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8">
+        <button data-action="change-role" class="text-xs text-slate-400 hover:text-slate-600 mb-4">← Ganti peran</button>
+        <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">${esc(KLINIK.name)}</div>
+        <div class="text-lg font-semibold mb-1">Masuk sebagai ${esc(role.label)}</div>
+        <div class="text-sm text-slate-500 mb-6">${esc(role.desc)}</div>
+        <form data-form="login-c" class="space-y-3">
+          <div>
+            <label class="text-xs font-medium text-slate-500">Email</label>
+            <input data-bind="email" type="email" placeholder="nama@kliniksehat.id" value="${esc(state.email)}"
+                   class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+          </div>
+          <div>
+            <label class="text-xs font-medium text-slate-500">Password</label>
+            <input data-bind="password" type="password" placeholder="••••••••" value="${esc(state.password)}"
+                   class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+          </div>
+          ${errorBanner(state.error)}
+          <button type="submit" class="w-full bg-slate-900 text-white text-sm font-medium px-3 py-2.5 rounded-lg hover:bg-slate-800">Masuk</button>
+        </form>
+        <div class="mt-3">${forgotPasswordBlock()}</div>
+        <div class="mt-6">${demoAccountsPanel(roleAccounts)}</div>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Switcher bar (identical across variants, per prototype skill convention)
+// ---------------------------------------------------------------------------
+function renderSwitcher() {
+  const current = VARIANTS.find(v => v.key === state.variant);
+  return `
+    <div class="switcher-bar bg-slate-900 text-white rounded-full shadow-xl flex items-center gap-3 px-2 py-1.5 text-sm select-none">
+      <button onclick="cycleVariant(-1)" class="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center">‹</button>
+      <span class="px-1">${esc(current.key.toUpperCase())} — ${esc(current.label)}</span>
+      <button onclick="cycleVariant(1)" class="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center">›</button>
+    </div>`;
+}
+
+function cycleVariant(delta) {
+  const idx = VARIANTS.findIndex(v => v.key === state.variant);
+  const next = VARIANTS[(idx + delta + VARIANTS.length) % VARIANTS.length];
+  state.variant = next.key;
+  resetLoginState();
+  const params = new URLSearchParams(location.search);
+  params.set('variant', next.key);
+  history.replaceState(null, '', `${location.pathname}?${params}`);
+  render();
+}
+
+document.addEventListener('keydown', e => {
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycleVariant(-1);
+  if (e.key === 'ArrowRight') cycleVariant(1);
+});
+
+// ---------------------------------------------------------------------------
+// Event delegation — shared across all three variants
+// ---------------------------------------------------------------------------
+document.addEventListener('submit', e => {
+  const form = e.target.closest('form[data-form]');
+  if (!form) return;
+  e.preventDefault();
+  const kind = form.dataset.form;
+
+  if (kind === 'login-a' || kind === 'login-c') {
+    const result = attemptLogin(state.email, state.password);
+    if (result.ok) { state.success = result.account; state.error = null; }
+    else { state.error = result.error; }
+    render();
+    return;
+  }
+
+  if (kind === 'login-b-email') {
+    const looked = lookupAccount(state.email);
+    if (looked.stage === 'found') {
+      state.lookedUp = looked;
+      state.step = 'password';
+      state.error = null;
+    } else {
+      state.error = looked.error;
+    }
+    render();
+    return;
+  }
+
+  if (kind === 'login-b-password') {
+    const result = attemptLogin(state.lookedUp.account.email, state.password);
+    if (result.ok) { state.success = result.account; state.error = null; }
+    else { state.error = result.error; }
+    render();
+    return;
+  }
+});
+
+document.addEventListener('input', e => {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  state[bind] = e.target.value;
+});
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  const action = t.dataset.action;
+
+  if (action === 'fill-demo') {
+    state.email = t.dataset.email;
+    state.password = t.dataset.password;
+    state.error = null;
+    render();
+    // refocus so the just-filled form is obviously live, not a screenshot
+    requestAnimationFrame(() => document.querySelector('[data-bind="password"], [data-bind="email"]')?.focus());
+  }
+  if (action === 'logout') { resetLoginState(); render(); }
+  if (action === 'back-to-email') { state.step = 'email'; state.password = ''; state.lookedUp = null; state.error = null; render(); }
+  if (action === 'pick-role') { state.selectedRole = t.dataset.role; render(); }
+  if (action === 'change-role') { state.selectedRole = null; state.email = ''; state.password = ''; state.error = null; render(); }
+  if (action === 'open-forgot') { state.forgotOpen = true; render(); }
+  if (action === 'close-forgot') { state.forgotOpen = false; state.forgotSent = false; render(); }
+  if (action === 'submit-forgot') { state.forgotSent = true; render(); }
+});
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+function render() {
+  const renderers = { a: renderVariantA, b: renderVariantB, c: renderVariantC };
+  document.getElementById('app').innerHTML = renderers[state.variant]();
+  document.getElementById('switcher').innerHTML = renderSwitcher();
+}
+
+render();
+</script>
+</body>
+</html>
