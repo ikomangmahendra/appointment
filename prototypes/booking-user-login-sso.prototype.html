@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PROTOTYPE — Booking dengan User Login / SSO</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the appointment booking flow look like once a Patient
+  can also be a logged-in User (Google SSO or email+password), instead of
+  always booking as an anonymous guest? The existing
+  patient-booking-mobile.prototype.html already answered "what should the
+  *guest* booking wizard look like" (verdict: Wizard Bertahap) and explicitly
+  left User accounts untouched (ADR 0015). This prototype is the follow-up:
+  how does an authenticated User — who may manage several Patients (self +
+  dependents, per the User/Patient split in ADR 0015) — plug into that same
+  booking journey, and where does login/SSO itself sit relative to it?
+
+  UPDATE (feedback round 1 — consolidation): three variants were tried —
+  A (Gerbang Masuk: auth gate before the wizard), B (Tamu Dulu: guest wizard
+  untouched, login offered as a late upsell), C (Beranda Akun: persistent
+  account-first app shell with tabs). Feedback picked **Variant A**; B and C
+  are gone, along with the variant switcher — there's only one screen now.
+  On top of picking A, feedback reshaped several steps:
+
+    - Login methods narrowed to Google SSO or Email + Password only — the
+      old "Masuk dengan No. HP + password" option is gone.
+    - Both login methods go through a phone OTP step. Email+password OTPs
+      to the phone already on file (a 2nd factor on top of the password);
+      Google SSO — new or returning — also OTPs to a phone number,
+      collecting it first if the account doesn't have one yet.
+    - Tanggal (date) is now picked *before* Dokter, not after: Jadwal
+      availability is a per-weekday recurring template (per CONTEXT.md's
+      Jadwal definition), so the date has to be known before doctors can be
+      filtered by it. Defaults to "Hari Ini", with "Besok" / "Besok Lusa"
+      quick picks plus a date input for anything further out. One dokter
+      (dr. Andi) also carries a one-off Pengecualian Jadwal (cuti besok) to
+      demonstrate that a date can knock out a normally-available dokter.
+    - An Appointment is always for exactly one Patient — the "Untuk Siapa?"
+      step is single-select only, never a multi-pick.
+    - "Untuk Siapa?" now covers three explicit scenarios: (1) the User
+      themself, (2) an existing Patient the User already manages (a
+      dependent), (3) a brand-new Patient entered fresh. Scenario 3 runs
+      through a fuller identity form (nama, No. HP, tanggal lahir, jenis
+      kelamin, NIK opsional+consent per ADR 0013) and simulates ADR 0020's
+      "never expose live search" rule: if the entered phone happens to
+      match an existing unlinked Patient record, an OTP goes to *that*
+      Patient's phone (not disclosed to the User) before linking; skipping
+      or failing that OTP falls back to creating a separate new Patient.
+
+  UPDATE (feedback round 2): every OTP screen (login, guest, and the
+  Patient phone-match) now has a "Kirim ulang kode" resend control with a
+  30s cooldown — matching the resend behaviour already established in
+  patient-booking-mobile.prototype.html's guest OTP step.
+
+  UPDATE (feedback round 3 — grilled against CONTEXT.md/ADR 0015, see the
+  User and Perangkat Terpercaya glossary entries): the "OTP on every login"
+  behaviour from round 1 was a prototyping shortcut, not the real decision.
+  This round reworks the mock "backend" (an in-memory ACCOUNTS registry
+  keyed by phone, module-scoped so it survives "reset demo" like a real
+  backend would, but not a page reload) to demonstrate what was actually
+  settled:
+
+    - Perangkat Terpercaya (Trusted Device): a `trustedPhones` set, also
+      module-scoped, tracks which phone numbers this device has already
+      OTP-verified. Any login — Google, Email+Password, or the guest OTP
+      itself — that succeeds for a phone adds it here; a later login
+      attempt for an already-trusted phone skips the OTP screen entirely.
+      This supersedes ADR 0015's "can defer phone verification to the
+      User's first Appointment": verification now always happens right at
+      that first login, but never again after, on that device — try
+      logging in once, tapping "Keluar" on the confirmation screen (this
+      clears trust, simulating a forgotten/shared device), then logging in
+      again with the same phone to see the OTP step return. Compare that
+      to using the wizard's own back-arrow to return to the gate screen
+      (which only clears the session, not device trust) and logging in
+      again — no OTP this time.
+    - Unique phone per User, Platform-wide: entering a phone already on
+      file in ACCOUNTS — via Google SSO's phone field, or by converting a
+      guest booking whose phone collides with an existing account — logs
+      into that existing account instead of creating a second one. Try
+      081234567890 (Budi's existing account) via "Lanjutkan dengan Google"
+      to see this. (A Google-email collision with an existing Email+
+      Password account resolves the same way in real life — this mock
+      just never surfaces a separate Google email field to demonstrate it
+      distinctly, since phone is the stronger, always-present signal here.)
+    - No separate "register" screen: a phone-only User account is created
+      by converting a completed guest booking, a single tap on the guest
+      "Booking Terkonfirmasi" screen ("Simpan No. HP ini sebagai akun") —
+      the phone's already OTP-verified from the booking itself, so no new
+      OTP and no email prompt. The appointment just booked stays Booked By
+      "Guest Patient" even after the conversion — Booked By is an audit
+      trail of what happened, not a live pointer to the current account.
+
+  UPDATE (feedback round 4 — UI detail pass, against
+  patient-booking-mobile.prototype.html as reference): Pilih Layanan cards
+  now show harga and desc alongside nama (that prototype's Layanan mock
+  shape); Pilih Dokter cards show every Layanan a Dokter performs, not just
+  the one currently selected, and drop the "N dokter lain tidak praktik"
+  aside as noise the Dokter list itself already conveys. Slot Hold
+  (ADR 0014/0016) is now visible here too: picking a Slot starts a
+  ⏱ "Slot ditahan untuk Anda" countdown badge (default 5 min, bounded 2-15,
+  override with ?holdMinutes=N) shown through every remaining step up to
+  Konfirmasi, expiring back to Pilih Jam with an explanation if not
+  finalized in time — see the debug "simulasikan hold habis" button.
+  "Pasien Baru" gained a "Gunakan No. HP saya" checkbox that fills the
+  phone field from the logged-in User's own number, for the common case of
+  a dependent who shares the User's phone rather than having their own.
+
+  UPDATE (feedback round 5 — grilled against CONTEXT.md, see the Layanan
+  and Appointment glossary entries and ADR 0025): Harga is informational
+  only (no payment processing anywhere in this prototype — it's just
+  Biaya, shown so a Patient can decide whether to book) and mandatory on
+  every Layanan, unlike the optional Deskripsi — Vaksinasi now has no desc
+  to demonstrate a Layanan can exist without one. Per ADR 0016, a Slot Hold
+  already models an Appointment as created (at `pending`) the moment a Slot
+  is picked, so that's also the moment Harga gets locked in: `a.hargaLocked`
+  snapshots the Layanan's current price right there, is shown as "Biaya" on
+  Konfirmasi and the final Booking Terkonfirmasi screen, and — like the Slot
+  itself — is released (cleared back to null) if the hold expires, since
+  that Appointment never happened. This prototype has no reschedule-an-
+  existing-appointment flow, so ADR 0025's "reschedule re-snapshots the
+  current price" clause isn't separately demonstrated here.
+
+  No backend, no persistence, no real OAuth/SMS — everything is canned
+  in-memory mock data, reset on browser reload. Any 4-6 digit code is
+  accepted as a valid OTP. See the harness banner below for test values.
+
+  Run: open this file directly in a browser (or a phone browser). Narrow the
+  window to a phone width — it's designed for that viewport.
+-->
+<style>
+  :root { --accent:#2563eb; --accent-dark:#1d4ed8; --ink:#1c1f26; --muted:#6b7280; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #e7e9ee;
+    color: var(--ink);
+  }
+  button { font-family: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+
+  #harness-banner {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: .02em;
+    color: #6b5400;
+    background: #fff3c4;
+    padding: 6px 10px;
+    border-bottom: 1px solid #e6d27a;
+  }
+  #harness-banner b { white-space: nowrap; }
+
+  #stage { display: flex; justify-content: center; padding: 0 0 24px; }
+  #phone {
+    width: 100%;
+    max-width: 420px;
+    min-height: 100vh;
+    background: #fff;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  @media (min-width: 480px) {
+    #stage { padding-top: 24px; padding-bottom: 40px; }
+    #phone { min-height: 800px; border-radius: 28px; box-shadow: 0 20px 60px rgba(0,0,0,.25); overflow: hidden; }
+  }
+
+  .screen { display: flex; flex-direction: column; flex: 1; padding: 18px 18px 24px; gap: 14px; animation: fade .15s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  .topbar { display: flex; align-items: center; gap: 10px; }
+  .back-btn { border: none; background: #eef1f6; width: 34px; height: 34px; border-radius: 10px; font-size: 16px; flex: none; }
+  .title { font-size: 17px; font-weight: 700; margin: 0; }
+  .subtitle { font-size: 13px; color: var(--muted); margin: -8px 0 0; line-height: 1.5; }
+
+  .dots { display: flex; gap: 5px; margin: 2px 0; }
+  .dots i { flex: 1; height: 4px; border-radius: 4px; background: #e7e9ee; display: block; }
+  .dots i.on { background: var(--accent); }
+
+  .field-label { font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 4px 0 -6px; }
+  .field {
+    width: 100%; border: 1.5px solid #dfe3ea; border-radius: 12px; padding: 12px 14px;
+    font-size: 15px; margin-top: 6px; background: #fafbfc;
+  }
+  .field:focus { outline: none; border-color: var(--accent); background: #fff; }
+
+  .primary-btn {
+    width: 100%; border: none; border-radius: 14px; background: var(--accent); color: #fff;
+    font-size: 15px; font-weight: 700; padding: 14px; margin-top: auto;
+  }
+  .primary-btn:disabled { background: #c7cedb; }
+  .secondary-btn {
+    width: 100%; border: 1.5px solid #dfe3ea; border-radius: 14px; background: #fff; color: var(--ink);
+    font-size: 14.5px; font-weight: 600; padding: 12px;
+  }
+  .ghost-btn { border: none; background: transparent; color: var(--accent); font-weight: 700; font-size: 14px; padding: 8px; }
+
+  .google-btn {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; border: 1.5px solid #dfe3ea; border-radius: 14px; background: #fff; color: var(--ink);
+    font-size: 14.5px; font-weight: 700; padding: 12px;
+  }
+  .g-dot { width: 18px; height: 18px; border-radius: 50%; background: conic-gradient(#ea4335 0 25%, #4285f4 0 50%, #34a853 0 75%, #fbbc05 0 100%); flex: none; }
+
+  .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; margin: 4px 0; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #e7e9ee; }
+
+  .card {
+    padding: 14px 16px; border: 1.5px solid #e7e9ee; border-radius: 14px; margin-top: 4px; background: #fff;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .card:active { background: #f2f6ff; }
+  .card.sel { border-color: var(--accent); background: #f2f6ff; }
+  .card.disabled { opacity: .5; }
+  .card-body { flex: 1; min-width: 0; }
+  .card-title { font-weight: 700; font-size: 14.5px; }
+  .card-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .card-price { flex: none; font-size: 13px; font-weight: 700; color: var(--accent); }
+
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex: none;
+  }
+  .avatar.alt { background: #16a34a; }
+  .avatar.sm { width: 30px; height: 30px; font-size: 12px; }
+
+  .pill-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    flex: 1; min-width: 90px; text-align: center; padding: 12px 6px; border-radius: 12px;
+    border: 1.5px solid #e7e9ee; background: #fff; font-size: 13.5px; font-weight: 700;
+  }
+  .pill.sel { border-color: var(--accent); background: #f2f6ff; color: var(--accent); }
+  .pill.disabled { opacity: .4; }
+
+  .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .slot { padding: 10px 4px; text-align: center; border-radius: 10px; border: 1.5px solid #e7e9ee; font-size: 13.5px; font-weight: 600; background: #fff; }
+  .slot.booked { color: #c3c6cd; background: #f4f5f7; text-decoration: line-through; }
+  .slot.sel { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .summary { background: #f2f6ff; border-radius: 14px; padding: 14px 16px; margin-top: 4px; font-size: 13.5px; line-height: 1.6; }
+  .summary b { display: block; margin-bottom: 2px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .badge.booked-by { background: #eef1f6; color: var(--muted); }
+
+  .banner-info { background: #fff7e6; border: 1.5px solid #f3d9ae; border-radius: 12px; padding: 10px 14px; font-size: 12.5px; line-height: 1.5; }
+  .banner-note { background: #eef4ff; border: 1.5px solid #bcd2ff; border-radius: 12px; padding: 10px 14px; font-size: 12.5px; line-height: 1.5; }
+  .hold-badge {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    background: #fff7e6; border: 1.5px solid #f3d9ae; border-radius: 12px; padding: 10px 14px;
+    font-size: 12.5px; color: #92610c;
+  }
+  .hold-badge b { font-variant-numeric: tabular-nums; }
+  .err { color: #c0392b; font-size: 12.5px; margin: 0; }
+
+  .check-hero { width: 64px; height: 64px; border-radius: 50%; background: #e8f5e9; color: #2e7d32; display: flex; align-items: center; justify-content: center; font-size: 32px; margin: 0 auto 6px; }
+
+  .consent-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .consent-row input { margin-top: 2px; flex: none; }
+
+  #dbgHoldExpire {
+    position: fixed; right: 10px; bottom: 14px; z-index: 100; font-size: 11px;
+    background: #92610c; color: #fff; border: none; border-radius: 8px; padding: 5px 8px; opacity: .7;
+  }
+</style>
+</head>
+<body>
+
+<div id="harness-banner">
+  <b>PROTOTYPE</b> — reload resets everything · Login: <b>budi@example.com</b> / sandi bebas ("Budi Santoso", No. HP 081234567890) · Coba No. HP <b>081234567890</b> lewat Google/Tamu untuk lihat penautan ke akun Budi (bukan akun baru) · No. HP pasien yang sudah pernah berobat (belum jadi User): <b>081277777777</b> ("Rian Saputra") · Setelah login sekali, No. HP itu "dipercaya" di perangkat ini — coba login lagi tanpa OTP, atau tekan Keluar untuk lupakan
+</div>
+
+<div id="stage"><div id="phone">
+  <div id="app" style="display:flex;flex:1;flex-direction:column;"></div>
+</div></div>
+<button id="dbgHoldExpire" onclick="simulateHoldExpired()">⏱ simulasikan hold habis</button>
+
+<script>
+/* ---------------- mock data ---------------- */
+const KLINIK = { nama: "Klinik Sehat Mandiri" };
+const LAYANAN = [
+  { id: "umum", nama: "Pemeriksaan Umum", durasi: 20, harga: 150000, desc: "Konsultasi dokter umum untuk keluhan sehari-hari." },
+  { id: "gigi", nama: "Gigi", durasi: 30, harga: 300000, desc: "Pemeriksaan dan perawatan gigi." },
+  { id: "vaksin", nama: "Vaksinasi", durasi: 15, harga: 250000, desc: "" }, // Deskripsi is optional — none entered yet for this Layanan
+];
+function idr(n) { return n == null ? "—" : "Rp" + n.toLocaleString("id-ID"); }
+// hari: 0=Minggu..6=Sabtu, per Jadwal (recurring weekly template, CONTEXT.md).
+// pengecualian: diffDays values (0=hari ini,1=besok,2=besok lusa,...) where a
+// one-off Pengecualian Jadwal (e.g. cuti) overrides the recurring template.
+const DOKTER = [
+  { id: "bagus", nama: "dr. Bagus Wirawan", layanan: ["umum", "gigi"], hari: [1, 2, 3, 4, 5] },
+  { id: "siti", nama: "drg. Siti Aminah", layanan: ["gigi"], hari: [2, 4, 6] },
+  { id: "andi", nama: "dr. Andi Prasetyo", layanan: ["umum", "vaksin"], hari: [0, 1, 2, 3, 4, 5, 6], pengecualian: [1] },
+];
+function slotsFor(dokterId, diffDays) {
+  const hours = ["08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "13:00", "13:30", "14:00"];
+  return hours.map((h, i) => ({ time: h, booked: (dokterId.length + i + diffDays) % 4 === 0 }));
+}
+function fmtLayanan(id) { return LAYANAN.find(l => l.id === id).nama; }
+function fmtDokter(id) { return DOKTER.find(d => d.id === id).nama; }
+function dokterTersediaTanggal(d) {
+  if (d.pengecualian && d.pengecualian.includes(a.dateOffsetDays)) return false;
+  return d.hari.includes(a.dateObj.getDay());
+}
+function dokterInitial(nama) { return nama.replace(/^(dr|drg)\.\s*/, "")[0]; }
+function maskPhone(phone) {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length <= 6) return phone;
+  return digits.slice(0, 4) + "••••" + digits.slice(-4);
+}
+
+// Slot Hold (CONTEXT.md / ADR 0014, 0016): a Slot picked at "Pilih Jam" is
+// held for a per-Klinik-configurable duration (default 5 min, bounded 2-15
+// — override with ?holdMinutes=N for this demo) so it isn't lost mid-flow.
+const HOLD_MINUTES = (() => {
+  const v = parseInt(new URLSearchParams(location.search).get("holdMinutes"), 10);
+  return isNaN(v) ? 5 : Math.max(2, Math.min(15, v));
+})();
+const HOLD_MS = HOLD_MINUTES * 60 * 1000;
+function isSlotHoldExpired() { return !!a.slotHeldAt && (Date.now() - a.slotHeldAt) > HOLD_MS; }
+function holdRemainingLabel() {
+  const rem = Math.max(0, HOLD_MS - (Date.now() - (a.slotHeldAt || Date.now())));
+  const m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000);
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+function holdBadgeHtml() {
+  if (!a.slotHeldAt) return "";
+  return `<div class="hold-badge"><span>⏱ Slot ditahan untuk Anda</span><b id="holdRemaining">${holdRemainingLabel()}</b></div>`;
+}
+let holdTimer = null;
+function manageHoldTimer() {
+  const shouldRun = a.slotHeldAt && ["patient", "patientNewForm", "patientMatchOtp", "confirm"].includes(a.step);
+  if (shouldRun && !holdTimer) {
+    holdTimer = setInterval(() => {
+      if (isSlotHoldExpired()) { releaseExpiredHold(); render(); return; }
+      const el = document.getElementById("holdRemaining");
+      if (el) el.textContent = holdRemainingLabel();
+    }, 1000);
+  } else if (!shouldRun && holdTimer) {
+    clearInterval(holdTimer); holdTimer = null;
+  }
+}
+function simulateHoldExpired() {
+  if (!a.slotHeldAt) return;
+  a.slotHeldAt = Date.now() - HOLD_MS - 1000;
+  render();
+}
+
+// Simulated backend: every User account, keyed by phone (unique per User,
+// Platform-wide — see CONTEXT.md's User entry). Module-scoped like a real
+// backend would be: survives "reset demo" (a new booking), only cleared by
+// reloading the browser (standing in for "the account no longer exists").
+let ACCOUNTS = {};
+function seedAccounts() {
+  ACCOUNTS = {
+    "081234567890": {
+      nama: "Budi Santoso", email: "budi@example.com", phone: "081234567890",
+      patients: [
+        { id: "p1", nama: "Budi Santoso", rel: "Anda" },
+        { id: "p2", nama: "Sari Santoso", rel: "Anak · 8 th" },
+      ],
+    },
+  };
+}
+seedAccounts();
+// Perangkat Terpercaya (Trusted Device): phones this device has already
+// OTP-verified. Also module-scoped — survives "reset demo", cleared by
+// reload (new device) or by tapping "Keluar" (forget this device).
+let trustedPhones = new Set();
+// A brand-new Google SSO signup — no phone on file yet, collected during login.
+function makeGoogleAccount(phone) {
+  return { nama: "Dewi Lestari", email: null, phone, patients: [{ id: "p1", nama: "Dewi Lestari", rel: "Anda" }] };
+}
+// An existing Patient record not managed by any User yet — e.g. seen once via
+// a guest or Resepsionis-phone booking. Used to simulate ADR 0020's phone-match.
+const EXTERNAL_PATIENTS = [
+  { phone: "081277777777", nama: "Rian Saputra" },
+];
+
+/* ---------------- state machine (Variant A: Gerbang Masuk) ---------------- */
+function initialState() {
+  return {
+    step: "gate",
+    session: null,               // logged-in User, or null while guest/pending
+    pendingAccount: null,        // account object awaiting OTP confirmation at login
+    pendingPhone: "",            // phone entered for a fresh Google signup, pre-OTP
+    guestName: "", guestPhone: "",
+    layanan: null, dateObj: null, dateOffsetDays: null, dateLabel: "",
+    dokter: null, slot: null, slotHeldAt: null,  // Slot Hold: set the moment a Slot is picked
+    hargaLocked: null,           // Harga snapshotted the same moment (ADR 0025) — released with the hold if it expires
+    patientId: null,
+    newPatientForm: null,        // {nama, phone, dob, gender, nik} awaiting match-check
+    matchedExternal: null,       // EXTERNAL_PATIENTS entry the new-patient form matched
+    keluhan: "",
+    justConverted: false,        // guest just tapped "Simpan sebagai akun" on the done screen
+    err: null,
+  };
+}
+let a = initialState();
+function reset() { a = initialState(); render(); }
+function root() { return document.getElementById("app"); }
+
+function render() {
+  const screens = {
+    gate: screenGate, emailLogin: screenEmailLogin, googlePhone: screenGooglePhone,
+    googleConnecting: screenGoogleConnecting, otpLogin: screenOtpLogin,
+    guestIdentity: screenGuestIdentity, guestOtp: screenGuestOtp,
+    layanan: screenLayanan, tanggal: screenTanggal, dokter: screenDokter, slot: screenSlot,
+    patient: screenPatient, patientNewForm: screenPatientNewForm, patientMatchOtp: screenPatientMatchOtp,
+    confirm: screenConfirm, done: screenDone,
+  };
+  root().innerHTML = screens[a.step]();
+  if (["otpLogin", "guestOtp", "patientMatchOtp"].includes(a.step)) startResendTimer(30);
+  manageHoldTimer();
+}
+
+/* ---- OTP resend cooldown, shared by every OTP screen (one at a time) ---- */
+let otpResendTimer = null;
+function startResendTimer(seconds) {
+  if (otpResendTimer) clearInterval(otpResendTimer);
+  let remaining = seconds;
+  const tick = () => {
+    const btn = document.getElementById("otpResendBtn");
+    if (!btn) { clearInterval(otpResendTimer); otpResendTimer = null; return; } // left the OTP screen
+    if (remaining <= 0) {
+      btn.disabled = false;
+      btn.textContent = "Kirim ulang kode";
+      clearInterval(otpResendTimer); otpResendTimer = null;
+    } else {
+      btn.disabled = true;
+      btn.textContent = `Kirim ulang kode (${remaining}s)`;
+      remaining--;
+    }
+  };
+  tick();
+  otpResendTimer = setInterval(tick, 1000);
+}
+function resendOtp() {
+  const note = document.getElementById("otpResendNote");
+  if (note) note.textContent = "Kode baru terkirim (demo: kode apa saja tetap diterima).";
+  startResendTimer(30);
+}
+function otpResendRow() {
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+    <button class="ghost-btn" id="otpResendBtn" disabled onclick="resendOtp()">Kirim ulang kode (30s)</button>
+    <p class="subtitle" id="otpResendNote" style="margin:0;"></p>
+  </div>`;
+}
+
+/* ---- gate & login ---- */
+function screenGate() {
+  return `<div class="screen">
+    <h1 class="title">${KLINIK.nama}</h1>
+    <p class="subtitle">Booking appointment lebih cepat kalau Anda masuk — riwayat &amp; data pasien tersimpan. Atau lanjut sebagai tamu, tanpa akun.</p>
+    <button class="google-btn" onclick="startGoogleLogin()"><span class="g-dot"></span> Lanjutkan dengan Google</button>
+    <button class="secondary-btn" onclick="a.step='emailLogin'; render();">Masuk dengan Email &amp; Kata Sandi</button>
+    <div class="divider">atau</div>
+    <button class="ghost-btn" onclick="a.step='guestIdentity'; render();" style="margin-top:auto;">Lanjutkan sebagai Tamu →</button>
+  </div>`;
+}
+function startGoogleLogin() {
+  a.step = "googleConnecting"; render();
+  setTimeout(() => { a.step = "googlePhone"; render(); }, 900);
+}
+function screenGoogleConnecting() {
+  return `<div class="screen" style="align-items:center;justify-content:center;">
+    <div class="g-dot" style="width:36px;height:36px;"></div>
+    <p class="subtitle">Menghubungkan ke Google…</p>
+  </div>`;
+}
+function screenGooglePhone() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; render();">&#8592;</button><h1 class="title">Verifikasi No. HP</h1></div>
+    <p class="subtitle">Google berhasil terhubung. Untuk keamanan tambahan, kami akan kirim kode OTP ke No. HP Anda.</p>
+    <label class="field-label">No. HP</label>
+    <input class="field" id="in_googlePhone" placeholder="08xxxxxxxxxx">
+    <button class="primary-btn" onclick="submitGooglePhone()">Kirim OTP</button>
+  </div>`;
+}
+function submitGooglePhone() {
+  const phone = document.getElementById("in_googlePhone").value.trim();
+  if (!phone) { alert("Masukkan No. HP."); return; }
+  // Phone is unique per User, Platform-wide: an already-claimed phone logs
+  // into that existing account instead of creating a second one (Google
+  // signup or not) — try 081234567890 to see this.
+  loginWithPhone(phone, ACCOUNTS[phone] || makeGoogleAccount(phone));
+}
+function screenEmailLogin() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; render();">&#8592;</button><h1 class="title">Masuk</h1></div>
+    <label class="field-label">Email</label>
+    <input class="field" id="in_email" placeholder="nama@email.com" value="budi@example.com">
+    <label class="field-label">Kata sandi</label>
+    <input class="field" type="password" id="in_password" placeholder="••••••••" value="demo">
+    <button class="primary-btn" onclick="submitEmailLogin()">Masuk</button>
+    <p class="subtitle" style="text-align:center;margin-top:2px;">Coba budi@example.com — akun sudah ada.</p>
+  </div>`;
+}
+function submitEmailLogin() {
+  const email = document.getElementById("in_email").value.trim().toLowerCase();
+  const password = document.getElementById("in_password").value;
+  if (!password) { alert("Masukkan kata sandi."); return; }
+  const acc = Object.values(ACCOUNTS).find(x => x.email === email);
+  if (!acc) { alert("Email tidak ditemukan untuk demo ini — pakai budi@example.com, atau coba Google."); return; }
+  loginWithPhone(acc.phone, acc);
+}
+// Perangkat Terpercaya: an already-trusted phone skips OTP entirely — the
+// account is "logged in" the moment credentials (Google phone, or
+// email+password) check out. An untrusted phone still needs OTP once.
+function loginWithPhone(phone, account) {
+  ACCOUNTS[phone] = account;
+  if (trustedPhones.has(phone)) {
+    completeLogin(account);
+  } else {
+    a.pendingPhone = phone;
+    a.pendingAccount = account;
+    a.step = "otpLogin"; render();
+  }
+}
+function completeLogin(account) {
+  trustedPhones.add(account.phone);
+  a.session = account;
+  a.patientId = account.patients[0].id;
+  a.pendingAccount = null; a.pendingPhone = "";
+  a.step = "layanan"; render();
+}
+function screenOtpLogin() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; a.pendingAccount=null; render();">&#8592;</button><h1 class="title">Verifikasi OTP</h1></div>
+    <p class="subtitle">Kode dikirim ke ${maskPhone(a.pendingPhone)} (demo: masukkan kode apa saja). Sekali saja per perangkat — lain kali No. HP ini tidak akan diminta OTP lagi di sini.</p>
+    <input class="field" id="in_otpLogin" placeholder="Kode 4-6 digit" maxlength="6">
+    <button class="primary-btn" onclick="submitOtpLogin()">Verifikasi &amp; Masuk</button>
+    ${otpResendRow()}
+  </div>`;
+}
+function submitOtpLogin() {
+  const code = document.getElementById("in_otpLogin").value.trim();
+  if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
+  completeLogin(a.pendingAccount);
+}
+
+/* ---- guest path (unchanged shape from the guest-wizard prototype) ---- */
+function screenGuestIdentity() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='gate'; render();">&#8592;</button><h1 class="title">Data Anda (Tamu)</h1></div>
+    <label class="field-label">Nama</label>
+    <input class="field" id="in_guestName" placeholder="Nama lengkap">
+    <label class="field-label">No. HP</label>
+    <input class="field" id="in_guestPhone" placeholder="08xxxxxxxxxx">
+    <button class="primary-btn" onclick="submitGuestIdentity()">Lanjut</button>
+  </div>`;
+}
+function submitGuestIdentity() {
+  a.guestName = document.getElementById("in_guestName").value.trim() || "Tamu";
+  a.guestPhone = document.getElementById("in_guestPhone").value.trim() || "0800000000";
+  a.step = "guestOtp"; render();
+}
+function screenGuestOtp() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='guestIdentity'; render();">&#8592;</button><h1 class="title">Verifikasi OTP</h1></div>
+    <p class="subtitle">Kode dikirim ke ${a.guestPhone} (demo: masukkan kode apa saja).</p>
+    <input class="field" id="in_guestOtp" placeholder="Kode 4-6 digit" maxlength="6">
+    <button class="primary-btn" onclick="submitGuestOtp()">Verifikasi</button>
+    ${otpResendRow()}
+  </div>`;
+}
+function submitGuestOtp() {
+  const code = document.getElementById("in_guestOtp").value.trim();
+  if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
+  // A guest's phone is just as OTP-verified as a User's — it earns the same
+  // Perangkat Terpercaya trust, so converting to an account later (or a
+  // future Google/Email+Password login with this phone) needs no more OTP.
+  trustedPhones.add(a.guestPhone);
+  a.step = "layanan"; render();
+}
+// Guest -> User conversion: the only way to become a phone-only User (no
+// separate "register" screen exists). A single tap — phone's already
+// verified, email stays uncollected per ADR 0015 ("can be verified later").
+function convertGuestToAccount() {
+  const existing = ACCOUNTS[a.guestPhone];
+  const acc = existing || {
+    nama: a.guestName, email: null, phone: a.guestPhone,
+    patients: [{ id: "p1", nama: a.guestName, rel: "Anda" }],
+  };
+  ACCOUNTS[a.guestPhone] = acc;
+  a.session = acc;
+  a.patientId = acc.patients[0].id;
+  a.justConverted = true;
+  render();
+}
+
+/* ---- booking wizard ---- */
+function screenLayanan() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="reset();">&#8592;</button><h1 class="title">Pilih Layanan</h1></div>
+    <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+    ${LAYANAN.map(l => `<div class="card" onclick="a.layanan='${l.id}'; a.dokter=null; a.slot=null; a.step='tanggal'; render();">
+      <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit${l.desc ? " &middot; " + l.desc : ""}</div></div>
+      <div class="card-price">${idr(l.harga)}</div>
+    </div>`).join("")}
+  </div>`;
+}
+
+function selectDateOffset(n) {
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n);
+  applyDate(d, n);
+}
+function selectDateCustom(value) {
+  if (!value) return;
+  const [y, m, d] = value.split("-").map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((dateObj - today) / 86400000);
+  applyDate(dateObj, diffDays);
+}
+function applyDate(dateObj, diffDays) {
+  a.dateObj = dateObj; a.dateOffsetDays = diffDays;
+  a.dateLabel = diffDays === 0 ? "Hari Ini" : diffDays === 1 ? "Besok" : diffDays === 2 ? "Besok Lusa"
+    : dateObj.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  a.dokter = null; a.slot = null;
+  a.step = "dokter"; render();
+}
+function screenTanggal() {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='layanan'; render();">&#8592;</button><h1 class="title">Pilih Tanggal</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+    <p class="subtitle">Jadwal dokter berbeda tiap hari — pilih tanggal dulu supaya hanya dokter yang praktik hari itu ditampilkan.</p>
+    <div class="pill-row">
+      <button class="pill" onclick="selectDateOffset(0)">Hari Ini</button>
+      <button class="pill" onclick="selectDateOffset(1)">Besok</button>
+      <button class="pill" onclick="selectDateOffset(2)">Besok Lusa</button>
+    </div>
+    <label class="field-label">atau tanggal lain</label>
+    <input class="field" type="date" min="${todayIso}" onchange="selectDateCustom(this.value)">
+  </div>`;
+}
+
+function screenDokter() {
+  const all = DOKTER.filter(d => d.layanan.includes(a.layanan));
+  const tersedia = all.filter(dokterTersediaTanggal);
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='tanggal'; render();">&#8592;</button><h1 class="title">Pilih Dokter</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+    <p class="subtitle">${fmtLayanan(a.layanan)} · ${a.dateLabel}</p>
+    ${tersedia.length === 0 ? `
+      <div class="banner-info">Tidak ada dokter ${fmtLayanan(a.layanan)} yang praktik pada ${a.dateLabel} (jadwal mingguan / cuti). Coba tanggal lain.</div>
+      <button class="secondary-btn" onclick="a.step='tanggal'; render();">Pilih Tanggal Lain</button>
+    ` : tersedia.map(d => `<div class="card" onclick="a.dokter='${d.id}'; a.slot=null; a.step='slot'; render();">
+      <div class="avatar">${dokterInitial(d.nama)}</div>
+      <div class="card-body"><div class="card-title">${d.nama}</div><div class="card-sub">${d.layanan.map(fmtLayanan).join(", ")}</div></div>
+    </div>`).join("")}
+  </div>`;
+}
+function screenSlot() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='dokter'; render();">&#8592;</button><h1 class="title">Pilih Jam</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+    <p class="subtitle">${fmtDokter(a.dokter)} · ${a.dateLabel}</p>
+    ${a.err ? `<p class="err">${a.err}</p>` : ""}
+    <div class="slot-grid">
+      ${slotsFor(a.dokter, a.dateOffsetDays).map(sl => sl.booked
+        ? `<div class="slot booked">${sl.time}</div>`
+        : `<div class="slot" onclick="selectSlot('${sl.time}')">${sl.time}</div>`).join("")}
+    </div>
+  </div>`;
+}
+function selectSlot(time) {
+  // Per ADR 0016, the Appointment is effectively created (at `pending`) the
+  // moment a Slot is picked — so that's also when Harga gets locked in
+  // (ADR 0025), not later at Konfirmasi.
+  a.slot = time;
+  a.slotHeldAt = Date.now();
+  a.hargaLocked = LAYANAN.find(l => l.id === a.layanan).harga;
+  a.err = null;
+  afterSlot();
+}
+function releaseExpiredHold() {
+  a.slot = null; a.slotHeldAt = null; a.hargaLocked = null;
+  a.err = "Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.";
+  a.step = "slot";
+}
+function afterSlot() {
+  a.step = a.session ? "patient" : "confirm";
+  render();
+}
+
+/* ---- "Untuk Siapa?" — exactly one Patient per Appointment ---- */
+function screenPatient() {
+  const patients = a.session.patients;
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='slot'; render();">&#8592;</button><h1 class="title">Untuk Siapa?</h1></div>
+    <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    ${holdBadgeHtml()}
+    <p class="subtitle">Masuk sebagai ${a.session.nama}. Satu Appointment hanya untuk satu pasien — untuk anggota keluarga lain, buat booking terpisah.</p>
+    ${patients.map(p => `<div class="card ${a.patientId===p.id?'sel':''}" onclick="a.patientId='${p.id}'; render();">
+      <div class="avatar ${p.rel==='Anda'?'':'alt'}">${p.nama[0]}</div>
+      <div class="card-body"><div class="card-title">${p.nama}</div><div class="card-sub">${p.rel}</div></div>
+    </div>`).join("")}
+    <button class="ghost-btn" onclick="selectedGender=null; a.step='patientNewForm'; render();">+ Tambah pasien baru</button>
+    <button class="primary-btn" ${a.patientId ? "" : "disabled"} onclick="afterPatient()">Lanjut</button>
+  </div>`;
+}
+function afterPatient() {
+  if (!a.patientId) return;
+  a.step = "confirm"; render();
+}
+function screenPatientNewForm() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='patient'; render();">&#8592;</button><h1 class="title">Pasien Baru</h1></div>
+    ${holdBadgeHtml()}
+    <p class="subtitle">Masukkan data orang yang akan diperiksa (anak, orang tua, dsb).</p>
+    <label class="field-label">Nama</label>
+    <input class="field" id="in_npNama" placeholder="Nama lengkap">
+    <label class="field-label">No. HP</label>
+    <input class="field" id="in_npPhone" placeholder="08xxxxxxxxxx">
+    <label class="consent-row">
+      <input type="checkbox" id="in_npUseMyPhone" onchange="toggleUseMyPhone()">
+      Gunakan No. HP saya (${maskPhone(a.session.phone)})
+    </label>
+    <p class="subtitle" style="margin:0;">Coba 081277777777 untuk simulasi pasien yang sudah pernah berobat di sini.</p>
+    <label class="field-label">Tanggal Lahir</label>
+    <input class="field" type="date" id="in_npDob">
+    <label class="field-label">Jenis Kelamin</label>
+    <div class="pill-row">
+      <button class="pill ${selectedGender==='L'?'sel':''}" id="pill_L" onclick="selectGender('L')">Laki-laki</button>
+      <button class="pill ${selectedGender==='P'?'sel':''}" id="pill_P" onclick="selectGender('P')">Perempuan</button>
+    </div>
+    <label class="field-label">NIK (opsional)</label>
+    <input class="field" id="in_npNik" maxlength="16" placeholder="16 digit" oninput="toggleNikConsent()">
+    <label class="consent-row" id="nikConsentRow" style="display:none;">
+      <input type="checkbox" id="in_npNikConsent">
+      Saya setuju NIK ini disimpan Klinik untuk keperluan verifikasi identitas &amp; kesiapan SATU SEHAT.
+    </label>
+    <button class="primary-btn" onclick="submitNewPatientForm()">Lanjut</button>
+  </div>`;
+}
+let selectedGender = null;
+function selectGender(g) {
+  selectedGender = g;
+  document.getElementById("pill_L").classList.toggle("sel", g === "L");
+  document.getElementById("pill_P").classList.toggle("sel", g === "P");
+}
+function toggleNikConsent() {
+  const nik = document.getElementById("in_npNik").value.trim();
+  document.getElementById("nikConsentRow").style.display = nik ? "flex" : "none";
+}
+function toggleUseMyPhone() {
+  const checked = document.getElementById("in_npUseMyPhone").checked;
+  const phoneInput = document.getElementById("in_npPhone");
+  phoneInput.value = checked ? a.session.phone : "";
+  phoneInput.readOnly = checked;
+}
+function submitNewPatientForm() {
+  const nama = document.getElementById("in_npNama").value.trim();
+  const phone = document.getElementById("in_npPhone").value.trim();
+  const dob = document.getElementById("in_npDob").value;
+  const nik = document.getElementById("in_npNik").value.trim();
+  if (!nama || !phone) { alert("Nama dan No. HP wajib diisi."); return; }
+  if (nik && !document.getElementById("in_npNikConsent").checked) {
+    alert("Karena NIK diisi, centang dulu persetujuan penyimpanan NIK di bawahnya.");
+    return;
+  }
+  a.newPatientForm = { nama, phone, dob, gender: selectedGender, nik };
+  const match = EXTERNAL_PATIENTS.find(p => p.phone === phone);
+  if (match) {
+    a.matchedExternal = match;
+    a.step = "patientMatchOtp"; render();
+  } else {
+    finalizeNewPatient(false);
+  }
+}
+function finalizeNewPatient(linked) {
+  const id = "new" + a.session.patients.length;
+  if (linked) {
+    a.session.patients.push({ id, nama: a.matchedExternal.nama, rel: "Ditautkan · riwayat sebelumnya ada" });
+  } else {
+    a.session.patients.push({ id, nama: a.newPatientForm.nama, rel: "Baru ditambahkan" });
+  }
+  a.patientId = id;
+  a.newPatientForm = null; a.matchedExternal = null;
+  a.step = "patient"; render();
+}
+function screenPatientMatchOtp() {
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step='patientNewForm'; render();">&#8592;</button><h1 class="title">Konfirmasi Diperlukan</h1></div>
+    ${holdBadgeHtml()}
+    <div class="banner-note">No. HP yang dimasukkan cocok dengan Patient yang sudah pernah berobat di sini. Untuk menjaga privasi, kode OTP dikirim ke nomor tersebut — bukan ke Anda — untuk konfirmasi keterkaitan sebelum riwayatnya ditautkan.</div>
+    <input class="field" id="in_matchOtp" placeholder="Kode OTP dari pasien tersebut" maxlength="6">
+    <button class="primary-btn" onclick="submitMatchOtp()">Verifikasi &amp; Tautkan</button>
+    ${otpResendRow()}
+    <button class="ghost-btn" onclick="finalizeNewPatient(false)">Lewati — buat Patient baru terpisah</button>
+  </div>`;
+}
+function submitMatchOtp() {
+  const code = document.getElementById("in_matchOtp").value.trim();
+  if (!code) { alert('Masukkan kode OTP, atau pilih "Lewati" di bawah.'); return; }
+  finalizeNewPatient(true);
+}
+
+/* ---- confirm & done ---- */
+function screenConfirm() {
+  const patientName = a.session ? a.session.patients.find(p => p.id === a.patientId).nama : a.guestName;
+  const bookedBy = a.session ? `User (${a.session.nama})` : "Guest Patient";
+  return `<div class="screen">
+    <div class="topbar"><button class="back-btn" onclick="a.step = a.session ? 'patient' : 'slot'; render();">&#8592;</button><h1 class="title">Konfirmasi</h1></div>
+    ${holdBadgeHtml()}
+    <div class="summary">
+      <b>${fmtLayanan(a.layanan)}</b> dengan ${fmtDokter(a.dokter)}<br>
+      ${a.dateLabel}, ${a.slot} · Pasien: ${patientName}<br>
+      Biaya: ${idr(a.hargaLocked)}<br>
+      <span class="badge booked-by">Booked By: ${bookedBy}</span>
+    </div>
+    <label class="field-label">Keluhan (opsional)</label>
+    <textarea class="field" id="in_keluhan" rows="2" placeholder="Ceritakan keluhan Anda…"></textarea>
+    <button class="primary-btn" onclick="submitConfirm()">Konfirmasi Booking</button>
+  </div>`;
+}
+function submitConfirm() {
+  if (isSlotHoldExpired()) { releaseExpiredHold(); render(); return; }
+  a.keluhan = document.getElementById("in_keluhan").value;
+  a.slotHeldAt = null; // held Slot becomes a real Appointment — hold concept no longer applies, but hargaLocked stays
+  a.step = "done"; render();
+}
+function screenDone() {
+  const wasGuest = !a.session || a.justConverted;
+  const patientName = wasGuest ? a.guestName : a.session.patients.find(p => p.id === a.patientId).nama;
+  const bookedBy = wasGuest ? "Guest Patient" : `User (${a.session.nama})`;
+  return `<div class="screen" style="align-items:center;text-align:center;justify-content:center;">
+    <div class="check-hero">&#10003;</div>
+    <h1 class="title">Booking Terkonfirmasi</h1>
+    <p class="subtitle">${fmtLayanan(a.layanan)} · ${fmtDokter(a.dokter)}<br>${a.dateLabel}, ${a.slot} · Pasien: ${patientName}<br>Biaya: ${idr(a.hargaLocked)}</p>
+    <span class="badge booked-by">Booked By: ${bookedBy}</span>
+    ${a.justConverted ? `
+      <div class="banner-note">Akun tersimpan untuk No. HP ${maskPhone(a.guestPhone)} — lain kali cukup masuk lewat Google atau Email+Kata Sandi, tanpa OTP lagi di perangkat ini. Booking di atas tetap tercatat Booked By: Guest Patient — status ini adalah jejak audit, bukan penunjuk akun saat ini.</div>
+      <button class="primary-btn" style="margin-top:16px;" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
+    ` : a.session ? `
+      <button class="primary-btn" style="margin-top:16px;" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
+      <button class="ghost-btn" onclick="trustedPhones.delete(a.session.phone); reset();">Keluar (lupakan perangkat ini)</button>
+    ` : `
+      <button class="primary-btn" style="margin-top:16px;" onclick="convertGuestToAccount()">Simpan No. HP ini sebagai akun</button>
+      <button class="ghost-btn" onclick="reset();">Booking lagi (reset demo)</button>
+    `}
+  </div>`;
+}
+
+/* ---------------- boot ---------------- */
+render();
+</script>
+</body>
+</html>
