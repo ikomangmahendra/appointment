@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Konfigurasi Klinik</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should Admin Klinik's own "Konfigurasi Klinik" screen look
+  like? Today these settings only exist as prose in CONTEXT.md, scattered
+  across unrelated sections, with no screen at all:
+    - Jam Operasional: opening hours per weekday + a libur khusus (holiday)
+      calendar. Klinik-wide, independent of any one Dokter's Jadwal.
+    - Interval Pembaruan Papan: how often the Visit Status Board polls.
+      Default 15s, bounded 5-60s.
+    - Target Waktu Tunggu: the wait considered reasonable before a
+      `menunggu` card flags red on the Visit Status Board. Admin-Klinik
+      configured, no fixed bound in CONTEXT.md — this prototype assumes a
+      sane 5-120 minute range pending a real decision.
+    - Slot Hold duration: how long a `pending` Appointment holds its Slot
+      before the scheduler releases it. Default 5 min, bounded 2-15 min.
+
+  Deliberately NOT included: Spesialisasi (already has its own per-Klinik
+  management surface under Dokter Management per ADR 0027) and the Klinik's
+  own registration profile — nama/alamat/zona waktu/Admin-Klinik-account —
+  which stays on klinik-detail.prototype.html, a Super-Admin provisioning
+  screen with a different actor and a different concern from this one.
+
+  UPDATE (consolidation): three variants were tried — A (Satu Halaman, one
+  scrolling page of sectioned cards with a sticky unsaved-changes bar), B
+  (Sidebar Kategori, a settings-app shape with a left category nav), C
+  (Kartu Ringkas, a dashboard of summary cards that expand in place to
+  edit). Feedback picked **Variant C**; A and B are gone, along with the
+  variant switcher — there's only one screen now.
+
+  UPDATE (branding fields): added Logo Klinik and Deskripsi Klinik cards.
+  Both are patient-facing (shown on this Klinik's own booking page, per the
+  request), so — unlike Spesialisasi or the profile fields above — they're
+  modeled here as Admin-Klinik-owned branding, distinct from the core
+  registration profile that stays Super-Admin-owned in klinik-detail. Logo
+  upload is demo-only: FileReader reads the chosen image into a data URL
+  for an in-page preview, nothing is actually uploaded anywhere.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+  input[type="time"], input[type="date"], input[type="text"] {
+    -webkit-appearance: none;
+  }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function clamp(v, min, max) { v = Number(v); if (Number.isNaN(v)) return min; return Math.min(max, Math.max(min, v)); }
+
+const DAYS = [
+  {key: 'senin', label: 'Senin'},
+  {key: 'selasa', label: 'Selasa'},
+  {key: 'rabu', label: 'Rabu'},
+  {key: 'kamis', label: 'Kamis'},
+  {key: 'jumat', label: 'Jumat'},
+  {key: 'sabtu', label: 'Sabtu'},
+  {key: 'minggu', label: 'Minggu'},
+];
+
+const BOUNDS = {
+  intervalPembaruanPapan: {min: 5, max: 60, unit: 'detik', default: 15},
+  targetWaktuTunggu: {min: 5, max: 120, unit: 'menit', default: 20},
+  slotHoldDurasi: {min: 2, max: 15, unit: 'menit', default: 5},
+};
+
+const DESKRIPSI_MAX = 200;
+
+function defaultLogoDataUri() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96">
+    <rect width="96" height="96" rx="20" fill="#2563eb"/>
+    <text x="48" y="61" font-size="38" font-family="-apple-system,sans-serif" font-weight="600" fill="white" text-anchor="middle">KS</text>
+  </svg>`;
+  return 'data:image/svg+xml;base64,' + btoa(svg);
+}
+
+function initialState() {
+  const jadwal = {};
+  DAYS.forEach(d => {
+    jadwal[d.key] = d.key === 'minggu'
+      ? {libur: true, buka: '08:00', tutup: '17:00'}
+      : {libur: false, buka: '08:00', tutup: '20:00'};
+  });
+  return {
+    saved: {
+      logoUrl: defaultLogoDataUri(),
+      deskripsi: 'Klinik keluarga dengan layanan lengkap, buka setiap hari, ramah untuk anak dan lansia.',
+      jamOperasional: {jadwal, liburKhusus: [
+        {id: 1, tanggal: '2026-12-25', label: 'Hari Natal'},
+        {id: 2, tanggal: '2027-01-01', label: 'Tahun Baru'},
+      ]},
+      intervalPembaruanPapan: 15,
+      targetWaktuTunggu: 20,
+      slotHoldDurasi: 5,
+    },
+    // draft is a deep-cloned working copy; "saved" only updates on Save.
+    draft: null,
+    // which summary card is currently expanded into its edit form
+    expandedCard: null,
+    liburKhususDraftInput: {tanggal: '', label: ''},
+    toast: null,
+  };
+}
+
+function cloneSaved() { return JSON.parse(JSON.stringify(state.saved)); }
+
+let state = initialState();
+state.draft = cloneSaved();
+
+function preserveFocusRender() {
+  const active = document.activeElement;
+  const id = active && active.id;
+  const selStart = active && active.selectionStart;
+  const selEnd = active && active.selectionEnd;
+  render();
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.focus();
+  if (selStart != null && el.setSelectionRange) {
+    try { el.setSelectionRange(selStart, selEnd); } catch (e) {}
+  }
+}
+
+function showToast(msg) {
+  state.toast = msg;
+  render();
+  setTimeout(() => { state.toast = null; render(); }, 1800);
+}
+
+function saveField(key) {
+  state.saved[key] = JSON.parse(JSON.stringify(state.draft[key]));
+  state.expandedCard = null;
+  showToast('Tersimpan.');
+}
+
+function cancelField(key) {
+  state.draft[key] = JSON.parse(JSON.stringify(state.saved[key]));
+  state.expandedCard = null;
+  render();
+}
+
+function setNumberField(key, value) {
+  const b = BOUNDS[key];
+  state.draft[key] = clamp(value, b.min, b.max);
+  render();
+}
+
+function setRawNumberField(key, value) {
+  // allow typing freely; clamp only shown as a warning until blur
+  state.draft[key] = value === '' ? '' : Number(value);
+  preserveFocusRender();
+}
+
+function toggleLibur(dayKey) {
+  const d = state.draft.jamOperasional.jadwal[dayKey];
+  d.libur = !d.libur;
+  render();
+}
+
+function setJamField(dayKey, field, value) {
+  state.draft.jamOperasional.jadwal[dayKey][field] = value;
+  render();
+}
+
+function addLiburKhusus() {
+  const {tanggal, label} = state.liburKhususDraftInput;
+  if (!tanggal || !label.trim()) return;
+  const list = state.draft.jamOperasional.liburKhusus;
+  const nextId = list.reduce((m, x) => Math.max(m, x.id), 0) + 1;
+  list.push({id: nextId, tanggal, label: label.trim()});
+  list.sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+  state.liburKhususDraftInput = {tanggal: '', label: ''};
+  render();
+}
+
+function removeLiburKhusus(id) {
+  state.draft.jamOperasional.liburKhusus = state.draft.jamOperasional.liburKhusus.filter(x => x.id !== id);
+  render();
+}
+
+function setLiburKhususDraft(field, value) {
+  state.liburKhususDraftInput[field] = value;
+  preserveFocusRender();
+}
+
+function toggleExpandedCard(key) {
+  state.expandedCard = state.expandedCard === key ? null : key;
+  render();
+}
+
+function onLogoFileChange(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.draft.logoUrl = reader.result;
+    render();
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeLogo() {
+  state.draft.logoUrl = null;
+  render();
+}
+
+function setDeskripsi(value) {
+  state.draft.deskripsi = value.slice(0, DESKRIPSI_MAX);
+  preserveFocusRender();
+}
+
+// ---------- field renderers ----------
+
+function logoFields() {
+  const url = state.draft.logoUrl;
+  return `
+    <div>
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Logo Klinik</h3>
+      <div class="flex items-center gap-4">
+        <div class="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
+          ${url ? `<img src="${url}" class="w-full h-full object-cover">` : `<span class="text-[11px] text-slate-400 text-center px-1">Belum ada logo</span>`}
+        </div>
+        <div class="space-y-1.5">
+          <label class="inline-block text-sm font-medium text-blue-600 hover:underline cursor-pointer">
+            ${url ? 'Ganti Logo' : 'Unggah Logo'}
+            <input type="file" accept="image/png,image/jpeg,image/svg+xml" class="hidden" onchange="onLogoFileChange(this)">
+          </label>
+          ${url ? `<button onclick="removeLogo()" class="block text-sm text-rose-500 hover:underline">Hapus Logo</button>` : ''}
+          <p class="text-xs text-slate-400">PNG/JPG/SVG, disarankan rasio 1:1. Tampil di halaman booking pasien dan Papan Status.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function deskripsiFields() {
+  const v = state.draft.deskripsi;
+  return `
+    <div>
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Deskripsi Klinik</h3>
+      <textarea id="field-deskripsi" maxlength="${DESKRIPSI_MAX}" rows="3"
+        oninput="setDeskripsi(this.value)"
+        placeholder="Deskripsi singkat tentang klinik ini..."
+        class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm resize-none">${esc(v)}</textarea>
+      <p class="text-xs text-slate-400 mt-1">${v.length}/${DESKRIPSI_MAX} karakter · tampil di halaman booking pasien.</p>
+    </div>
+  `;
+}
+
+function renderJamOperasionalFields() {
+  const jadwal = state.draft.jamOperasional.jadwal;
+  const rows = DAYS.map(d => {
+    const v = jadwal[d.key];
+    return `
+      <div class="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+        <label class="flex items-center gap-2 w-28 shrink-0 text-sm">
+          <input type="checkbox" ${v.libur ? '' : 'checked'}
+            onchange="toggleLibur('${d.key}')" class="rounded border-slate-300">
+          <span class="${v.libur ? 'text-slate-400' : 'text-slate-700'}">${esc(d.label)}</span>
+        </label>
+        ${v.libur
+          ? `<span class="text-xs text-rose-500 font-medium">Libur</span>`
+          : `
+            <input type="time" value="${esc(v.buka)}"
+              onchange="setJamField('${d.key}','buka',this.value)"
+              class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <span class="text-slate-400 text-sm">—</span>
+            <input type="time" value="${esc(v.tutup)}"
+              onchange="setJamField('${d.key}','tutup',this.value)"
+              class="border border-slate-300 rounded px-2 py-1 text-sm">
+          `}
+      </div>`;
+  }).join('');
+
+  const libur = state.draft.jamOperasional.liburKhusus;
+  const liburRows = libur.length
+    ? libur.map(x => `
+        <div class="flex items-center justify-between gap-2 py-1.5 text-sm">
+          <span class="text-slate-700">${esc(x.tanggal)} — ${esc(x.label)}</span>
+          <button onclick="removeLiburKhusus(${x.id})" class="text-slate-400 hover:text-rose-500 text-xs">Hapus</button>
+        </div>`).join('')
+    : `<p class="text-sm text-slate-400 italic">Belum ada hari libur khusus.</p>`;
+
+  return `
+    <div>
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Jam Buka per Hari</h3>
+      <div class="bg-white/60 rounded-lg px-3">${rows}</div>
+    </div>
+    <div class="mt-5">
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Kalender Libur Khusus</h3>
+      <div class="space-y-1 mb-3">${liburRows}</div>
+      <div class="flex items-center gap-2">
+        <input type="date" id="libur-tanggal" value="${esc(state.liburKhususDraftInput.tanggal)}"
+          onchange="setLiburKhususDraft('tanggal', this.value)"
+          class="border border-slate-300 rounded px-2 py-1 text-sm">
+        <input type="text" id="libur-label" placeholder="Nama libur (misal: Hari Raya)" value="${esc(state.liburKhususDraftInput.label)}"
+          oninput="setLiburKhususDraft('label', this.value)"
+          class="border border-slate-300 rounded px-2 py-1 text-sm flex-1">
+        <button onclick="addLiburKhusus()" class="bg-slate-800 text-white text-sm px-3 py-1.5 rounded hover:bg-slate-700">Tambah</button>
+      </div>
+    </div>
+  `;
+}
+
+function numberFieldBlock(key, label, help) {
+  const b = BOUNDS[key];
+  const v = state.draft[key];
+  const outOfBounds = v !== '' && (v < b.min || v > b.max);
+  return `
+    <div>
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">${esc(label)}</h3>
+      <div class="flex items-center gap-2">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" id="numfield-${key}" value="${esc(v)}"
+          oninput="setRawNumberField('${key}', this.value)"
+          onblur="setNumberField('${key}', this.value)"
+          class="w-24 border ${outOfBounds ? 'border-amber-400' : 'border-slate-300'} rounded px-2 py-1 text-sm">
+        <span class="text-sm text-slate-500">${b.unit}</span>
+      </div>
+      <p class="text-xs ${outOfBounds ? 'text-amber-600' : 'text-slate-400'} mt-1">
+        ${outOfBounds ? `Akan disesuaikan ke rentang ${b.min}–${b.max} ${b.unit} saat keluar dari kolom.` : esc(help)}
+      </p>
+    </div>
+  `;
+}
+
+function bookingFields() {
+  return numberFieldBlock('slotHoldDurasi', 'Durasi Penahanan Slot',
+    `Slot tertahan selama proses verifikasi OTP; dilepas otomatis jika tidak selesai dalam durasi ini. Rentang ${BOUNDS.slotHoldDurasi.min}–${BOUNDS.slotHoldDurasi.max} menit.`);
+}
+
+function summarizeJamOperasional() {
+  const jadwal = state.draft.jamOperasional.jadwal;
+  const buka = DAYS.filter(d => !jadwal[d.key].libur);
+  const libur = DAYS.filter(d => jadwal[d.key].libur);
+  if (!buka.length) return 'Tutup sepanjang minggu';
+  const sample = jadwal[buka[0].key];
+  const liburCount = state.draft.jamOperasional.liburKhusus.length;
+  return `${buka.map(d => d.label).join(', ')} · ${sample.buka}–${sample.tutup}`
+    + (libur.length ? `, ${libur.map(d => d.label).join('/')} libur` : '')
+    + ` · ${liburCount} libur khusus`;
+}
+
+function summarizeDeskripsi() {
+  const v = state.draft.deskripsi.trim();
+  if (!v) return 'Belum diisi';
+  return v.length > 70 ? esc(v.slice(0, 70)) + '…' : esc(v);
+}
+
+// ---------- header + toast ----------
+
+function renderHeader() {
+  return `
+    <header class="max-w-3xl mx-auto px-4 pt-6">
+      <p class="text-xs text-slate-400 mb-1">Klinik Sehat Bahagia · Admin Klinik</p>
+      <h1 class="text-2xl font-bold text-slate-800">Konfigurasi Klinik</h1>
+      <p class="text-sm text-slate-500 mt-1">Logo, deskripsi, jam operasional, papan status kunjungan, dan booking online — khusus untuk klinik ini.</p>
+    </header>
+  `;
+}
+
+function renderToast() {
+  if (!state.toast) return '';
+  return `<div data-anim="in" class="fixed top-4 right-4 bg-slate-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">${esc(state.toast)}</div>`;
+}
+
+// ---------- Kartu Ringkas: summary cards that expand in place ----------
+
+function summaryCard(key, title, summaryHtml, editFieldsHtml) {
+  const expanded = state.expandedCard === key;
+  return `
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+      <button onclick="toggleExpandedCard('${key}')" class="w-full text-left px-5 py-4 flex items-center justify-between hover:bg-slate-50">
+        <div>
+          <h2 class="text-base font-semibold text-slate-800">${esc(title)}</h2>
+          <p class="text-sm text-slate-500 mt-0.5">${summaryHtml}</p>
+        </div>
+        <span class="text-slate-400 text-sm">${expanded ? 'Tutup ▲' : 'Ubah ▾'}</span>
+      </button>
+      ${expanded ? `
+        <div data-anim="in" class="px-5 pb-5 border-t border-slate-100 pt-4">
+          ${editFieldsHtml}
+          <div class="mt-4 flex justify-end gap-2">
+            <button onclick="cancelField('${key}')" class="text-sm text-slate-500 px-3 py-1.5 hover:text-slate-700">Batal</button>
+            <button onclick="saveField('${key}')" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700">Simpan</button>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderCards() {
+  const url = state.draft.logoUrl;
+  const logoSummary = url
+    ? `<img src="${url}" class="w-5 h-5 rounded object-cover inline-block align-middle mr-1.5">Sudah diunggah`
+    : 'Belum ada logo';
+  const cards = [
+    summaryCard('logoUrl', 'Logo Klinik', logoSummary, logoFields()),
+    summaryCard('deskripsi', 'Deskripsi Klinik', summarizeDeskripsi(), deskripsiFields()),
+    summaryCard('jamOperasional', 'Jam Operasional', esc(summarizeJamOperasional()), renderJamOperasionalFields()),
+    summaryCard('intervalPembaruanPapan', 'Interval Pembaruan Papan', `${state.draft.intervalPembaruanPapan} detik`, numberFieldBlock('intervalPembaruanPapan', 'Interval Pembaruan Papan', `Rentang ${BOUNDS.intervalPembaruanPapan.min}–${BOUNDS.intervalPembaruanPapan.max} detik.`)),
+    summaryCard('targetWaktuTunggu', 'Target Waktu Tunggu', `${state.draft.targetWaktuTunggu} menit`, numberFieldBlock('targetWaktuTunggu', 'Target Waktu Tunggu', `Kartu "menunggu" ditandai merah setelah melewati durasi ini.`)),
+    summaryCard('slotHoldDurasi', 'Durasi Penahanan Slot', `${state.draft.slotHoldDurasi} menit`, bookingFields()),
+  ];
+  return `
+    <main class="max-w-3xl mx-auto px-4 py-6 space-y-4">
+      ${cards.join('')}
+    </main>
+  `;
+}
+
+// ---------- render + wiring ----------
+
+function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = renderToast() + renderHeader() + renderCards();
+}
+
+render();
+</script>
+</body>
+</html>
