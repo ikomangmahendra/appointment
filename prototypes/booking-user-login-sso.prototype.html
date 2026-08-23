@@ -26,13 +26,10 @@
 
     - Login methods narrowed to Google SSO or Email + Password only — the
       old "Masuk dengan No. HP + password" option is gone.
-    - Both login methods now go through a phone OTP step. Email+password
-      OTPs to the phone already on file (a 2nd factor on top of the
-      password); Google SSO — new or returning — also OTPs to a phone
-      number, collecting it first if the account doesn't have one yet. This
-      is stricter than ADR 0015's "can defer phone verification to the
-      first Appointment" for Google signups — this prototype always
-      verifies phone at login instead, per explicit feedback.
+    - Both login methods go through a phone OTP step. Email+password OTPs
+      to the phone already on file (a 2nd factor on top of the password);
+      Google SSO — new or returning — also OTPs to a phone number,
+      collecting it first if the account doesn't have one yet.
     - Tanggal (date) is now picked *before* Dokter, not after: Jadwal
       availability is a per-weekday recurring template (per CONTEXT.md's
       Jadwal definition), so the date has to be known before doctors can be
@@ -57,9 +54,48 @@
   30s cooldown — matching the resend behaviour already established in
   patient-booking-mobile.prototype.html's guest OTP step.
 
+  UPDATE (feedback round 3 — grilled against CONTEXT.md/ADR 0015, see the
+  User and Perangkat Terpercaya glossary entries): the "OTP on every login"
+  behaviour from round 1 was a prototyping shortcut, not the real decision.
+  This round reworks the mock "backend" (an in-memory ACCOUNTS registry
+  keyed by phone, module-scoped so it survives "reset demo" like a real
+  backend would, but not a page reload) to demonstrate what was actually
+  settled:
+
+    - Perangkat Terpercaya (Trusted Device): a `trustedPhones` set, also
+      module-scoped, tracks which phone numbers this device has already
+      OTP-verified. Any login — Google, Email+Password, or the guest OTP
+      itself — that succeeds for a phone adds it here; a later login
+      attempt for an already-trusted phone skips the OTP screen entirely.
+      This supersedes ADR 0015's "can defer phone verification to the
+      User's first Appointment": verification now always happens right at
+      that first login, but never again after, on that device — try
+      logging in once, tapping "Keluar" on the confirmation screen (this
+      clears trust, simulating a forgotten/shared device), then logging in
+      again with the same phone to see the OTP step return. Compare that
+      to using the wizard's own back-arrow to return to the gate screen
+      (which only clears the session, not device trust) and logging in
+      again — no OTP this time.
+    - Unique phone per User, Platform-wide: entering a phone already on
+      file in ACCOUNTS — via Google SSO's phone field, or by converting a
+      guest booking whose phone collides with an existing account — logs
+      into that existing account instead of creating a second one. Try
+      081234567890 (Budi's existing account) via "Lanjutkan dengan Google"
+      to see this. (A Google-email collision with an existing Email+
+      Password account resolves the same way in real life — this mock
+      just never surfaces a separate Google email field to demonstrate it
+      distinctly, since phone is the stronger, always-present signal here.)
+    - No separate "register" screen: a phone-only User account is created
+      by converting a completed guest booking, a single tap on the guest
+      "Booking Terkonfirmasi" screen ("Simpan No. HP ini sebagai akun") —
+      the phone's already OTP-verified from the booking itself, so no new
+      OTP and no email prompt. The appointment just booked stays Booked By
+      "Guest Patient" even after the conversion — Booked By is an audit
+      trail of what happened, not a live pointer to the current account.
+
   No backend, no persistence, no real OAuth/SMS — everything is canned
-  in-memory mock data, reset on reload. Any 4-6 digit code is accepted as a
-  valid OTP. See the harness banner below for test values.
+  in-memory mock data, reset on browser reload. Any 4-6 digit code is
+  accepted as a valid OTP. See the harness banner below for test values.
 
   Run: open this file directly in a browser (or a phone browser). Narrow the
   window to a phone width — it's designed for that viewport.
@@ -190,7 +226,7 @@
 <body>
 
 <div id="harness-banner">
-  <b>PROTOTYPE</b> — no backend · reload resets everything · Email+Password: <b>budi@example.com</b> / sandi bebas (akun "Budi Santoso") · No. HP untuk simulasi pasien yang sudah pernah berobat: <b>081277777777</b> ("Rian Saputra")
+  <b>PROTOTYPE</b> — reload resets everything · Login: <b>budi@example.com</b> / sandi bebas ("Budi Santoso", No. HP 081234567890) · Coba No. HP <b>081234567890</b> lewat Google/Tamu untuk lihat penautan ke akun Budi (bukan akun baru) · No. HP pasien yang sudah pernah berobat (belum jadi User): <b>081277777777</b> ("Rian Saputra") · Setelah login sekali, No. HP itu "dipercaya" di perangkat ini — coba login lagi tanpa OTP, atau tekan Keluar untuk lupakan
 </div>
 
 <div id="stage"><div id="phone">
@@ -229,16 +265,27 @@ function maskPhone(phone) {
   return digits.slice(0, 4) + "••••" + digits.slice(-4);
 }
 
-// The one existing account, reachable via email+password login.
-function makeBudiAccount() {
-  return {
-    nama: "Budi Santoso", email: "budi@example.com", phone: "081234567890",
-    patients: [
-      { id: "p1", nama: "Budi Santoso", rel: "Anda" },
-      { id: "p2", nama: "Sari Santoso", rel: "Anak · 8 th" },
-    ],
+// Simulated backend: every User account, keyed by phone (unique per User,
+// Platform-wide — see CONTEXT.md's User entry). Module-scoped like a real
+// backend would be: survives "reset demo" (a new booking), only cleared by
+// reloading the browser (standing in for "the account no longer exists").
+let ACCOUNTS = {};
+function seedAccounts() {
+  ACCOUNTS = {
+    "081234567890": {
+      nama: "Budi Santoso", email: "budi@example.com", phone: "081234567890",
+      patients: [
+        { id: "p1", nama: "Budi Santoso", rel: "Anda" },
+        { id: "p2", nama: "Sari Santoso", rel: "Anak · 8 th" },
+      ],
+    },
   };
 }
+seedAccounts();
+// Perangkat Terpercaya (Trusted Device): phones this device has already
+// OTP-verified. Also module-scoped — survives "reset demo", cleared by
+// reload (new device) or by tapping "Keluar" (forget this device).
+let trustedPhones = new Set();
 // A brand-new Google SSO signup — no phone on file yet, collected during login.
 function makeGoogleAccount(phone) {
   return { nama: "Dewi Lestari", email: null, phone, patients: [{ id: "p1", nama: "Dewi Lestari", rel: "Anda" }] };
@@ -263,6 +310,7 @@ function initialState() {
     newPatientForm: null,        // {nama, phone, dob, gender, nik} awaiting match-check
     matchedExternal: null,       // EXTERNAL_PATIENTS entry the new-patient form matched
     keluhan: "",
+    justConverted: false,        // guest just tapped "Simpan sebagai akun" on the done screen
   };
 }
 let a = initialState();
@@ -348,9 +396,10 @@ function screenGooglePhone() {
 function submitGooglePhone() {
   const phone = document.getElementById("in_googlePhone").value.trim();
   if (!phone) { alert("Masukkan No. HP."); return; }
-  a.pendingPhone = phone;
-  a.pendingAccount = makeGoogleAccount(phone);
-  a.step = "otpLogin"; render();
+  // Phone is unique per User, Platform-wide: an already-claimed phone logs
+  // into that existing account instead of creating a second one (Google
+  // signup or not) — try 081234567890 to see this.
+  loginWithPhone(phone, ACCOUNTS[phone] || makeGoogleAccount(phone));
 }
 function screenEmailLogin() {
   return `<div class="screen">
@@ -367,16 +416,34 @@ function submitEmailLogin() {
   const email = document.getElementById("in_email").value.trim().toLowerCase();
   const password = document.getElementById("in_password").value;
   if (!password) { alert("Masukkan kata sandi."); return; }
-  const acc = makeBudiAccount();
-  if (email !== acc.email) { alert("Email tidak ditemukan untuk demo ini — pakai budi@example.com, atau coba Google."); return; }
-  a.pendingPhone = acc.phone;
-  a.pendingAccount = acc;
-  a.step = "otpLogin"; render();
+  const acc = Object.values(ACCOUNTS).find(x => x.email === email);
+  if (!acc) { alert("Email tidak ditemukan untuk demo ini — pakai budi@example.com, atau coba Google."); return; }
+  loginWithPhone(acc.phone, acc);
+}
+// Perangkat Terpercaya: an already-trusted phone skips OTP entirely — the
+// account is "logged in" the moment credentials (Google phone, or
+// email+password) check out. An untrusted phone still needs OTP once.
+function loginWithPhone(phone, account) {
+  ACCOUNTS[phone] = account;
+  if (trustedPhones.has(phone)) {
+    completeLogin(account);
+  } else {
+    a.pendingPhone = phone;
+    a.pendingAccount = account;
+    a.step = "otpLogin"; render();
+  }
+}
+function completeLogin(account) {
+  trustedPhones.add(account.phone);
+  a.session = account;
+  a.patientId = account.patients[0].id;
+  a.pendingAccount = null; a.pendingPhone = "";
+  a.step = "layanan"; render();
 }
 function screenOtpLogin() {
   return `<div class="screen">
     <div class="topbar"><button class="back-btn" onclick="a.step='gate'; a.pendingAccount=null; render();">&#8592;</button><h1 class="title">Verifikasi OTP</h1></div>
-    <p class="subtitle">Kode dikirim ke ${maskPhone(a.pendingPhone)} (demo: masukkan kode apa saja).</p>
+    <p class="subtitle">Kode dikirim ke ${maskPhone(a.pendingPhone)} (demo: masukkan kode apa saja). Sekali saja per perangkat — lain kali No. HP ini tidak akan diminta OTP lagi di sini.</p>
     <input class="field" id="in_otpLogin" placeholder="Kode 4-6 digit" maxlength="6">
     <button class="primary-btn" onclick="submitOtpLogin()">Verifikasi &amp; Masuk</button>
     ${otpResendRow()}
@@ -385,10 +452,7 @@ function screenOtpLogin() {
 function submitOtpLogin() {
   const code = document.getElementById("in_otpLogin").value.trim();
   if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
-  a.session = a.pendingAccount;
-  a.patientId = a.session.patients[0].id;
-  a.pendingAccount = null; a.pendingPhone = "";
-  a.step = "layanan"; render();
+  completeLogin(a.pendingAccount);
 }
 
 /* ---- guest path (unchanged shape from the guest-wizard prototype) ---- */
@@ -419,7 +483,26 @@ function screenGuestOtp() {
 function submitGuestOtp() {
   const code = document.getElementById("in_guestOtp").value.trim();
   if (!code) { alert("Masukkan kode OTP (demo: bebas)."); return; }
+  // A guest's phone is just as OTP-verified as a User's — it earns the same
+  // Perangkat Terpercaya trust, so converting to an account later (or a
+  // future Google/Email+Password login with this phone) needs no more OTP.
+  trustedPhones.add(a.guestPhone);
   a.step = "layanan"; render();
+}
+// Guest -> User conversion: the only way to become a phone-only User (no
+// separate "register" screen exists). A single tap — phone's already
+// verified, email stays uncollected per ADR 0015 ("can be verified later").
+function convertGuestToAccount() {
+  const existing = ACCOUNTS[a.guestPhone];
+  const acc = existing || {
+    nama: a.guestName, email: null, phone: a.guestPhone,
+    patients: [{ id: "p1", nama: a.guestName, rel: "Anda" }],
+  };
+  ACCOUNTS[a.guestPhone] = acc;
+  a.session = acc;
+  a.patientId = acc.patients[0].id;
+  a.justConverted = true;
+  render();
 }
 
 /* ---- booking wizard ---- */
@@ -619,12 +702,24 @@ function screenConfirm() {
   </div>`;
 }
 function screenDone() {
-  const patientName = a.session ? a.session.patients.find(p => p.id === a.patientId).nama : a.guestName;
+  const wasGuest = !a.session || a.justConverted;
+  const patientName = wasGuest ? a.guestName : a.session.patients.find(p => p.id === a.patientId).nama;
+  const bookedBy = wasGuest ? "Guest Patient" : `User (${a.session.nama})`;
   return `<div class="screen" style="align-items:center;text-align:center;justify-content:center;">
     <div class="check-hero">&#10003;</div>
     <h1 class="title">Booking Terkonfirmasi</h1>
     <p class="subtitle">${fmtLayanan(a.layanan)} · ${fmtDokter(a.dokter)}<br>${a.dateLabel}, ${a.slot} · Pasien: ${patientName}</p>
-    <button class="secondary-btn" style="margin-top:16px;" onclick="reset();">Booking lagi (reset demo)</button>
+    <span class="badge booked-by">Booked By: ${bookedBy}</span>
+    ${a.justConverted ? `
+      <div class="banner-note">Akun tersimpan untuk No. HP ${maskPhone(a.guestPhone)} — lain kali cukup masuk lewat Google atau Email+Kata Sandi, tanpa OTP lagi di perangkat ini. Booking di atas tetap tercatat Booked By: Guest Patient — status ini adalah jejak audit, bukan penunjuk akun saat ini.</div>
+      <button class="primary-btn" style="margin-top:16px;" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
+    ` : a.session ? `
+      <button class="primary-btn" style="margin-top:16px;" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
+      <button class="ghost-btn" onclick="trustedPhones.delete(a.session.phone); reset();">Keluar (lupakan perangkat ini)</button>
+    ` : `
+      <button class="primary-btn" style="margin-top:16px;" onclick="convertGuestToAccount()">Simpan No. HP ini sebagai akun</button>
+      <button class="ghost-btn" onclick="reset();">Booking lagi (reset demo)</button>
+    `}
   </div>`;
 }
 
