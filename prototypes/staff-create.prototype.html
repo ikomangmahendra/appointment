@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Tambah Staff</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Sibling route to staff-management.prototype.html, mirroring the
+  dokter-management -> dokter-create split. A dedicated page for creating
+  a staff profile: Nama, Role (Admin Klinik / Resepsionis / Staf Layanan),
+  Layanan assignment (only shown for Staf Layanan), No. HP, and an
+  optional Email used to send the Undangan Akun invite immediately —
+  leaving it blank creates the profile with no login yet, same as
+  Dokter's "belum ada akun" state (see dokter-create.prototype.html).
+
+  No backend: submitting just shows a recap, same as dokter-create's
+  pattern. This file has its own copy of LAYANAN/ROLES so it stays a
+  single double-clickable file — see staff-management.prototype.html for
+  the shared roster shape.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+const LAYANAN = [
+  { id: 'l1', nama: 'Konsultasi Umum' },
+  { id: 'l2', nama: 'Gigi' },
+  { id: 'l3', nama: 'Fisioterapi' },
+  { id: 'l4', nama: 'Anak' },
+  { id: 'l5', nama: 'Mata' },
+  { id: 'l6', nama: 'THT' },
+  { id: 'l7', nama: 'Kulit & Kelamin' },
+  { id: 'l8', nama: 'Jantung' },
+];
+
+const ROLES = ['Admin Klinik', 'Resepsionis', 'Staf Layanan'];
+
+const state = { role: '', saved: null };
+
+function initials(nama) { return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+function updateRole(v) { state.role = v; render(); }
+
+function submitForm(e) {
+  e.preventDefault();
+  const nama = document.getElementById('f-nama').value.trim();
+  const role = state.role;
+  const telepon = document.getElementById('f-telepon').value.trim();
+  const email = document.getElementById('f-email').value.trim();
+  if (!nama || !role || !telepon) { alert('Nama, role, dan No. HP wajib diisi.'); return; }
+  let layananId = null;
+  if (role === 'Staf Layanan') {
+    layananId = document.getElementById('f-layanan').value;
+    if (!layananId) { alert('Pilih Layanan untuk Staf Layanan ini.'); return; }
+  }
+
+  state.saved = { nama, role, telepon, email: email || null, layananId, akun: email ? 'diundang' : 'belum ada akun' };
+  render();
+}
+
+function resetForm() {
+  state.role = '';
+  state.saved = null;
+  render();
+}
+
+function layananSelect() {
+  return `
+    <div>
+      <label class="block text-xs font-medium text-slate-500 mb-1">Layanan</label>
+      <select id="f-layanan" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+        <option value="">Pilih layanan…</option>
+        ${LAYANAN.map(l => `<option value="${l.id}">${l.nama}</option>`).join('')}
+      </select>
+    </div>`;
+}
+
+function render() {
+  if (state.saved) {
+    const s = state.saved;
+    document.getElementById('app').innerHTML = `
+      <div class="max-w-md mx-auto p-6">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 text-center">
+          <div class="w-16 h-16 mx-auto rounded-full overflow-hidden bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl font-semibold mb-4">${initials(s.nama)}</div>
+          <h1 class="text-lg font-semibold text-slate-800 mb-1">Staff ditambahkan</h1>
+          <p class="text-sm text-slate-500 mb-1">${esc(s.nama)} · ${esc(s.role)} · ${esc(s.telepon)}</p>
+          ${s.layananId ? `<p class="text-sm text-slate-500 mb-4">Layanan: ${LAYANAN.find(l => l.id === s.layananId).nama}</p>` : '<div class="mb-4"></div>'}
+          <p class="text-xs text-slate-400 mb-6">${s.email ? `Undangan akun dikirim ke ${esc(s.email)}.` : 'Belum ada email — undangan akun bisa dikirim nanti dari halaman profil.'}</p>
+          <div class="flex gap-2 justify-center">
+            <button onclick="resetForm()" class="px-4 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50">Tambah Staff Lain</button>
+            <a href="staff-management.prototype.html" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg">← Kembali ke Direktori</a>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  document.getElementById('app').innerHTML = `
+    <div class="max-w-lg mx-auto p-6">
+      <a href="staff-management.prototype.html" class="text-sm text-slate-500 hover:underline">← Kembali ke Direktori Staff</a>
+      <h1 class="text-lg font-semibold text-slate-800 mt-2 mb-5">Tambah Staff</h1>
+
+      <form onsubmit="submitForm(event)" class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Nama</label>
+          <input id="f-nama" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Nama Lengkap">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Role</label>
+          <select id="f-role" onchange="updateRole(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Pilih role…</option>
+            ${ROLES.map(r => `<option value="${r}" ${state.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+          </select>
+        </div>
+        ${state.role === 'Staf Layanan' ? layananSelect() : ''}
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">No. HP</label>
+          <input id="f-telepon" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="08xxxxxxxxxx">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Email <span class="text-slate-400 font-normal">(opsional — undangan akun dikirim ke sini)</span></label>
+          <input id="f-email" type="email" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="nama@kliniksehat.id">
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg">Simpan</button>
+          <a href="staff-management.prototype.html" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Batal</a>
+        </div>
+      </form>
+    </div>`;
+}
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Staff Management</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the Admin Klinik screen for managing its
+  Resepsionis, Staf Layanan, and fellow Admin Klinik accounts look like —
+  directory, inviting a new staff member, assigning a Staf Layanan to a
+  Layanan, and account lifecycle (issue #1 story #11)? Distinct from
+  dokter-management.prototype.html, which already covers Dokter profiles
+  and their own account invite — this prototype is the "everyone else"
+  side of the same story, kept separate rather than folded into the Dokter
+  screens since a Dokter's profile carries clinical fields (Spesialisasi,
+  Jenis Kelamin, Foto, Biografi) that don't apply here.
+
+  Naming note: called "Staff Management" rather than "User Management" on
+  purpose — CONTEXT.md already defines **User** as the Patient-side
+  booking account (distinct from Patient itself, ADR 0015). Reusing "User"
+  for staff accounts here would collide with that term, so this follows
+  the glossary's role vocabulary instead: Admin Klinik, Resepsionis, Staf
+  Layanan.
+
+  Same directory shape as dokter-management.prototype.html: search, role
+  filter, pagination (5/page). "Tambah Staff" and "Ubah Staff" live on
+  their own sibling pages — staff-create.prototype.html and
+  staff-detail.prototype.html?id= — matching that same split.
+
+  Open questions for a follow-up domain-modeling pass (not resolved here):
+    - Menonaktifkan Staff (this prototype's detail page includes a
+      deactivate toggle, generalizing ADR 0029's "deactivation is
+      independent of login revocation" from Dokter to every staff role —
+      needs its own ADR to confirm that generalization holds, and to
+      decide what happens if the *last* Admin Klinik is deactivated).
+    - Whether a Staf Layanan can be assigned to more than one Layanan, or
+      exactly one (modeled here as exactly one, mirroring "on-duty Staf
+      Layanan (one assigned per shift)" language in CONTEXT.md's Visit
+      Status Board entry — but that's a per-shift board assignment, not
+      necessarily this profile-level one, so worth re-checking).
+
+  No backend, no persistence — everything is canned in-memory data, reset
+  on reload.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md). Same Layanan roster as
+// dokter-management.prototype.html / penjadwalan-dokter.prototype.html so
+// all these prototypes read as the same clinic.
+// ---------------------------------------------------------------------------
+const LAYANAN = [
+  { id: 'l1', nama: 'Konsultasi Umum' },
+  { id: 'l2', nama: 'Gigi' },
+  { id: 'l3', nama: 'Fisioterapi' },
+  { id: 'l4', nama: 'Anak' },
+  { id: 'l5', nama: 'Mata' },
+  { id: 'l6', nama: 'THT' },
+  { id: 'l7', nama: 'Kulit & Kelamin' },
+  { id: 'l8', nama: 'Jantung' },
+];
+
+const ROLES = ['Admin Klinik', 'Resepsionis', 'Staf Layanan'];
+
+let STAFF = [
+  { id: 's1', nama: 'Sari Wulandari', role: 'Admin Klinik', telepon: '081311110001', email: 'sari@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: false },
+  { id: 's2', nama: 'Budi Santoso', role: 'Resepsionis', telepon: '081311110002', email: 'budi@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: false },
+  { id: 's3', nama: 'Dewi Anggraini', role: 'Resepsionis', telepon: '081311110003', email: 'dewi@kliniksehat.id', akun: 'diundang', layananId: null, nonaktif: false },
+  { id: 's4', nama: 'Fajar Nugroho', role: 'Staf Layanan', telepon: '081311110004', email: 'fajar@kliniksehat.id', akun: 'aktif', layananId: 'l1', nonaktif: false },
+  { id: 's5', nama: 'Gita Permata', role: 'Staf Layanan', telepon: '081311110005', email: 'gita@kliniksehat.id', akun: 'aktif', layananId: 'l2', nonaktif: false },
+  { id: 's6', nama: 'Hadi Kurniawan', role: 'Staf Layanan', telepon: '081311110006', email: null, akun: 'belum ada akun', layananId: 'l3', nonaktif: false },
+  { id: 's7', nama: 'Indah Lestari', role: 'Staf Layanan', telepon: '081311110007', email: 'indah@kliniksehat.id', akun: 'diundang', layananId: 'l4', nonaktif: false },
+  { id: 's8', nama: 'Joko Prasetyo', role: 'Resepsionis', telepon: '081311110008', email: 'joko@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: true },
+];
+
+const PAGE_SIZE = 5;
+
+const state = {
+  search: '',
+  roleFilter: '',
+  page: 1,
+};
+
+function layananNama(id) { return id ? LAYANAN.find(l => l.id === id).nama : null; }
+function initials(nama) { return nama.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+function akunBadge(akun) {
+  const map = {
+    'aktif': 'bg-emerald-100 text-emerald-700',
+    'diundang': 'bg-amber-100 text-amber-700',
+    'belum ada akun': 'bg-slate-200 text-slate-600',
+  };
+  return `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${map[akun]}">${akun}</span>`;
+}
+
+function statusBadge(nonaktif) {
+  return nonaktif
+    ? `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-rose-100 text-rose-700">nonaktif</span>`
+    : `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">aktif</span>`;
+}
+
+function avatar(s, sizeCls) {
+  return `<div class="${sizeCls} rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">${initials(s.nama)}</div>`;
+}
+
+function filteredStaff() {
+  const q = state.search.trim().toLowerCase();
+  return STAFF.filter(s => {
+    if (q && !s.nama.toLowerCase().includes(q)) return false;
+    if (state.roleFilter && s.role !== state.roleFilter) return false;
+    return true;
+  });
+}
+
+function updateSearch(v) { state.search = v; state.page = 1; render(); }
+function updateRoleFilter(v) { state.roleFilter = v; state.page = 1; render(); }
+function goToPage(p) { state.page = p; render(); }
+
+function render() {
+  const all = filteredStaff();
+  const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+  state.page = Math.min(state.page, totalPages);
+  const pageItems = all.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+
+  const rows = pageItems.map(s => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${s.nonaktif ? 'opacity-60' : ''}" onclick="location.href='staff-detail.prototype.html?id=${s.id}'">
+      <td class="px-4 py-3">
+        <div class="flex items-center gap-3">
+          ${avatar(s, 'w-9 h-9')}
+          <div>
+            <div class="font-medium text-slate-800">${esc(s.nama)}</div>
+            <div class="text-xs text-slate-500">${esc(s.telepon)}</div>
+          </div>
+        </div>
+      </td>
+      <td class="px-4 py-3 text-sm text-slate-600">${esc(s.role)}</td>
+      <td class="px-4 py-3 text-sm text-slate-600">${s.layananId ? `<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">${layananNama(s.layananId)}</span>` : '<span class="text-slate-300">—</span>'}</td>
+      <td class="px-4 py-3">${akunBadge(s.akun)}</td>
+      <td class="px-4 py-3">${statusBadge(s.nonaktif)}</td>
+      <td class="px-4 py-3 text-right whitespace-nowrap" onclick="event.stopPropagation()">
+        <a href="staff-detail.prototype.html?id=${s.id}" class="text-xs font-medium text-slate-700 hover:underline">Edit</a>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="6" class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada staff yang cocok dengan pencarian/filter.</td></tr>`;
+
+  document.getElementById('app').innerHTML = `
+    <div class="max-w-5xl mx-auto p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h1 class="text-lg font-semibold text-slate-800">Staff</h1>
+          <p class="text-sm text-slate-500">${STAFF.length} staff terdaftar di klinik ini</p>
+        </div>
+        <a href="staff-create.prototype.html" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">+ Tambah Staff</a>
+      </div>
+
+      <div class="flex flex-wrap gap-3 mb-4">
+        <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama staff…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+        <select onchange="updateRoleFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Role</option>
+          ${ROLES.map(r => `<option value="${r}" ${state.roleFilter === r ? 'selected' : ''}>${r}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left">
+          <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+            <tr><th class="px-4 py-3">Staff</th><th class="px-4 py-3">Role</th><th class="px-4 py-3">Layanan</th><th class="px-4 py-3">Akun</th><th class="px-4 py-3">Status</th><th class="px-4 py-3"></th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
+        <span>${all.length ? `Menampilkan ${(state.page - 1) * PAGE_SIZE + 1}–${Math.min(state.page * PAGE_SIZE, all.length)} dari ${all.length}` : ''}</span>
+        <div class="flex items-center gap-2">
+          <button onclick="goToPage(${state.page - 1})" ${state.page <= 1 ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">‹ Sebelumnya</button>
+          <span class="text-xs text-slate-500">Halaman ${state.page} dari ${totalPages}</span>
+          <button onclick="goToPage(${state.page + 1})" ${state.page >= totalPages ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">Berikutnya ›</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+render();
+</script>
+</body>
+</html>
