@@ -1,3 +1,7 @@
+---
+status: superseded by ADR 0027 (Spesialisasi moves from this platform-wide catalog to a per-Klinik one)
+---
+
 # Spesialisasi is a platform-wide, informational attribute of Dokter — distinct from Layanan
 
 A Dokter gains a mandatory **Spesialisasi** (e.g. "Umum", "Gigi", "Anak"): exactly one value per Dokter, drawn from a single platform-wide list curated by Super-Admin, deliberately *unlike* Layanan's per-Klinik catalog (ADR 0022) — a medical specialty is a recognized taxonomy independent of any one Klinik, whereas a service menu is not. Renaming a value updates it in place everywhere it's referenced; retiring one is blocked while any Dokter still holds it, so data never silently goes stale.
