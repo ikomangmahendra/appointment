@@ -16,19 +16,23 @@ _Avoid_: Tenant, Clinic Account
 **Super-Admin**:
 A Platform-level operator who provisions new Klinik and oversees the Platform as a whole, without managing individual clinics' staff or resources.
 
+**Staff**:
+Collective term for every Klinik-side role with its own Undangan Akun-granted login — Admin Klinik, Resepsionis, Staf Layanan, and Dokter — as distinct from User, the Platform-wide Patient-side booking account (see User). Staff Management is the umbrella feature for administering Admin Klinik, Resepsionis, and Staf Layanan accounts; a Dokter's own profile and account still live under Dokter's own management screens, since a Dokter profile carries clinical fields (Spesialisasi, Jenis Kelamin, Foto, Biografi) the other three roles don't have.
+_Avoid_: User (reserved for the Platform-wide, Patient-side account — see User; deliberately not reused here to avoid conflating the two)
+
 **Admin Klinik**:
-The administrator of a single Klinik, responsible for managing its Layanan, Dokter, staff accounts, and operating hours.
+The administrator of a single Klinik, responsible for managing its Layanan, Dokter, Staff accounts, and operating hours.
 
 **Resepsionis**:
 Front-desk staff at a Klinik who create Appointments from phone calls and Check-In patients on arrival. Can view (read-only) each Dokter's effective schedule via Kalender Audit Jadwal to inform phone bookings, but cannot create, edit, or delete Jadwal, Pengecualian Jadwal, or Jam Operasional — that stays exclusive to Admin Klinik.
 _Avoid_: Staf (too broad — use Resepsionis specifically for the front-desk role)
 
 **Staf Layanan**:
-Staff assigned to a specific Layanan who progress a patient through the remaining Visit Status stages (menunggu → sedang dilayani → selesai) on the day of the appointment.
+Staff assigned to a specific Layanan who progress a patient through the remaining Visit Status stages (menunggu → sedang dilayani → selesai) on the day of the appointment. This Layanan assignment is a profile-level, single-Layanan home assignment — distinct from the per-shift "on-duty" Staf Layanan shown on a Visit Status Board header, which is assigned per shift rather than fixed to the profile (see Visit Status Board); the two normally match but aren't the same field.
 _Avoid_: Perawat (clinics use this loosely for the role, but not every Staf Layanan is a nurse)
 
 **Dokter**:
-A practitioner at a Klinik who performs Layanan and has their own Jadwal, with a required Jenis Kelamin and Spesialisasi, and an optional Foto and Biografi (see each). See Undangan Akun for how a Dokter gains login access, and Menonaktifkan Dokter for removing one from active use.
+A practitioner at a Klinik who performs Layanan and has their own Jadwal, with a required Jenis Kelamin and Spesialisasi, and an optional Foto and Biografi (see each). See Undangan Akun for how a Dokter gains login access, and Menonaktifkan Staff for removing one from active use.
 
 **Spesialisasi**:
 A Dokter's field of medical practice (e.g. "Umum", "Gigi", "Anak") — a required, single-valued attribute, purely informational and distinct from Layanan: it carries no Harga or Deskripsi and constrains nothing about which Layanan a Dokter may be assigned to. Defined and owned per-Klinik by its Admin Klinik — who may add values, rename one (updates in place across that Klinik's own Dokter), or retire one (blocked while any of that Klinik's Dokter still holds it) — the same per-Klinik shape as Layanan's own catalog (see Layanan). A new Klinik's list is seeded once, at onboarding, from a fixed platform-wide default; from that point on each Klinik's list is entirely independent, with no further syncing and no ongoing Super-Admin role. Shown wherever a Dokter's name appears, including to Patients during booking, but only as passive context there — never a Patient-facing filter or search facet, though Admin Klinik may filter their own Dokter directory by it. See [ADR 0027](docs/adr/0027-spesialisasi-becomes-per-klinik.md), superseding [ADR 0026](docs/adr/0026-spesialisasi-is-platform-wide-informational-attribute.md).
@@ -46,12 +50,16 @@ An optional, short Patient-facing description of a Dokter — background, experi
 _Avoid_: Bio (Biografi is the term already used in the UI)
 
 **Undangan Akun**:
-How Admin Klinik grants a Resepsionis, Staf Layanan, or Dokter their login access: Admin Klinik invites them by email, and they set their own password via a link in that invitation — Admin Klinik never sets or learns the password itself. Until accepted, the profile exists (e.g. a Dokter can already be assigned Layanan and Jadwal) but has no usable login. See [ADR 0028](docs/adr/0028-staff-invite-sets-own-password.md).
+How an existing Admin Klinik grants a fellow Admin Klinik, a Resepsionis, a Staf Layanan, or a Dokter their login access: Admin Klinik invites them by email, and the recipient sets their own password via a link in that invitation — Admin Klinik never sets or learns the password itself — and choosing their Verifikasi Dua Langkah method at the same time, which is required, not optional, before the account can be used to log in. Until accepted, the profile exists (e.g. a Dokter can already be assigned Layanan and Jadwal) but has no usable login. For Admin Klinik, Resepsionis, and Staf Layanan, email is a required profile field captured at creation, so the invitation always goes out immediately — there is no "no email yet" profile state for these three roles. Dokter is a known, unresolved exception: a Dokter profile can still be created without an email and invited later (see Dokter Management), leaving Dokter as the only Staff role where a profile can exist with no invitation sent — reconciling this gap with the other three roles is left to a future pass. The very first Admin Klinik of a new Klinik is provisioned directly by Super-Admin at Klinik onboarding, not via Undangan Akun; every Admin Klinik after that is invited the same way as any other Staff role. See [ADR 0028](docs/adr/0028-staff-invite-sets-own-password.md) and [ADR 0031](docs/adr/0031-staff-2fa-is-mandatory-and-self-chosen.md).
 _Avoid_: Registrasi Staf (this is admin-initiated, not self-registration)
 
-**Menonaktifkan Dokter**:
-Admin Klinik removing a Dokter from active use (no longer assignable to new Layanan or Jadwal) without deleting their record — existing Jadwal and Appointment entries referencing that Dokter are preserved, the same soft-delete-only treatment Patient already gets. Independent of revoking that Dokter's Undangan Akun-granted login access: neither implies the other, so a Dokter on leave can keep their profile and history while login is revoked, and a Dokter leaving the Klinik can be deactivated while their account technically still exists. See [ADR 0029](docs/adr/0029-dokter-deactivation-and-login-revocation-are-independent.md).
-_Avoid_: Menghapus Dokter (deletion isn't how this works)
+**Verifikasi Dua Langkah**:
+A mandatory second login factor for every Staff account — either WhatsApp OTP or an Authenticator App (TOTP) — with the choice of *which* method left to the Staff member themselves at Undangan Akun onboarding, never configured on their behalf by Admin Klinik. Required across every Staff role, including Admin Klinik; distinct from User's phone-OTP *primary* login (see User) and from Perangkat Terpercaya, which is a User-only device-trust concept. See [ADR 0031](docs/adr/0031-staff-2fa-is-mandatory-and-self-chosen.md).
+_Avoid_: 2FA, MFA, OTP (the Bahasa Indonesia term is already used in the UI)
+
+**Menonaktifkan Staff**:
+Admin Klinik removing any Staff member — Admin Klinik, Resepsionis, Staf Layanan, or Dokter — from active use without deleting their record; for a Dokter this means no longer assignable to new Layanan or Jadwal, with existing Jadwal and Appointment entries preserved, the same soft-delete-only treatment Patient already gets. Independent of revoking that Staff member's Undangan Akun-granted login access: neither implies the other, so a Staff member on leave can keep their profile and history while login is revoked, and one leaving the Klinik can be deactivated while their account technically still exists. A Klinik must always retain at least one active Admin Klinik: deactivating the last one is blocked outright, not merely warned against. See [ADR 0029](docs/adr/0029-dokter-deactivation-and-login-revocation-are-independent.md) (the original Dokter-only decision) and [ADR 0030](docs/adr/0030-menonaktifkan-staff-generalizes-to-every-role.md) (generalizing it to every Staff role, plus the last-Admin-Klinik guard).
+_Avoid_: Menonaktifkan Dokter (superseded — this now covers every Staff role, not just Dokter), Menghapus Staff (deletion isn't how this works)
 
 **Patient**:
 A person receiving care from a Dokter, identified across the Platform by phone number and optionally NIK. A Patient never holds credentials or logs in itself — it can be created by a Resepsionis from a phone call, by a Kios walk-in registration, or as a profile a User manages. See User for the account that acts on a Patient's behalf.
