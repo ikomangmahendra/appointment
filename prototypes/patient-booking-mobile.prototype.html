@@ -120,6 +120,12 @@
     border:1.5px solid #dbdde3; border-radius:12px; font-size:14px; background:#fafbfc;
   }
   .gender-opt input { margin:0; }
+  .a-pill-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
+  .a-pill {
+    flex:1; min-width:90px; text-align:center; padding:12px 6px; border-radius:12px;
+    border:1.5px solid #e7e9ee; background:#fff; font-size:13.5px; font-weight:700; color:#1c1f26;
+  }
+  .a-pill:active { border-color: var(--accent); background:#f2f6ff; color: var(--accent); }
 
   /* ================= Wizard Bertahap ================= */
   .a-root { --accent: #2563eb; --accent-dark:#1d4ed8; display:flex; flex-direction:column; min-height:100%; }
@@ -225,10 +231,6 @@ function maskPhone(hp){
   return head + Array(hp.length-head.length-tail.length+1).join('*') + tail;
 }
 
-function days(n){ var out=[]; for(var i=0;i<n;i++){ var d=new Date(TODAY); d.setDate(d.getDate()+i); out.push(d); } return out; }
-var NEXT_DAYS = days(7);
-var RELATIVE_DAY_LABELS = ['Hari ini', 'Besok', 'Besok Lusa'];
-
 function hashKey(key){ var h=0; for(var i=0;i<key.length;i++){ h=(h*31+key.charCodeAt(i))>>>0; } return h; }
 function isBooked(key){ return hashKey(key)%5===0; } // ~20% pre-booked, deterministic
 
@@ -256,7 +258,7 @@ function slotsForDokterDate(dokter, layanan, date){
   return out;
 }
 
-// merges slots across matching dokter (when patient picked "any" or none yet)
+// merges slots across matching dokter when no specific dokter is picked yet
 function slotsForDate(date, layananId, dokterId){
   if(!layananId) return [];
   var layanan = layananById(layananId);
@@ -270,9 +272,6 @@ function slotsForDate(date, layananId, dokterId){
     });
   });
   return Object.keys(merged).sort().map(function(t){ return merged[t]; });
-}
-function countAvailable(date, layananId, dokterId){
-  return slotsForDate(date, layananId, dokterId).filter(function(s){ return !s.booked; }).length;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -410,6 +409,7 @@ function manageHoldTimer(){
 function goA(delta){ ui.A.step = Math.max(0, Math.min(6, ui.A.step+delta)); render(); }
 function selLayananA(id){ setLayanan(id); ui.A.step=1; render(); }
 function selDateA(iso){ setDate(iso); ui.A.step=2; render(); }
+function selDateOffsetA(n){ var d = new Date(TODAY); d.setDate(d.getDate()+n); selDateA(fmtDate(d)); }
 function selDokterA(id){ setDokter(id); ui.A.step=3; render(); }
 function selSlotA(time){ if(setSlot(time)) ui.A.step=4; render(); }
 function submitIdentitasA(){
@@ -460,11 +460,14 @@ function renderA(){
       out += '<div class="a-card" onclick="selLayananA(\''+l.id+'\')"><div><div class="name">'+l.nama+'</div><div class="sub">'+l.durasi+' menit &middot; '+l.desc+'</div></div><div class="price">'+idr(l.harga)+'</div></div>';
     });
   } else if(step===1){
-    NEXT_DAYS.forEach(function(d, i){
-      var avail = countAvailable(d, booking.layananId, booking.dokterId);
-      var label = RELATIVE_DAY_LABELS[i] || dayLabel(d);
-      out += '<div class="a-card'+(avail===0?' booked':'')+'" onclick="'+(avail>0?('selDateA(\''+fmtDate(d)+'\')'):'')+'"><div><div class="name">'+label+', '+shortDate(d)+'</div><div class="sub">'+(avail>0? avail+' jam tersedia' : 'Penuh')+'</div></div></div>';
-    });
+    out += '<p class="muted" style="font-size:12.5px;margin:0 0 4px;line-height:1.5">Jadwal Dokter berbeda tiap hari &mdash; pilih tanggal dulu supaya hanya Dokter yang praktik hari itu ditampilkan.</p>';
+    out += '<div class="a-pill-row">';
+    out += '<button class="a-pill" onclick="selDateOffsetA(0)">Hari ini</button>';
+    out += '<button class="a-pill" onclick="selDateOffsetA(1)">Besok</button>';
+    out += '<button class="a-pill" onclick="selDateOffsetA(2)">Besok Lusa</button>';
+    out += '</div>';
+    out += '<label class="flabel">atau pilih tanggal lain</label>';
+    out += '<input type="date" class="field" min="'+fmtDate(TODAY)+'" onchange="selDateA(this.value)">';
   } else if(step===2){
     var layananSel = layananById(booking.layananId);
     var dateSel = new Date(booking.dateISO+'T00:00:00');
