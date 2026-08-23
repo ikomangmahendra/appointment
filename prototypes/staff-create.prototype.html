@@ -10,15 +10,22 @@
   Sibling route to staff-management.prototype.html, mirroring the
   dokter-management -> dokter-create split. A dedicated page for creating
   a staff profile: Nama, Role (Admin Klinik / Resepsionis / Staf Layanan),
-  Layanan assignment (only shown for Staf Layanan), No. HP, and an
-  optional Email used to send the Undangan Akun invite immediately —
-  leaving it blank creates the profile with no login yet, same as
-  Dokter's "belum ada akun" state (see dokter-create.prototype.html).
+  Layanan assignment (only shown for Staf Layanan), No. HP, and Email —
+  the Undangan Akun invite is sent to it immediately on save.
 
   No backend: submitting just shows a recap, same as dokter-create's
   pattern. This file has its own copy of LAYANAN/ROLES so it stays a
   single double-clickable file — see staff-management.prototype.html for
   the shared roster shape.
+
+  UPDATE (feedback round 1): Email is now required (was optional, with a
+  no-email "belum ada akun" path) — every staff member is invited the
+  moment they're created, so that dead-end state no longer exists. The
+  recap also now mentions that the invited staff member picks their own
+  login verification method (WhatsApp OTP or Authenticator App) — see
+  staff-detail.prototype.html's header comment for why this extends
+  Issue #1's email+password-only auth decision, and is left open for a
+  domain-modeling pass.
 
   Run: open this file directly in a browser (double-click / File > Open).
 -->
@@ -63,14 +70,14 @@ function submitForm(e) {
   const role = state.role;
   const telepon = document.getElementById('f-telepon').value.trim();
   const email = document.getElementById('f-email').value.trim();
-  if (!nama || !role || !telepon) { alert('Nama, role, dan No. HP wajib diisi.'); return; }
+  if (!nama || !role || !telepon || !email) { alert('Nama, role, No. HP, dan email wajib diisi.'); return; }
   let layananId = null;
   if (role === 'Staf Layanan') {
     layananId = document.getElementById('f-layanan').value;
     if (!layananId) { alert('Pilih Layanan untuk Staf Layanan ini.'); return; }
   }
 
-  state.saved = { nama, role, telepon, email: email || null, layananId, akun: email ? 'diundang' : 'belum ada akun' };
+  state.saved = { nama, role, telepon, email, layananId, akun: 'diundang' };
   render();
 }
 
@@ -101,7 +108,7 @@ function render() {
           <h1 class="text-lg font-semibold text-slate-800 mb-1">Staff ditambahkan</h1>
           <p class="text-sm text-slate-500 mb-1">${esc(s.nama)} · ${esc(s.role)} · ${esc(s.telepon)}</p>
           ${s.layananId ? `<p class="text-sm text-slate-500 mb-4">Layanan: ${LAYANAN.find(l => l.id === s.layananId).nama}</p>` : '<div class="mb-4"></div>'}
-          <p class="text-xs text-slate-400 mb-6">${s.email ? `Undangan akun dikirim ke ${esc(s.email)}.` : 'Belum ada email — undangan akun bisa dikirim nanti dari halaman profil.'}</p>
+          <p class="text-xs text-slate-400 mb-6">Undangan akun dikirim ke ${esc(s.email)}. Staff akan memilih metode verifikasi login (WhatsApp OTP atau Authenticator App) saat menerima undangan.</p>
           <div class="flex gap-2 justify-center">
             <button onclick="resetForm()" class="px-4 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50">Tambah Staff Lain</button>
             <a href="staff-management.prototype.html" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg">← Kembali ke Direktori</a>
@@ -134,7 +141,7 @@ function render() {
           <input id="f-telepon" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="08xxxxxxxxxx">
         </div>
         <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Email <span class="text-slate-400 font-normal">(opsional — undangan akun dikirim ke sini)</span></label>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Email <span class="text-slate-400 font-normal">(undangan akun dikirim ke sini)</span></label>
           <input id="f-email" type="email" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="nama@kliniksehat.id">
         </div>
         <div class="flex gap-2 pt-2">

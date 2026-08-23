@@ -40,6 +40,15 @@
       Layanan (one assigned per shift)" language in CONTEXT.md's Visit
       Status Board entry — but that's a per-shift board assignment, not
       necessarily this profile-level one, so worth re-checking).
+    - See staff-detail.prototype.html for a 2FA/OTP method question opened
+      by feedback round 1.
+
+  UPDATE (feedback round 1):
+    - Email is now required (was optional), so every staff member is
+      invited immediately on creation — the "belum ada akun" (no email
+      yet) state is gone; only "diundang"/"aktif" remain. See
+      staff-create.prototype.html / staff-detail.prototype.html.
+    - Search now matches email as well as name.
 
   No backend, no persistence — everything is canned in-memory data, reset
   on reload.
@@ -88,7 +97,7 @@ let STAFF = [
   { id: 's3', nama: 'Dewi Anggraini', role: 'Resepsionis', telepon: '081311110003', email: 'dewi@kliniksehat.id', akun: 'diundang', layananId: null, nonaktif: false },
   { id: 's4', nama: 'Fajar Nugroho', role: 'Staf Layanan', telepon: '081311110004', email: 'fajar@kliniksehat.id', akun: 'aktif', layananId: 'l1', nonaktif: false },
   { id: 's5', nama: 'Gita Permata', role: 'Staf Layanan', telepon: '081311110005', email: 'gita@kliniksehat.id', akun: 'aktif', layananId: 'l2', nonaktif: false },
-  { id: 's6', nama: 'Hadi Kurniawan', role: 'Staf Layanan', telepon: '081311110006', email: null, akun: 'belum ada akun', layananId: 'l3', nonaktif: false },
+  { id: 's6', nama: 'Hadi Kurniawan', role: 'Staf Layanan', telepon: '081311110006', email: 'hadi@kliniksehat.id', akun: 'diundang', layananId: 'l3', nonaktif: false },
   { id: 's7', nama: 'Indah Lestari', role: 'Staf Layanan', telepon: '081311110007', email: 'indah@kliniksehat.id', akun: 'diundang', layananId: 'l4', nonaktif: false },
   { id: 's8', nama: 'Joko Prasetyo', role: 'Resepsionis', telepon: '081311110008', email: 'joko@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: true },
 ];
@@ -108,7 +117,6 @@ function akunBadge(akun) {
   const map = {
     'aktif': 'bg-emerald-100 text-emerald-700',
     'diundang': 'bg-amber-100 text-amber-700',
-    'belum ada akun': 'bg-slate-200 text-slate-600',
   };
   return `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${map[akun]}">${akun}</span>`;
 }
@@ -126,7 +134,7 @@ function avatar(s, sizeCls) {
 function filteredStaff() {
   const q = state.search.trim().toLowerCase();
   return STAFF.filter(s => {
-    if (q && !s.nama.toLowerCase().includes(q)) return false;
+    if (q && !s.nama.toLowerCase().includes(q) && !s.email.toLowerCase().includes(q)) return false;
     if (state.roleFilter && s.role !== state.roleFilter) return false;
     return true;
   });
@@ -149,7 +157,7 @@ function render() {
           ${avatar(s, 'w-9 h-9')}
           <div>
             <div class="font-medium text-slate-800">${esc(s.nama)}</div>
-            <div class="text-xs text-slate-500">${esc(s.telepon)}</div>
+            <div class="text-xs text-slate-500">${esc(s.telepon)} · ${esc(s.email)}</div>
           </div>
         </div>
       </td>
@@ -173,7 +181,7 @@ function render() {
       </div>
 
       <div class="flex flex-wrap gap-3 mb-4">
-        <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama staff…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+        <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama atau email staff…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
         <select onchange="updateRoleFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
           <option value="">Semua Role</option>
           ${ROLES.map(r => `<option value="${r}" ${state.roleFilter === r ? 'selected' : ''}>${r}</option>`).join('')}

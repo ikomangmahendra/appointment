@@ -9,13 +9,13 @@
 
   Sibling route to staff-management.prototype.html, mirroring the
   dokter-management -> dokter-detail split. A dedicated page for
-  viewing/editing one staff member's profile — Nama, Role, Layanan
-  assignment (Staf Layanan only), No. HP — plus two independent lifecycle
-  panels:
+  viewing/editing one staff member's profile — Nama, Role, Email, Layanan
+  assignment (Staf Layanan only), No. HP — plus three independent
+  lifecycle panels:
 
     - Akun login: the same Undangan Akun invite lifecycle already modeled
-      in dokter-detail.prototype.html (belum ada akun -> diundang ->
-      aktif).
+      in dokter-detail.prototype.html (diundang -> aktif).
+    - Verifikasi dua langkah: see the feedback-round-1 note below.
     - Status Staff: an aktif/nonaktif toggle, generalizing ADR 0029's
       "Menonaktifkan Dokter is independent of login revocation" to every
       staff role. Flagged here (and in staff-management.prototype.html's
@@ -27,9 +27,27 @@
   This file has its own copy of the roster (see staff-management's for the
   "real" shared shape) so it stays a single double-clickable file.
 
+  UPDATE (feedback round 1):
+    - Email is now required, editable in the main form like Nama/No. HP.
+      Since every staff member now has an email from creation onward, the
+      invite is always sent immediately — the "belum ada akun" state and
+      its undang() flow are gone (kirimUlangUndangan/simulasikanLogin
+      still apply to "diundang").
+    - Added a Verifikasi Dua Langkah panel (shown once an account is
+      aktif): staff pick WhatsApp OTP or an Authenticator App (TOTP).
+      This extends Issue #1's Implementation Decisions, which currently
+      specify staff auth as email+password only, with no OTP/2FA step —
+      flagging here rather than silently overriding, since a
+      domain-modeling pass still needs to decide whether it's mandatory,
+      opt-in, or applies per-role. Who *chooses* the method is also
+      unresolved: this stub exposes it as an Admin-Klinik-toggleable demo
+      control, but in practice the staff member would more plausibly pick
+      it themselves during onboarding, the same way they set their own
+      password (ADR 0028).
+
   Run: open this file directly in a browser (double-click / File > Open).
-  Try: ?id=s1..s8 — s3/s7 are "diundang", s6 is "belum ada akun", s8 is
-  "nonaktif", s1 is the only "Admin Klinik" (try deactivating it).
+  Try: ?id=s1..s8 — s3/s6/s7 are "diundang", s8 is "nonaktif", s1 is the
+  only "Admin Klinik" (try deactivating it).
 -->
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
@@ -61,14 +79,14 @@ const LAYANAN = [
 const ROLES = ['Admin Klinik', 'Resepsionis', 'Staf Layanan'];
 
 let STAFF = [
-  { id: 's1', nama: 'Sari Wulandari', role: 'Admin Klinik', telepon: '081311110001', email: 'sari@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: false },
-  { id: 's2', nama: 'Budi Santoso', role: 'Resepsionis', telepon: '081311110002', email: 'budi@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: false },
-  { id: 's3', nama: 'Dewi Anggraini', role: 'Resepsionis', telepon: '081311110003', email: 'dewi@kliniksehat.id', akun: 'diundang', layananId: null, nonaktif: false },
-  { id: 's4', nama: 'Fajar Nugroho', role: 'Staf Layanan', telepon: '081311110004', email: 'fajar@kliniksehat.id', akun: 'aktif', layananId: 'l1', nonaktif: false },
-  { id: 's5', nama: 'Gita Permata', role: 'Staf Layanan', telepon: '081311110005', email: 'gita@kliniksehat.id', akun: 'aktif', layananId: 'l2', nonaktif: false },
-  { id: 's6', nama: 'Hadi Kurniawan', role: 'Staf Layanan', telepon: '081311110006', email: null, akun: 'belum ada akun', layananId: 'l3', nonaktif: false },
-  { id: 's7', nama: 'Indah Lestari', role: 'Staf Layanan', telepon: '081311110007', email: 'indah@kliniksehat.id', akun: 'diundang', layananId: 'l4', nonaktif: false },
-  { id: 's8', nama: 'Joko Prasetyo', role: 'Resepsionis', telepon: '081311110008', email: 'joko@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: true },
+  { id: 's1', nama: 'Sari Wulandari', role: 'Admin Klinik', telepon: '081311110001', email: 'sari@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: false, otpMethod: 'authenticator' },
+  { id: 's2', nama: 'Budi Santoso', role: 'Resepsionis', telepon: '081311110002', email: 'budi@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: false, otpMethod: 'whatsapp' },
+  { id: 's3', nama: 'Dewi Anggraini', role: 'Resepsionis', telepon: '081311110003', email: 'dewi@kliniksehat.id', akun: 'diundang', layananId: null, nonaktif: false, otpMethod: null },
+  { id: 's4', nama: 'Fajar Nugroho', role: 'Staf Layanan', telepon: '081311110004', email: 'fajar@kliniksehat.id', akun: 'aktif', layananId: 'l1', nonaktif: false, otpMethod: null },
+  { id: 's5', nama: 'Gita Permata', role: 'Staf Layanan', telepon: '081311110005', email: 'gita@kliniksehat.id', akun: 'aktif', layananId: 'l2', nonaktif: false, otpMethod: 'whatsapp' },
+  { id: 's6', nama: 'Hadi Kurniawan', role: 'Staf Layanan', telepon: '081311110006', email: 'hadi@kliniksehat.id', akun: 'diundang', layananId: 'l3', nonaktif: false, otpMethod: null },
+  { id: 's7', nama: 'Indah Lestari', role: 'Staf Layanan', telepon: '081311110007', email: 'indah@kliniksehat.id', akun: 'diundang', layananId: 'l4', nonaktif: false, otpMethod: null },
+  { id: 's8', nama: 'Joko Prasetyo', role: 'Resepsionis', telepon: '081311110008', email: 'joko@kliniksehat.id', akun: 'aktif', layananId: null, nonaktif: true, otpMethod: 'authenticator' },
 ];
 
 const id = new URLSearchParams(location.search).get('id') || 's1';
@@ -81,10 +99,11 @@ function akunBadge(akun) {
   const map = {
     'aktif': 'bg-emerald-100 text-emerald-700',
     'diundang': 'bg-amber-100 text-amber-700',
-    'belum ada akun': 'bg-slate-200 text-slate-600',
   };
   return `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${map[akun]}">${akun}</span>`;
 }
+
+function otpLabel(m) { return m === 'whatsapp' ? 'WhatsApp OTP' : m === 'authenticator' ? 'Authenticator App' : 'Belum diatur'; }
 
 function updateRole(v) { state.role = v; render(); }
 
@@ -92,8 +111,9 @@ function saveForm(e) {
   e.preventDefault();
   const nama = document.getElementById('f-nama').value.trim();
   const role = state.role;
+  const email = document.getElementById('f-email').value.trim();
   const telepon = document.getElementById('f-telepon').value.trim();
-  if (!nama || !role || !telepon) { alert('Nama, role, dan No. HP wajib diisi.'); return; }
+  if (!nama || !role || !email || !telepon) { alert('Nama, role, email, dan No. HP wajib diisi.'); return; }
   let layananId = staff.layananId;
   if (role === 'Staf Layanan') {
     layananId = document.getElementById('f-layanan').value;
@@ -101,17 +121,14 @@ function saveForm(e) {
   } else {
     layananId = null;
   }
-  Object.assign(staff, { nama, role, telepon, layananId });
+  Object.assign(staff, { nama, role, email, telepon, layananId });
   state.toast = 'Perubahan disimpan.';
   render();
 }
 
-function undang() {
-  const email = prompt(`Kirim undangan akun ke email untuk ${staff.nama}:`, staff.email || '');
-  if (!email) return;
-  staff.email = email.trim();
-  staff.akun = 'diundang';
-  state.toast = `Undangan dikirim ke ${staff.email}.`;
+function aturOtp(method) {
+  staff.otpMethod = method;
+  state.toast = `(demo) Metode verifikasi dua langkah diatur ke ${otpLabel(method)}.`;
   render();
 }
 
@@ -181,6 +198,10 @@ function render() {
           </div>
           ${state.role === 'Staf Layanan' ? layananSelect(staff.layananId) : ''}
           <div>
+            <label class="block text-xs font-medium text-slate-500 mb-1">Email</label>
+            <input id="f-email" type="email" value="${esc(staff.email)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">No. HP</label>
             <input id="f-telepon" value="${esc(staff.telepon)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
           </div>
@@ -193,11 +214,23 @@ function render() {
               <span class="text-xs font-medium text-slate-500">Akun login</span>
               ${akunBadge(staff.akun)}
             </div>
-            <div class="text-sm text-slate-600 mb-3">${staff.email ? esc(staff.email) : 'Belum ada email terdaftar'}</div>
-            ${staff.akun === 'belum ada akun' ? `<button onclick="undang()" class="text-sm font-medium text-blue-600 hover:underline">Undang ke akun →</button>` : ''}
+            <div class="text-sm text-slate-600 mb-3">${esc(staff.email)}</div>
             ${staff.akun === 'diundang' ? `<div class="flex flex-col gap-2 items-start"><button onclick="kirimUlangUndangan()" class="text-sm font-medium text-blue-600 hover:underline">Kirim ulang undangan</button><button onclick="simulasikanLogin()" class="text-xs text-slate-400 hover:underline">(demo) tandai sudah login</button></div>` : ''}
             ${staff.akun === 'aktif' ? `<span class="text-sm text-emerald-700">✓ Sudah bisa login</span>` : ''}
           </div>
+
+          ${staff.akun === 'aktif' ? `
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-medium text-slate-500">Verifikasi dua langkah</span>
+              <span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${staff.otpMethod ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}">${otpLabel(staff.otpMethod)}</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-3">Kode OTP via WhatsApp, atau kode dari Authenticator App (TOTP) — staff biasanya memilih sendiri saat login pertama; ini kontrol demo untuk mengubahnya.</p>
+            <div class="flex gap-3">
+              <button onclick="aturOtp('whatsapp')" ${staff.otpMethod === 'whatsapp' ? 'disabled' : ''} class="text-sm font-medium ${staff.otpMethod === 'whatsapp' ? 'text-slate-300 cursor-default' : 'text-blue-600 hover:underline'}">WhatsApp OTP</button>
+              <button onclick="aturOtp('authenticator')" ${staff.otpMethod === 'authenticator' ? 'disabled' : ''} class="text-sm font-medium ${staff.otpMethod === 'authenticator' ? 'text-slate-300 cursor-default' : 'text-blue-600 hover:underline'}">Authenticator App</button>
+            </div>
+          </div>` : ''}
 
           <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
             <div class="flex items-center justify-between mb-2">
