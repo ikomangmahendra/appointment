@@ -28,11 +28,30 @@ Staff assigned to a specific Layanan who progress a patient through the remainin
 _Avoid_: Perawat (clinics use this loosely for the role, but not every Staf Layanan is a nurse)
 
 **Dokter**:
-A practitioner at a Klinik who performs Layanan and has their own Jadwal, and who has exactly one Spesialisasi.
+A practitioner at a Klinik who performs Layanan and has their own Jadwal, with a required Jenis Kelamin and Spesialisasi, and an optional Foto and Biografi (see each). See Undangan Akun for how a Dokter gains login access, and Menonaktifkan Dokter for removing one from active use.
 
 **Spesialisasi**:
-A Dokter's field of medical practice (e.g. "Umum", "Gigi", "Anak") — a required, single-valued attribute, purely informational and distinct from Layanan: it carries no Harga or Deskripsi and constrains nothing about which Layanan a Dokter may be assigned to. Drawn from one platform-wide list curated by Super-Admin (unlike Layanan, which has no Platform-wide catalog — see Layanan), not defined per-Klinik. Super-Admin may rename a value (updates in place everywhere it's used) or retire one, though retiring is blocked while any Dokter still holds it. Shown wherever a Dokter's name appears, including to Patients during booking, but only as passive context — never a filter or search facet. See [ADR 0026](docs/adr/0026-spesialisasi-is-platform-wide-informational-attribute.md).
+A Dokter's field of medical practice (e.g. "Umum", "Gigi", "Anak") — a required, single-valued attribute, purely informational and distinct from Layanan: it carries no Harga or Deskripsi and constrains nothing about which Layanan a Dokter may be assigned to. Defined and owned per-Klinik by its Admin Klinik — who may add values, rename one (updates in place across that Klinik's own Dokter), or retire one (blocked while any of that Klinik's Dokter still holds it) — the same per-Klinik shape as Layanan's own catalog (see Layanan). A new Klinik's list is seeded once, at onboarding, from a fixed platform-wide default; from that point on each Klinik's list is entirely independent, with no further syncing and no ongoing Super-Admin role. Shown wherever a Dokter's name appears, including to Patients during booking, but only as passive context there — never a Patient-facing filter or search facet, though Admin Klinik may filter their own Dokter directory by it. See [ADR 0027](docs/adr/0027-spesialisasi-becomes-per-klinik.md), superseding [ADR 0026](docs/adr/0026-spesialisasi-is-platform-wide-informational-attribute.md).
 _Avoid_: Spesialis (names the person/role, not the attribute)
+
+**Jenis Kelamin**:
+A Dokter's gender — Laki-laki or Perempuan, the same two-value vocabulary already used for Patient. Required, purely informational: shown as passive context wherever a Dokter's name appears (including Admin Klinik's own Dokter directory and the Patient-facing booking picker), never a filter or search facet on either side.
+
+**Foto**:
+An optional photo of a Dokter, addable at any time (a Dokter profile is usable without one). Once set, it's Patient-facing — shown wherever a Dokter's name appears during booking, not just to Admin Klinik.
+_Avoid_: Avatar, Gambar Profil (Foto is the term already used in the UI)
+
+**Biografi**:
+An optional, short Patient-facing description of a Dokter — background, experience, focus areas — shown during booking for the same reason Layanan's Deskripsi is: it helps a Patient decide who to book with.
+_Avoid_: Bio (Biografi is the term already used in the UI)
+
+**Undangan Akun**:
+How Admin Klinik grants a Resepsionis, Staf Layanan, or Dokter their login access: Admin Klinik invites them by email, and they set their own password via a link in that invitation — Admin Klinik never sets or learns the password itself. Until accepted, the profile exists (e.g. a Dokter can already be assigned Layanan and Jadwal) but has no usable login. See [ADR 0028](docs/adr/0028-staff-invite-sets-own-password.md).
+_Avoid_: Registrasi Staf (this is admin-initiated, not self-registration)
+
+**Menonaktifkan Dokter**:
+Admin Klinik removing a Dokter from active use (no longer assignable to new Layanan or Jadwal) without deleting their record — existing Jadwal and Appointment entries referencing that Dokter are preserved, the same soft-delete-only treatment Patient already gets. Independent of revoking that Dokter's Undangan Akun-granted login access: neither implies the other, so a Dokter on leave can keep their profile and history while login is revoked, and a Dokter leaving the Klinik can be deactivated while their account technically still exists. See [ADR 0029](docs/adr/0029-dokter-deactivation-and-login-revocation-are-independent.md).
+_Avoid_: Menghapus Dokter (deletion isn't how this works)
 
 **Patient**:
 A person receiving care from a Dokter, identified across the Platform by phone number and optionally NIK. A Patient never holds credentials or logs in itself — it can be created by a Resepsionis from a phone call, by a Kios walk-in registration, or as a profile a User manages. See User for the account that acts on a Patient's behalf.
