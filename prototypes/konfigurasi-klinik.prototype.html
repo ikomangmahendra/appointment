@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Konfigurasi Klinik</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should Admin Klinik's own "Konfigurasi Klinik" screen look
+  like? Today these settings only exist as prose in CONTEXT.md, scattered
+  across unrelated sections, with no screen at all:
+    - Jam Operasional: opening hours per weekday + a libur khusus (holiday)
+      calendar. Klinik-wide, independent of any one Dokter's Jadwal.
+    - Interval Pembaruan Papan: how often the Visit Status Board polls.
+      Default 15s, bounded 5-60s.
+    - Target Waktu Tunggu: the wait considered reasonable before a
+      `menunggu` card flags red on the Visit Status Board. Admin-Klinik
+      configured, no fixed bound in CONTEXT.md — this prototype assumes a
+      sane 5-120 minute range pending a real decision.
+    - Slot Hold duration: how long a `pending` Appointment holds its Slot
+      before the scheduler releases it. Default 5 min, bounded 2-15 min.
+
+  Deliberately NOT included: Spesialisasi (already has its own per-Klinik
+  management surface under Dokter Management per ADR 0027) and the Klinik's
+  own profile/timezone/Admin-Klinik-account fields (that's
+  klinik-detail.prototype.html — a Super-Admin provisioning screen, a
+  different actor and a different concern from this one).
+
+  Three variants of Konfigurasi Klinik, switchable via ?variant=, on a new
+  prototype route — there's no existing Admin Klinik settings page for
+  this to slot into yet:
+
+    A — Satu Halaman: every setting on one scrolling page, grouped into
+        sectioned cards, with a single sticky "unsaved changes" bar at the
+        bottom that appears once anything is dirty.
+    B — Sidebar Kategori: a settings-app shape — left nav lists the three
+        categories (Jam Operasional / Papan Status Kunjungan / Booking
+        Online), the right pane shows only the selected category, each
+        category saves independently.
+    C — Kartu Ringkas: a dashboard of summary cards showing each setting's
+        current value at a glance; clicking a card expands it in place into
+        an edit form, collapsing back to a summary on save.
+
+  All three variants share one in-memory state object and re-render from it,
+  so flipping variants never loses an edit that hasn't been saved yet.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+  Try: ?variant=A, ?variant=B, ?variant=C (also via the switcher at the
+  bottom of the page, or ← / → arrow keys).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+  input[type="time"], input[type="number"], input[type="date"], input[type="text"] {
+    -webkit-appearance: none;
+  }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+function clamp(v, min, max) { v = Number(v); if (Number.isNaN(v)) return min; return Math.min(max, Math.max(min, v)); }
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+const DAYS = [
+  {key: 'senin', label: 'Senin'},
+  {key: 'selasa', label: 'Selasa'},
+  {key: 'rabu', label: 'Rabu'},
+  {key: 'kamis', label: 'Kamis'},
+  {key: 'jumat', label: 'Jumat'},
+  {key: 'sabtu', label: 'Sabtu'},
+  {key: 'minggu', label: 'Minggu'},
+];
+
+const BOUNDS = {
+  intervalPembaruanPapan: {min: 5, max: 60, unit: 'detik', default: 15},
+  targetWaktuTunggu: {min: 5, max: 120, unit: 'menit', default: 20},
+  slotHoldDurasi: {min: 2, max: 15, unit: 'menit', default: 5},
+};
+
+function initialState() {
+  const jadwal = {};
+  DAYS.forEach(d => {
+    jadwal[d.key] = d.key === 'minggu'
+      ? {libur: true, buka: '08:00', tutup: '17:00'}
+      : {libur: false, buka: '08:00', tutup: '20:00'};
+  });
+  return {
+    variant: (new URLSearchParams(location.search).get('variant') || 'A').toUpperCase(),
+    saved: {
+      jamOperasional: {jadwal, liburKhusus: [
+        {id: 1, tanggal: '2026-12-25', label: 'Hari Natal'},
+        {id: 2, tanggal: '2027-01-01', label: 'Tahun Baru'},
+      ]},
+      intervalPembaruanPapan: 15,
+      targetWaktuTunggu: 20,
+      slotHoldDurasi: 5,
+    },
+    // draft is a deep-cloned working copy; "saved" only updates on Save.
+    draft: null,
+    // Variant B tracks which category is open; Variant C tracks which card is expanded.
+    activeCategory: 'jamOperasional',
+    expandedCard: null,
+    liburKhususDraftInput: {tanggal: '', label: ''},
+    toast: null,
+  };
+}
+
+function cloneSaved() { return JSON.parse(JSON.stringify(state.saved)); }
+
+let state = initialState();
+state.draft = cloneSaved();
+
+function isDirty() { return JSON.stringify(state.draft) !== JSON.stringify(state.saved); }
+
+function setVariant(v) {
+  state.variant = v;
+  const url = new URL(location.href);
+  url.searchParams.set('variant', v);
+  history.replaceState(null, '', url);
+  render();
+}
+
+function cycleVariant(dir) {
+  const order = ['A', 'B', 'C'];
+  const i = order.indexOf(state.variant);
+  setVariant(order[(i + dir + order.length) % order.length]);
+}
+
+function showToast(msg) {
+  state.toast = msg;
+  render();
+  setTimeout(() => { state.toast = null; render(); }, 1800);
+}
+
+function saveAll() {
+  state.saved = JSON.parse(JSON.stringify(state.draft));
+  showToast('Konfigurasi disimpan.');
+}
+
+function saveCategory() {
+  // In variant B, "save" is per-category but there's only one draft object,
+  // so this commits just the active category's slice.
+  const key = state.activeCategory === 'papan' ? null : state.activeCategory;
+  if (key) {
+    state.saved[key] = JSON.parse(JSON.stringify(state.draft[key]));
+  } else {
+    state.saved.intervalPembaruanPapan = state.draft.intervalPembaruanPapan;
+    state.saved.targetWaktuTunggu = state.draft.targetWaktuTunggu;
+  }
+  if (state.activeCategory === 'booking') {
+    state.saved.slotHoldDurasi = state.draft.slotHoldDurasi;
+  }
+  showToast('Kategori disimpan.');
+}
+
+function saveField(key) {
+  state.saved[key] = JSON.parse(JSON.stringify(state.draft[key]));
+  state.expandedCard = null;
+  showToast('Tersimpan.');
+}
+
+function discardAll() {
+  state.draft = cloneSaved();
+  render();
+}
+
+function setNumberField(key, value) {
+  const b = BOUNDS[key];
+  state.draft[key] = clamp(value, b.min, b.max);
+  render();
+}
+
+function setRawNumberField(key, value) {
+  // allow typing freely; clamp only shown as a warning until blur
+  state.draft[key] = value === '' ? '' : Number(value);
+  render();
+}
+
+function toggleLibur(dayKey) {
+  const d = state.draft.jamOperasional.jadwal[dayKey];
+  d.libur = !d.libur;
+  render();
+}
+
+function setJamField(dayKey, field, value) {
+  state.draft.jamOperasional.jadwal[dayKey][field] = value;
+  render();
+}
+
+function addLiburKhusus() {
+  const {tanggal, label} = state.liburKhususDraftInput;
+  if (!tanggal || !label.trim()) return;
+  const list = state.draft.jamOperasional.liburKhusus;
+  const nextId = list.reduce((m, x) => Math.max(m, x.id), 0) + 1;
+  list.push({id: nextId, tanggal, label: label.trim()});
+  list.sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+  state.liburKhususDraftInput = {tanggal: '', label: ''};
+  render();
+}
+
+function removeLiburKhusus(id) {
+  state.draft.jamOperasional.liburKhusus = state.draft.jamOperasional.liburKhusus.filter(x => x.id !== id);
+  render();
+}
+
+function setLiburKhususDraft(field, value) {
+  state.liburKhususDraftInput[field] = value;
+  render();
+}
+
+function setActiveCategory(key) {
+  state.activeCategory = key;
+  render();
+}
+
+function toggleExpandedCard(key) {
+  state.expandedCard = state.expandedCard === key ? null : key;
+  render();
+}
+
+// ---------- shared field renderers ----------
+
+function renderJamOperasionalFields(scopeIdPrefix) {
+  const jadwal = state.draft.jamOperasional.jadwal;
+  const rows = DAYS.map(d => {
+    const v = jadwal[d.key];
+    return `
+      <div class="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+        <label class="flex items-center gap-2 w-28 shrink-0 text-sm">
+          <input type="checkbox" ${v.libur ? '' : 'checked'}
+            onchange="toggleLibur('${d.key}')" class="rounded border-slate-300">
+          <span class="${v.libur ? 'text-slate-400' : 'text-slate-700'}">${esc(d.label)}</span>
+        </label>
+        ${v.libur
+          ? `<span class="text-xs text-rose-500 font-medium">Libur</span>`
+          : `
+            <input type="time" value="${esc(v.buka)}"
+              onchange="setJamField('${d.key}','buka',this.value)"
+              class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <span class="text-slate-400 text-sm">—</span>
+            <input type="time" value="${esc(v.tutup)}"
+              onchange="setJamField('${d.key}','tutup',this.value)"
+              class="border border-slate-300 rounded px-2 py-1 text-sm">
+          `}
+      </div>`;
+  }).join('');
+
+  const libur = state.draft.jamOperasional.liburKhusus;
+  const liburRows = libur.length
+    ? libur.map(x => `
+        <div class="flex items-center justify-between gap-2 py-1.5 text-sm">
+          <span class="text-slate-700">${esc(x.tanggal)} — ${esc(x.label)}</span>
+          <button onclick="removeLiburKhusus(${x.id})" class="text-slate-400 hover:text-rose-500 text-xs">Hapus</button>
+        </div>`).join('')
+    : `<p class="text-sm text-slate-400 italic">Belum ada hari libur khusus.</p>`;
+
+  return `
+    <div>
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Jam Buka per Hari</h3>
+      <div class="bg-white/60 rounded-lg px-3">${rows}</div>
+    </div>
+    <div class="mt-5">
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">Kalender Libur Khusus</h3>
+      <div class="space-y-1 mb-3">${liburRows}</div>
+      <div class="flex items-center gap-2">
+        <input type="date" id="${scopeIdPrefix}-libur-tanggal" value="${esc(state.liburKhususDraftInput.tanggal)}"
+          onchange="setLiburKhususDraft('tanggal', this.value)"
+          class="border border-slate-300 rounded px-2 py-1 text-sm">
+        <input type="text" placeholder="Nama libur (misal: Hari Raya)" value="${esc(state.liburKhususDraftInput.label)}"
+          oninput="setLiburKhususDraft('label', this.value)"
+          class="border border-slate-300 rounded px-2 py-1 text-sm flex-1">
+        <button onclick="addLiburKhusus()" class="bg-slate-800 text-white text-sm px-3 py-1.5 rounded hover:bg-slate-700">Tambah</button>
+      </div>
+    </div>
+  `;
+}
+
+function numberFieldBlock(key, label, help) {
+  const b = BOUNDS[key];
+  const v = state.draft[key];
+  const outOfBounds = v !== '' && (v < b.min || v > b.max);
+  return `
+    <div>
+      <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">${esc(label)}</h3>
+      <div class="flex items-center gap-2">
+        <input type="number" value="${esc(v)}" min="${b.min}" max="${b.max}"
+          oninput="setRawNumberField('${key}', this.value)"
+          onblur="setNumberField('${key}', this.value)"
+          class="w-24 border ${outOfBounds ? 'border-amber-400' : 'border-slate-300'} rounded px-2 py-1 text-sm">
+        <span class="text-sm text-slate-500">${b.unit}</span>
+      </div>
+      <p class="text-xs ${outOfBounds ? 'text-amber-600' : 'text-slate-400'} mt-1">
+        ${outOfBounds ? `Akan disesuaikan ke rentang ${b.min}–${b.max} ${b.unit} saat keluar dari kolom.` : esc(help)}
+      </p>
+    </div>
+  `;
+}
+
+function papanFields() {
+  return numberFieldBlock('intervalPembaruanPapan', 'Interval Pembaruan Papan',
+      `Seberapa sering Papan Status Kunjungan memuat ulang data. Rentang ${BOUNDS.intervalPembaruanPapan.min}–${BOUNDS.intervalPembaruanPapan.max} detik.`)
+    + `<div class="mt-5">` + numberFieldBlock('targetWaktuTunggu', 'Target Waktu Tunggu',
+      `Kartu "menunggu" akan ditandai merah setelah melewati durasi ini.`) + `</div>`;
+}
+
+function bookingFields() {
+  return numberFieldBlock('slotHoldDurasi', 'Durasi Penahanan Slot',
+    `Slot tertahan selama proses verifikasi OTP; dilepas otomatis jika tidak selesai dalam durasi ini. Rentang ${BOUNDS.slotHoldDurasi.min}–${BOUNDS.slotHoldDurasi.max} menit.`);
+}
+
+function summarizeJamOperasional() {
+  const jadwal = state.draft.jamOperasional.jadwal;
+  const buka = DAYS.filter(d => !jadwal[d.key].libur);
+  const libur = DAYS.filter(d => jadwal[d.key].libur);
+  if (!buka.length) return 'Tutup sepanjang minggu';
+  const sample = jadwal[buka[0].key];
+  const liburCount = state.draft.jamOperasional.liburKhusus.length;
+  return `${buka.map(d => d.label).join(', ')} · ${sample.buka}–${sample.tutup}`
+    + (libur.length ? `, ${libur.map(d => d.label).join('/')} libur` : '')
+    + ` · ${liburCount} libur khusus`;
+}
+
+// ---------- header + toast + switcher (shared across variants) ----------
+
+function renderHeader() {
+  return `
+    <header class="max-w-5xl mx-auto px-4 pt-6">
+      <p class="text-xs text-slate-400 mb-1">Klinik Sehat Bahagia · Admin Klinik</p>
+      <h1 class="text-2xl font-bold text-slate-800">Konfigurasi Klinik</h1>
+      <p class="text-sm text-slate-500 mt-1">Jam operasional, papan status kunjungan, dan booking online — khusus untuk klinik ini.</p>
+    </header>
+  `;
+}
+
+function renderToast() {
+  if (!state.toast) return '';
+  return `<div data-anim="in" class="fixed top-4 right-4 bg-slate-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">${esc(state.toast)}</div>`;
+}
+
+function renderSwitcher() {
+  const labels = {A: 'Satu Halaman', B: 'Sidebar Kategori', C: 'Kartu Ringkas'};
+  return `
+    <div class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-900 text-white rounded-full shadow-xl px-2 py-1.5 flex items-center gap-3 text-sm z-50">
+      <button onclick="cycleVariant(-1)" class="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10">←</button>
+      <span class="font-medium">${state.variant} <span class="text-slate-300">(${esc(labels[state.variant])})</span></span>
+      <button onclick="cycleVariant(1)" class="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10">→</button>
+    </div>
+  `;
+}
+
+// ---------- Variant A: Satu Halaman ----------
+
+function renderA() {
+  const dirty = isDirty();
+  return `
+    <main class="max-w-5xl mx-auto px-4 py-6 space-y-5">
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Jam Operasional</h2>
+        ${renderJamOperasionalFields('a')}
+      </section>
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Papan Status Kunjungan</h2>
+        ${papanFields()}
+      </section>
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Booking Online</h2>
+        ${bookingFields()}
+      </section>
+    </main>
+    ${dirty ? `
+      <div data-anim="in" class="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white border border-slate-200 shadow-lg rounded-xl px-4 py-3 flex items-center gap-3 z-40">
+        <span class="text-sm text-slate-600">Ada perubahan yang belum disimpan.</span>
+        <button onclick="discardAll()" class="text-sm text-slate-500 hover:text-slate-700 px-2">Batalkan</button>
+        <button onclick="saveAll()" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700">Simpan Semua</button>
+      </div>` : ''}
+  `;
+}
+
+// ---------- Variant B: Sidebar Kategori ----------
+
+function renderB() {
+  const categories = [
+    {key: 'jamOperasional', label: 'Jam Operasional', desc: summarizeJamOperasional()},
+    {key: 'papan', label: 'Papan Status Kunjungan', desc: `${state.draft.intervalPembaruanPapan}s pembaruan · target ${state.draft.targetWaktuTunggu} menit`},
+    {key: 'booking', label: 'Booking Online', desc: `Slot Hold ${state.draft.slotHoldDurasi} menit`},
+  ];
+  const nav = categories.map(c => `
+    <button onclick="setActiveCategory('${c.key}')"
+      class="w-full text-left px-4 py-3 rounded-lg mb-1 transition ${state.activeCategory === c.key ? 'bg-slate-800 text-white' : 'hover:bg-slate-200 text-slate-700'}">
+      <div class="font-medium text-sm">${esc(c.label)}</div>
+      <div class="text-xs ${state.activeCategory === c.key ? 'text-slate-300' : 'text-slate-400'} mt-0.5">${esc(c.desc)}</div>
+    </button>
+  `).join('');
+
+  const dirty = isDirty();
+  let body, title;
+  if (state.activeCategory === 'jamOperasional') {
+    title = 'Jam Operasional';
+    body = renderJamOperasionalFields('b');
+  } else if (state.activeCategory === 'papan') {
+    title = 'Papan Status Kunjungan';
+    body = papanFields();
+  } else {
+    title = 'Booking Online';
+    body = bookingFields();
+  }
+
+  return `
+    <main class="max-w-5xl mx-auto px-4 py-6 flex gap-5">
+      <nav class="w-64 shrink-0">${nav}</nav>
+      <section class="bg-white rounded-xl shadow-sm p-5 flex-1">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold text-slate-800">${esc(title)}</h2>
+          <button onclick="saveCategory()" ${dirty ? '' : 'disabled'}
+            class="text-sm px-3 py-1.5 rounded ${dirty ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}">
+            Simpan Kategori Ini
+          </button>
+        </div>
+        ${body}
+      </section>
+    </main>
+  `;
+}
+
+// ---------- Variant C: Kartu Ringkas ----------
+
+function summaryCard(key, title, summaryHtml, editFieldsHtml) {
+  const expanded = state.expandedCard === key;
+  return `
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+      <button onclick="toggleExpandedCard('${key}')" class="w-full text-left px-5 py-4 flex items-center justify-between hover:bg-slate-50">
+        <div>
+          <h2 class="text-base font-semibold text-slate-800">${esc(title)}</h2>
+          <p class="text-sm text-slate-500 mt-0.5">${summaryHtml}</p>
+        </div>
+        <span class="text-slate-400 text-sm">${expanded ? 'Tutup ▲' : 'Ubah ▾'}</span>
+      </button>
+      ${expanded ? `
+        <div data-anim="in" class="px-5 pb-5 border-t border-slate-100 pt-4">
+          ${editFieldsHtml}
+          <div class="mt-4 flex justify-end gap-2">
+            <button onclick="toggleExpandedCard('${key}')" class="text-sm text-slate-500 px-3 py-1.5 hover:text-slate-700">Batal</button>
+            <button onclick="saveField('${key}')" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700">Simpan</button>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderC() {
+  const cards = [
+    summaryCard('jamOperasional', 'Jam Operasional', esc(summarizeJamOperasional()), renderJamOperasionalFields('c')),
+    summaryCard('intervalPembaruanPapan', 'Interval Pembaruan Papan', `${state.draft.intervalPembaruanPapan} detik`, numberFieldBlock('intervalPembaruanPapan', 'Interval Pembaruan Papan', `Rentang ${BOUNDS.intervalPembaruanPapan.min}–${BOUNDS.intervalPembaruanPapan.max} detik.`)),
+    summaryCard('targetWaktuTunggu', 'Target Waktu Tunggu', `${state.draft.targetWaktuTunggu} menit`, numberFieldBlock('targetWaktuTunggu', 'Target Waktu Tunggu', `Kartu "menunggu" ditandai merah setelah melewati durasi ini.`)),
+    summaryCard('slotHoldDurasi', 'Durasi Penahanan Slot', `${state.draft.slotHoldDurasi} menit`, bookingFields()),
+  ];
+  return `
+    <main class="max-w-3xl mx-auto px-4 py-6 space-y-4">
+      ${cards.join('')}
+    </main>
+  `;
+}
+
+// ---------- render + wiring ----------
+
+function render() {
+  const app = document.getElementById('app');
+  const body = state.variant === 'A' ? renderA() : state.variant === 'B' ? renderB() : renderC();
+  app.innerHTML = renderToast() + renderHeader() + body + renderSwitcher();
+}
+
+document.addEventListener('keydown', (e) => {
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable)) return;
+  if (e.key === 'ArrowLeft') cycleVariant(-1);
+  if (e.key === 'ArrowRight') cycleVariant(1);
+});
+
+render();
+</script>
+</body>
+</html>
