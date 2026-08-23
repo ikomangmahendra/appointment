@@ -21,6 +21,21 @@
   This file has its own copy of the roster (see klinik-management's for
   the "real" shared shape) so it stays a single double-clickable file.
 
+  UPDATE (feedback round 1): Alamat is now captured the same way Patient's
+  is — a Google-Places-style search simulate (see ADDRESS_SUGGESTIONS
+  below — canned, no real API) that fills structured sub-fields (jalan,
+  kelurahan, kecamatan, kota/kabupaten, provinsi, kode pos), reused
+  wholesale from patient-detail.prototype.html's addressSearchBlock. The
+  "Profil Klinik" form was already always-editable (unlike Patient's
+  view-then-"Edit data" toggle) — kept that shape, just moved its fields
+  into a `state.draft` seeded from the Klinik so the address block's live
+  suggestions dropdown can re-render the page on every keystroke without
+  losing what's typed in the other fields (the same reason
+  klinik-create.prototype.html switched off plain getElementById reads).
+  The Admin Klinik invite panel and the Nonaktifkan/Aktifkan panel are
+  unchanged — those already mutate the Klinik record directly on click,
+  no text-input re-render concern there.
+
   Run: open this file directly in a browser (double-click / File > Open).
   Try: ?id=k1..k7 — k3/k7 are "diundang", k6 is "belum ada akun",
   k5 is a deactivated ("nonaktif") klinik.
@@ -28,6 +43,8 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body class="bg-slate-100 text-slate-800 min-h-screen">
@@ -43,19 +60,39 @@ function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => (
 
 const ZONA_LIST = ['WIB', 'WITA', 'WIT'];
 
+function mkAddress(street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId) {
+  return { street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId,
+    formatted: `${street}, ${kelurahan}, ${kecamatan}, ${kota}, ${provinsi} ${kodePos}` };
+}
+function emptyAddress() { return { street: '', kelurahan: '', kecamatan: '', kota: '', provinsi: '', kodePos: '', lat: null, lng: null, placeId: null, formatted: '' }; }
+
+const ADDRESS_SUGGESTIONS = [
+  mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'),
+  mkAddress('Jl. Boulevard Raya No. 10', 'Kelapa Gading Barat', 'Kelapa Gading', 'Jakarta Utara', 'DKI Jakarta', '14240', -6.1610, 106.9095, 'place_boulevard_10'),
+  mkAddress('Jl. Pandanaran No. 5', 'Pekunden', 'Semarang Tengah', 'Semarang', 'Jawa Tengah', '50134', -6.9885, 110.4177, 'place_pandanaran_5'),
+  mkAddress('Jl. Slamet Riyadi No. 22', 'Sriwedari', 'Laweyan', 'Surakarta', 'Jawa Tengah', '57141', -7.5697, 110.8175, 'place_slametriyadi_22'),
+  mkAddress('Jl. Diponegoro No. 100', 'Renon', 'Denpasar Selatan', 'Denpasar', 'Bali', '80114', -8.6705, 115.2126, 'place_diponegoro_100'),
+  mkAddress('Jl. Veteran No. 8', 'Klojen', 'Klojen', 'Malang', 'Jawa Timur', '65119', -7.9797, 112.6304, 'place_veteran_8'),
+];
+
 let KLINIK = [
-  { id: 'k1', nama: 'Klinik Sehat Sentosa', alamat: 'Jl. Merdeka No. 12, Jakarta Selatan', zona: 'WIB', status: 'aktif', adminNama: 'Sari Wulandari', adminEmail: 'sari@kliniksehat.id', adminAkun: 'aktif', jumlahDokter: 8, jumlahLayanan: 6, jumlahStaf: 5 },
-  { id: 'k2', nama: 'Klinik Prima Medika', alamat: 'Jl. Sudirman No. 88, Surabaya', zona: 'WIB', status: 'aktif', adminNama: 'Budi Hartanto', adminEmail: 'budi@primamedika.id', adminAkun: 'aktif', jumlahDokter: 5, jumlahLayanan: 4, jumlahStaf: 3 },
-  { id: 'k3', nama: 'Klinik Bali Husada', alamat: 'Jl. Raya Kuta No. 45, Badung', zona: 'WITA', status: 'aktif', adminNama: 'Made Wirawan', adminEmail: null, adminAkun: 'diundang', jumlahDokter: 3, jumlahLayanan: 3, jumlahStaf: 2 },
-  { id: 'k4', nama: 'Klinik Anugerah Sehat', alamat: 'Jl. Gatot Subroto No. 21, Medan', zona: 'WIB', status: 'aktif', adminNama: 'Rina Simamora', adminEmail: 'rina@anugerahsehat.id', adminAkun: 'aktif', jumlahDokter: 6, jumlahLayanan: 5, jumlahStaf: 4 },
-  { id: 'k5', nama: 'Klinik Timur Sejahtera', alamat: 'Jl. Cendrawasih No. 7, Jayapura', zona: 'WIT', status: 'nonaktif', adminNama: 'Yosef Mansnembra', adminEmail: 'yosef@timursejahtera.id', adminAkun: 'aktif', jumlahDokter: 2, jumlahLayanan: 2, jumlahStaf: 1 },
-  { id: 'k6', nama: 'Klinik Mitra Keluarga Baru', alamat: 'Jl. Ahmad Yani No. 33, Makassar', zona: 'WITA', status: 'aktif', adminNama: null, adminEmail: null, adminAkun: 'belum ada akun', jumlahDokter: 0, jumlahLayanan: 0, jumlahStaf: 0 },
-  { id: 'k7', nama: 'Klinik Cahaya Bunda', alamat: 'Jl. Diponegoro No. 19, Semarang', zona: 'WIB', status: 'aktif', adminNama: 'Dewi Anggraini', adminEmail: 'dewi@cahayabunda.id', adminAkun: 'diundang', jumlahDokter: 4, jumlahLayanan: 3, jumlahStaf: 2 },
+  { id: 'k1', nama: 'Klinik Sehat Sentosa', alamat: mkAddress('Jl. Merdeka No. 12', 'Cipete Utara', 'Kebayoran Baru', 'Jakarta Selatan', 'DKI Jakarta', '12150', -6.2608, 106.8006, 'place_k1'), zona: 'WIB', status: 'aktif', adminNama: 'Sari Wulandari', adminEmail: 'sari@kliniksehat.id', adminAkun: 'aktif', jumlahDokter: 8, jumlahLayanan: 6, jumlahStaf: 5 },
+  { id: 'k2', nama: 'Klinik Prima Medika', alamat: mkAddress('Jl. Sudirman No. 88', 'Embong Kaliasin', 'Genteng', 'Surabaya', 'Jawa Timur', '60271', -7.2604, 112.7379, 'place_k2'), zona: 'WIB', status: 'aktif', adminNama: 'Budi Hartanto', adminEmail: 'budi@primamedika.id', adminAkun: 'aktif', jumlahDokter: 5, jumlahLayanan: 4, jumlahStaf: 3 },
+  { id: 'k3', nama: 'Klinik Bali Husada', alamat: mkAddress('Jl. Raya Kuta No. 45', 'Kuta', 'Kuta', 'Badung', 'Bali', '80361', -8.7226, 115.1731, 'place_k3'), zona: 'WITA', status: 'aktif', adminNama: 'Made Wirawan', adminEmail: null, adminAkun: 'diundang', jumlahDokter: 3, jumlahLayanan: 3, jumlahStaf: 2 },
+  { id: 'k4', nama: 'Klinik Anugerah Sehat', alamat: mkAddress('Jl. Gatot Subroto No. 21', 'Petisah Tengah', 'Medan Petisah', 'Medan', 'Sumatera Utara', '20112', 3.5910, 98.6685, 'place_k4'), zona: 'WIB', status: 'aktif', adminNama: 'Rina Simamora', adminEmail: 'rina@anugerahsehat.id', adminAkun: 'aktif', jumlahDokter: 6, jumlahLayanan: 5, jumlahStaf: 4 },
+  { id: 'k5', nama: 'Klinik Timur Sejahtera', alamat: mkAddress('Jl. Cendrawasih No. 7', 'Trikora', 'Jayapura Utara', 'Jayapura', 'Papua', '99112', -2.5330, 140.7181, 'place_k5'), zona: 'WIT', status: 'nonaktif', adminNama: 'Yosef Mansnembra', adminEmail: 'yosef@timursejahtera.id', adminAkun: 'aktif', jumlahDokter: 2, jumlahLayanan: 2, jumlahStaf: 1 },
+  { id: 'k6', nama: 'Klinik Mitra Keluarga Baru', alamat: mkAddress('Jl. Ahmad Yani No. 33', 'Maricaya', 'Makassar', 'Makassar', 'Sulawesi Selatan', '90114', -5.1477, 119.4327, 'place_k6'), zona: 'WITA', status: 'aktif', adminNama: null, adminEmail: null, adminAkun: 'belum ada akun', jumlahDokter: 0, jumlahLayanan: 0, jumlahStaf: 0 },
+  { id: 'k7', nama: 'Klinik Cahaya Bunda', alamat: mkAddress('Jl. Diponegoro No. 19', 'Miroto', 'Semarang Tengah', 'Semarang', 'Jawa Tengah', '50131', -6.9932, 110.4203, 'place_k7'), zona: 'WIB', status: 'aktif', adminNama: 'Dewi Anggraini', adminEmail: 'dewi@cahayabunda.id', adminAkun: 'diundang', jumlahDokter: 4, jumlahLayanan: 3, jumlahStaf: 2 },
 ];
 
 const id = new URLSearchParams(location.search).get('id') || 'k1';
 const klinik = KLINIK.find(k => k.id === id) || KLINIK[0];
-const state = { toast: null };
+
+const state = {
+  draft: { nama: klinik.nama, zona: klinik.zona, address: klinik.alamat ? { ...klinik.alamat } : null },
+  addressSearch: '',
+  toast: null,
+};
 
 function initials(nama) { return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
 
@@ -74,15 +111,28 @@ function statusBadge(status) {
     : `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-slate-200 text-slate-600">Nonaktif</span>`;
 }
 
-function saveForm(e) {
-  e.preventDefault();
-  const nama = document.getElementById('f-nama').value.trim();
-  const alamat = document.getElementById('f-alamat').value.trim();
-  const zona = document.getElementById('f-zona').value;
-  if (!nama || !alamat || !zona) { alert('Nama klinik, alamat, dan zona waktu wajib diisi.'); return; }
-  Object.assign(klinik, { nama, alamat, zona });
-  state.toast = 'Perubahan disimpan.';
-  render();
+function addressSearchBlock() {
+  const q = state.addressSearch.trim();
+  const suggestions = q.length >= 3 ? ADDRESS_SUGGESTIONS.filter(s => s.formatted.toLowerCase().includes(q.toLowerCase())) : [];
+  const addr = state.draft.address;
+  return `<div class="space-y-2">
+    <div class="relative">
+      <input data-bind="addressSearch" value="${esc(state.addressSearch)}" placeholder="Cari alamat (Google Maps)..." class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      ${suggestions.length ? `<div data-anim="in" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 max-h-48 overflow-y-auto">
+        ${suggestions.map(s => `<div data-action="pick-address" data-place-id="${s.placeId}" class="cursor-pointer px-3 py-2 text-sm hover:bg-blue-50 border-b border-slate-100 last:border-0">📍 ${esc(s.formatted)}</div>`).join('')}
+      </div>` : ''}
+      ${q.length >= 3 && !suggestions.length ? `<div class="absolute left-0 right-0 mt-1 bg-white border border-dashed border-slate-300 rounded-md p-3 text-xs text-slate-400 z-10">Tidak ditemukan — coba kata kunci lain atau isi manual di bawah.</div>` : ''}
+    </div>
+    ${addr ? `<div data-anim="in" class="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200 rounded-md p-3">
+      <label class="block text-xs text-slate-400 col-span-2">Jalan<input data-bind="address.street" value="${esc(addr.street)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kelurahan<input data-bind="address.kelurahan" value="${esc(addr.kelurahan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kecamatan<input data-bind="address.kecamatan" value="${esc(addr.kecamatan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kota/Kabupaten<input data-bind="address.kota" value="${esc(addr.kota)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Provinsi<input data-bind="address.provinsi" value="${esc(addr.provinsi)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kode Pos<input data-bind="address.kodePos" value="${esc(addr.kodePos)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <button data-action="clear-address" class="col-span-2 text-xs text-slate-400 underline text-left">Hapus &amp; cari ulang</button>
+    </div>` : `<button data-action="manual-address" class="text-xs text-blue-600 underline">+ Isi alamat manual (tanpa pencarian)</button>`}
+  </div>`;
 }
 
 function undangAdmin() {
@@ -118,6 +168,7 @@ function toggleStatus() {
 }
 
 function render() {
+  const d = state.draft;
   document.getElementById('app').innerHTML = `
     <div class="max-w-3xl mx-auto p-6">
       <a href="klinik-management.prototype.html" class="text-sm text-slate-500 hover:underline">← Kembali ke Daftar Klinik</a>
@@ -129,7 +180,7 @@ function render() {
             <h1 class="text-lg font-semibold text-slate-800">${esc(klinik.nama)}</h1>
             ${statusBadge(klinik.status)}
           </div>
-          <p class="text-sm text-slate-500">${klinik.zona} · ${esc(klinik.alamat)}</p>
+          <p class="text-sm text-slate-500">${klinik.zona} · ${klinik.alamat ? `${esc(klinik.alamat.kota)}, ${esc(klinik.alamat.provinsi)}` : '<span class="italic text-slate-400">alamat belum diisi</span>'}</p>
         </div>
       </div>
 
@@ -151,24 +202,24 @@ function render() {
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <form onsubmit="saveForm(event)" class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
           <h2 class="text-sm font-semibold text-slate-700 mb-1">Profil Klinik</h2>
+          <label class="block">
+            <div class="text-xs font-medium text-slate-500 mb-1">Nama Klinik</div>
+            <input data-bind="nama" value="${esc(d.nama)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          </label>
           <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">Nama Klinik</label>
-            <input id="f-nama" value="${esc(klinik.nama)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <div class="text-xs font-medium text-slate-500 mb-1">Alamat</div>
+            ${addressSearchBlock()}
           </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">Alamat</label>
-            <textarea id="f-alamat" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">${esc(klinik.alamat)}</textarea>
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">Zona Waktu</label>
-            <select id="f-zona" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-              ${ZONA_LIST.map(z => `<option value="${z}" ${klinik.zona === z ? 'selected' : ''}>${z}</option>`).join('')}
+          <label class="block">
+            <div class="text-xs font-medium text-slate-500 mb-1">Zona Waktu</div>
+            <select data-bind="zona" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+              ${ZONA_LIST.map(z => `<option value="${z}" ${d.zona === z ? 'selected' : ''}>${z}</option>`).join('')}
             </select>
-          </div>
-          <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">Simpan Perubahan</button>
-        </form>
+          </label>
+          <button data-action="save-profil" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">Simpan Perubahan</button>
+        </div>
 
         <div class="space-y-4">
           <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
@@ -196,6 +247,56 @@ function render() {
       </div>
     </div>`;
 }
+
+function applyBind(e) {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  const parts = bind.split('.');
+  if (parts[0] === 'address') state.draft.address[parts[1]] = e.target.value;
+  else if (bind === 'addressSearch') state.addressSearch = e.target.value;
+  else state.draft[bind] = e.target.value;
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  switch (t.dataset.action) {
+    case 'pick-address': {
+      const s = ADDRESS_SUGGESTIONS.find(a => a.placeId === t.dataset.placeId);
+      if (s) state.draft.address = { ...s };
+      state.addressSearch = '';
+      break;
+    }
+    case 'manual-address': state.draft.address = emptyAddress(); break;
+    case 'clear-address': state.draft.address = null; state.addressSearch = ''; break;
+    case 'save-profil': {
+      if (!state.draft.nama.trim() || !(state.draft.address && state.draft.address.street.trim()) || !state.draft.zona) {
+        alert('Nama klinik, alamat, dan zona waktu wajib diisi.');
+        return;
+      }
+      Object.assign(klinik, { nama: state.draft.nama.trim(), zona: state.draft.zona, alamat: state.draft.address });
+      state.toast = 'Perubahan disimpan.';
+      break;
+    }
+  }
+  render();
+});
+
+document.addEventListener('input', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName === 'SELECT') return;
+  applyBind(e);
+  const bind = e.target.dataset.bind;
+  const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
+  render();
+  const el = document.querySelector(`[data-bind="${bind}"]`);
+  if (el) { el.focus(); el.setSelectionRange(selStart, selEnd); }
+});
+
+document.addEventListener('change', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName !== 'SELECT') return;
+  applyBind(e);
+  render();
+});
 
 render();
 </script>

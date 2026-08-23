@@ -34,6 +34,20 @@
       deactivated Klinik's own booking page / staff logins actually do"
       is left unanswered — shown here as a status flag only.
 
+  UPDATE (feedback round 1):
+    - Alamat is now a structured address (jalan/kelurahan/kecamatan/
+      kota-kabupaten/provinsi/kode pos, with lat/lng/placeId) instead of a
+      plain string, filled via the same Google-Places-style search
+      simulate already used for Patient (see patient-create.prototype.html
+      / patient-detail.prototype.html's addressSearchBlock — canned
+      suggestions, no real API). Editable on klinik-create/klinik-detail;
+      this file just displays kota + provinsi under the Klinik name.
+    - List filters: the Zona Waktu filter is removed and replaced with
+      Provinsi and Kabupaten/Kota filters (Kabupaten/Kota options narrow
+      to whichever Provinsi is selected). Zona Waktu stays as a column for
+      context — this feedback round only asked to drop it as a *filter*,
+      not remove the attribute.
+
   No backend, no persistence — everything is canned in-memory data, reset
   on reload.
 
@@ -57,30 +71,37 @@
 <script>
 function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
+function mkAddress(street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId) {
+  return { street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId,
+    formatted: `${street}, ${kelurahan}, ${kecamatan}, ${kota}, ${provinsi} ${kodePos}` };
+}
+
 // ---------------------------------------------------------------------------
 // Canned domain data (see CONTEXT.md). Same Klinik shape as klinik-create
 // and klinik-detail so all three prototypes read as the same platform.
 // ---------------------------------------------------------------------------
-const ZONA_LIST = ['WIB', 'WITA', 'WIT'];
-
 let KLINIK = [
-  { id: 'k1', nama: 'Klinik Sehat Sentosa', alamat: 'Jl. Merdeka No. 12, Jakarta Selatan', zona: 'WIB', status: 'aktif', adminNama: 'Sari Wulandari', adminEmail: 'sari@kliniksehat.id', adminAkun: 'aktif', jumlahDokter: 8, jumlahLayanan: 6, jumlahStaf: 5 },
-  { id: 'k2', nama: 'Klinik Prima Medika', alamat: 'Jl. Sudirman No. 88, Surabaya', zona: 'WIB', status: 'aktif', adminNama: 'Budi Hartanto', adminEmail: 'budi@primamedika.id', adminAkun: 'aktif', jumlahDokter: 5, jumlahLayanan: 4, jumlahStaf: 3 },
-  { id: 'k3', nama: 'Klinik Bali Husada', alamat: 'Jl. Raya Kuta No. 45, Badung', zona: 'WITA', status: 'aktif', adminNama: 'Made Wirawan', adminEmail: null, adminAkun: 'diundang', jumlahDokter: 3, jumlahLayanan: 3, jumlahStaf: 2 },
-  { id: 'k4', nama: 'Klinik Anugerah Sehat', alamat: 'Jl. Gatot Subroto No. 21, Medan', zona: 'WIB', status: 'aktif', adminNama: 'Rina Simamora', adminEmail: 'rina@anugerahsehat.id', adminAkun: 'aktif', jumlahDokter: 6, jumlahLayanan: 5, jumlahStaf: 4 },
-  { id: 'k5', nama: 'Klinik Timur Sejahtera', alamat: 'Jl. Cendrawasih No. 7, Jayapura', zona: 'WIT', status: 'nonaktif', adminNama: 'Yosef Mansnembra', adminEmail: 'yosef@timursejahtera.id', adminAkun: 'aktif', jumlahDokter: 2, jumlahLayanan: 2, jumlahStaf: 1 },
-  { id: 'k6', nama: 'Klinik Mitra Keluarga Baru', alamat: 'Jl. Ahmad Yani No. 33, Makassar', zona: 'WITA', status: 'aktif', adminNama: null, adminEmail: null, adminAkun: 'belum ada akun', jumlahDokter: 0, jumlahLayanan: 0, jumlahStaf: 0 },
-  { id: 'k7', nama: 'Klinik Cahaya Bunda', alamat: 'Jl. Diponegoro No. 19, Semarang', zona: 'WIB', status: 'aktif', adminNama: 'Dewi Anggraini', adminEmail: 'dewi@cahayabunda.id', adminAkun: 'diundang', jumlahDokter: 4, jumlahLayanan: 3, jumlahStaf: 2 },
+  { id: 'k1', nama: 'Klinik Sehat Sentosa', alamat: mkAddress('Jl. Merdeka No. 12', 'Cipete Utara', 'Kebayoran Baru', 'Jakarta Selatan', 'DKI Jakarta', '12150', -6.2608, 106.8006, 'place_k1'), zona: 'WIB', status: 'aktif', adminNama: 'Sari Wulandari', adminEmail: 'sari@kliniksehat.id', adminAkun: 'aktif', jumlahDokter: 8, jumlahLayanan: 6, jumlahStaf: 5 },
+  { id: 'k2', nama: 'Klinik Prima Medika', alamat: mkAddress('Jl. Sudirman No. 88', 'Embong Kaliasin', 'Genteng', 'Surabaya', 'Jawa Timur', '60271', -7.2604, 112.7379, 'place_k2'), zona: 'WIB', status: 'aktif', adminNama: 'Budi Hartanto', adminEmail: 'budi@primamedika.id', adminAkun: 'aktif', jumlahDokter: 5, jumlahLayanan: 4, jumlahStaf: 3 },
+  { id: 'k3', nama: 'Klinik Bali Husada', alamat: mkAddress('Jl. Raya Kuta No. 45', 'Kuta', 'Kuta', 'Badung', 'Bali', '80361', -8.7226, 115.1731, 'place_k3'), zona: 'WITA', status: 'aktif', adminNama: 'Made Wirawan', adminEmail: null, adminAkun: 'diundang', jumlahDokter: 3, jumlahLayanan: 3, jumlahStaf: 2 },
+  { id: 'k4', nama: 'Klinik Anugerah Sehat', alamat: mkAddress('Jl. Gatot Subroto No. 21', 'Petisah Tengah', 'Medan Petisah', 'Medan', 'Sumatera Utara', '20112', 3.5910, 98.6685, 'place_k4'), zona: 'WIB', status: 'aktif', adminNama: 'Rina Simamora', adminEmail: 'rina@anugerahsehat.id', adminAkun: 'aktif', jumlahDokter: 6, jumlahLayanan: 5, jumlahStaf: 4 },
+  { id: 'k5', nama: 'Klinik Timur Sejahtera', alamat: mkAddress('Jl. Cendrawasih No. 7', 'Trikora', 'Jayapura Utara', 'Jayapura', 'Papua', '99112', -2.5330, 140.7181, 'place_k5'), zona: 'WIT', status: 'nonaktif', adminNama: 'Yosef Mansnembra', adminEmail: 'yosef@timursejahtera.id', adminAkun: 'aktif', jumlahDokter: 2, jumlahLayanan: 2, jumlahStaf: 1 },
+  { id: 'k6', nama: 'Klinik Mitra Keluarga Baru', alamat: mkAddress('Jl. Ahmad Yani No. 33', 'Maricaya', 'Makassar', 'Makassar', 'Sulawesi Selatan', '90114', -5.1477, 119.4327, 'place_k6'), zona: 'WITA', status: 'aktif', adminNama: null, adminEmail: null, adminAkun: 'belum ada akun', jumlahDokter: 0, jumlahLayanan: 0, jumlahStaf: 0 },
+  { id: 'k7', nama: 'Klinik Cahaya Bunda', alamat: mkAddress('Jl. Diponegoro No. 19', 'Miroto', 'Semarang Tengah', 'Semarang', 'Jawa Tengah', '50131', -6.9932, 110.4203, 'place_k7'), zona: 'WIB', status: 'aktif', adminNama: 'Dewi Anggraini', adminEmail: 'dewi@cahayabunda.id', adminAkun: 'diundang', jumlahDokter: 4, jumlahLayanan: 3, jumlahStaf: 2 },
 ];
 
 const PAGE_SIZE = 5;
 
 const state = {
   search: '',
-  zonaFilter: '',
+  provinsiFilter: '',
+  kabupatenFilter: '',
   statusFilter: '',
   page: 1,
 };
+
+function provinsiList() { return [...new Set(KLINIK.map(k => k.alamat.provinsi))].sort(); }
+function kabupatenList(provinsi) { return [...new Set(KLINIK.filter(k => !provinsi || k.alamat.provinsi === provinsi).map(k => k.alamat.kota))].sort(); }
 
 function initials(nama) { return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
 
@@ -103,14 +124,16 @@ function filteredKlinik() {
   const q = state.search.trim().toLowerCase();
   return KLINIK.filter(k => {
     if (q && !k.nama.toLowerCase().includes(q)) return false;
-    if (state.zonaFilter && k.zona !== state.zonaFilter) return false;
+    if (state.provinsiFilter && k.alamat.provinsi !== state.provinsiFilter) return false;
+    if (state.kabupatenFilter && k.alamat.kota !== state.kabupatenFilter) return false;
     if (state.statusFilter && k.status !== state.statusFilter) return false;
     return true;
   });
 }
 
 function updateSearch(v) { state.search = v; state.page = 1; render(); }
-function updateZonaFilter(v) { state.zonaFilter = v; state.page = 1; render(); }
+function updateProvinsiFilter(v) { state.provinsiFilter = v; state.kabupatenFilter = ''; state.page = 1; render(); }
+function updateKabupatenFilter(v) { state.kabupatenFilter = v; state.page = 1; render(); }
 function updateStatusFilter(v) { state.statusFilter = v; state.page = 1; render(); }
 function goToPage(p) { state.page = p; render(); }
 
@@ -127,7 +150,7 @@ function render() {
           <div class="w-9 h-9 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">${initials(k.nama)}</div>
           <div>
             <div class="font-medium text-slate-800">${esc(k.nama)}</div>
-            <div class="text-xs text-slate-500">${esc(k.alamat)}</div>
+            <div class="text-xs text-slate-500">${esc(k.alamat.kota)}, ${esc(k.alamat.provinsi)}</div>
           </div>
         </div>
       </td>
@@ -159,9 +182,13 @@ function render() {
 
       <div class="flex flex-wrap gap-3 mb-4">
         <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama klinik…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-        <select onchange="updateZonaFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-          <option value="">Semua Zona Waktu</option>
-          ${ZONA_LIST.map(z => `<option value="${z}" ${state.zonaFilter === z ? 'selected' : ''}>${z}</option>`).join('')}
+        <select onchange="updateProvinsiFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Provinsi</option>
+          ${provinsiList().map(p => `<option value="${esc(p)}" ${state.provinsiFilter === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+        </select>
+        <select onchange="updateKabupatenFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Kabupaten/Kota</option>
+          ${kabupatenList(state.provinsiFilter).map(kt => `<option value="${esc(kt)}" ${state.kabupatenFilter === kt ? 'selected' : ''}>${esc(kt)}</option>`).join('')}
         </select>
         <select onchange="updateStatusFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
           <option value="">Semua Status</option>
