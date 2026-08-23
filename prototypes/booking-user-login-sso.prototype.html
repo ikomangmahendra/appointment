@@ -108,6 +108,21 @@
   phone field from the logged-in User's own number, for the common case of
   a dependent who shares the User's phone rather than having their own.
 
+  UPDATE (feedback round 5 — grilled against CONTEXT.md, see the Layanan
+  and Appointment glossary entries and ADR 0025): Harga is informational
+  only (no payment processing anywhere in this prototype — it's just
+  Biaya, shown so a Patient can decide whether to book) and mandatory on
+  every Layanan, unlike the optional Deskripsi — Vaksinasi now has no desc
+  to demonstrate a Layanan can exist without one. Per ADR 0016, a Slot Hold
+  already models an Appointment as created (at `pending`) the moment a Slot
+  is picked, so that's also the moment Harga gets locked in: `a.hargaLocked`
+  snapshots the Layanan's current price right there, is shown as "Biaya" on
+  Konfirmasi and the final Booking Terkonfirmasi screen, and — like the Slot
+  itself — is released (cleared back to null) if the hold expires, since
+  that Appointment never happened. This prototype has no reschedule-an-
+  existing-appointment flow, so ADR 0025's "reschedule re-snapshots the
+  current price" clause isn't separately demonstrated here.
+
   No backend, no persistence, no real OAuth/SMS — everything is canned
   in-memory mock data, reset on browser reload. Any 4-6 digit code is
   accepted as a valid OTP. See the harness banner below for test values.
@@ -268,9 +283,9 @@ const KLINIK = { nama: "Klinik Sehat Mandiri" };
 const LAYANAN = [
   { id: "umum", nama: "Pemeriksaan Umum", durasi: 20, harga: 150000, desc: "Konsultasi dokter umum untuk keluhan sehari-hari." },
   { id: "gigi", nama: "Gigi", durasi: 30, harga: 300000, desc: "Pemeriksaan dan perawatan gigi." },
-  { id: "vaksin", nama: "Vaksinasi", durasi: 15, harga: 250000, desc: "Vaksinasi dewasa dan anak." },
+  { id: "vaksin", nama: "Vaksinasi", durasi: 15, harga: 250000, desc: "" }, // Deskripsi is optional — none entered yet for this Layanan
 ];
-function idr(n) { return "Rp" + n.toLocaleString("id-ID"); }
+function idr(n) { return n == null ? "—" : "Rp" + n.toLocaleString("id-ID"); }
 // hari: 0=Minggu..6=Sabtu, per Jadwal (recurring weekly template, CONTEXT.md).
 // pengecualian: diffDays values (0=hari ini,1=besok,2=besok lusa,...) where a
 // one-off Pengecualian Jadwal (e.g. cuti) overrides the recurring template.
@@ -319,11 +334,7 @@ function manageHoldTimer() {
   const shouldRun = a.slotHeldAt && ["patient", "patientNewForm", "patientMatchOtp", "confirm"].includes(a.step);
   if (shouldRun && !holdTimer) {
     holdTimer = setInterval(() => {
-      if (isSlotHoldExpired()) {
-        a.slot = null; a.slotHeldAt = null;
-        a.err = "Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.";
-        a.step = "slot"; render(); return;
-      }
+      if (isSlotHoldExpired()) { releaseExpiredHold(); render(); return; }
       const el = document.getElementById("holdRemaining");
       if (el) el.textContent = holdRemainingLabel();
     }, 1000);
@@ -378,6 +389,7 @@ function initialState() {
     guestName: "", guestPhone: "",
     layanan: null, dateObj: null, dateOffsetDays: null, dateLabel: "",
     dokter: null, slot: null, slotHeldAt: null,  // Slot Hold: set the moment a Slot is picked
+    hargaLocked: null,           // Harga snapshotted the same moment (ADR 0025) — released with the hold if it expires
     patientId: null,
     newPatientForm: null,        // {nama, phone, dob, gender, nik} awaiting match-check
     matchedExternal: null,       // EXTERNAL_PATIENTS entry the new-patient form matched
@@ -585,7 +597,7 @@ function screenLayanan() {
     <div class="topbar"><button class="back-btn" onclick="reset();">&#8592;</button><h1 class="title">Pilih Layanan</h1></div>
     <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
     ${LAYANAN.map(l => `<div class="card" onclick="a.layanan='${l.id}'; a.dokter=null; a.slot=null; a.step='tanggal'; render();">
-      <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit &middot; ${l.desc}</div></div>
+      <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit${l.desc ? " &middot; " + l.desc : ""}</div></div>
       <div class="card-price">${idr(l.harga)}</div>
     </div>`).join("")}
   </div>`;
@@ -651,9 +663,24 @@ function screenSlot() {
     <div class="slot-grid">
       ${slotsFor(a.dokter, a.dateOffsetDays).map(sl => sl.booked
         ? `<div class="slot booked">${sl.time}</div>`
-        : `<div class="slot" onclick="a.slot='${sl.time}'; a.slotHeldAt=Date.now(); a.err=null; afterSlot();">${sl.time}</div>`).join("")}
+        : `<div class="slot" onclick="selectSlot('${sl.time}')">${sl.time}</div>`).join("")}
     </div>
   </div>`;
+}
+function selectSlot(time) {
+  // Per ADR 0016, the Appointment is effectively created (at `pending`) the
+  // moment a Slot is picked — so that's also when Harga gets locked in
+  // (ADR 0025), not later at Konfirmasi.
+  a.slot = time;
+  a.slotHeldAt = Date.now();
+  a.hargaLocked = LAYANAN.find(l => l.id === a.layanan).harga;
+  a.err = null;
+  afterSlot();
+}
+function releaseExpiredHold() {
+  a.slot = null; a.slotHeldAt = null; a.hargaLocked = null;
+  a.err = "Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.";
+  a.step = "slot";
 }
 function afterSlot() {
   a.step = a.session ? "patient" : "confirm";
@@ -783,6 +810,7 @@ function screenConfirm() {
     <div class="summary">
       <b>${fmtLayanan(a.layanan)}</b> dengan ${fmtDokter(a.dokter)}<br>
       ${a.dateLabel}, ${a.slot} · Pasien: ${patientName}<br>
+      Biaya: ${idr(a.hargaLocked)}<br>
       <span class="badge booked-by">Booked By: ${bookedBy}</span>
     </div>
     <label class="field-label">Keluhan (opsional)</label>
@@ -791,13 +819,9 @@ function screenConfirm() {
   </div>`;
 }
 function submitConfirm() {
-  if (isSlotHoldExpired()) {
-    a.slot = null; a.slotHeldAt = null;
-    a.err = "Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.";
-    a.step = "slot"; render(); return;
-  }
+  if (isSlotHoldExpired()) { releaseExpiredHold(); render(); return; }
   a.keluhan = document.getElementById("in_keluhan").value;
-  a.slotHeldAt = null; // held Slot becomes a real Appointment — hold concept no longer applies
+  a.slotHeldAt = null; // held Slot becomes a real Appointment — hold concept no longer applies, but hargaLocked stays
   a.step = "done"; render();
 }
 function screenDone() {
@@ -807,7 +831,7 @@ function screenDone() {
   return `<div class="screen" style="align-items:center;text-align:center;justify-content:center;">
     <div class="check-hero">&#10003;</div>
     <h1 class="title">Booking Terkonfirmasi</h1>
-    <p class="subtitle">${fmtLayanan(a.layanan)} · ${fmtDokter(a.dokter)}<br>${a.dateLabel}, ${a.slot} · Pasien: ${patientName}</p>
+    <p class="subtitle">${fmtLayanan(a.layanan)} · ${fmtDokter(a.dokter)}<br>${a.dateLabel}, ${a.slot} · Pasien: ${patientName}<br>Biaya: ${idr(a.hargaLocked)}</p>
     <span class="badge booked-by">Booked By: ${bookedBy}</span>
     ${a.justConverted ? `
       <div class="banner-note">Akun tersimpan untuk No. HP ${maskPhone(a.guestPhone)} — lain kali cukup masuk lewat Google atau Email+Kata Sandi, tanpa OTP lagi di perangkat ini. Booking di atas tetap tercatat Booked By: Guest Patient — status ini adalah jejak audit, bukan penunjuk akun saat ini.</div>
