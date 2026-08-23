@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Tambah Dokter</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Sibling route to dokter-management.prototype.html (feedback: "tapilkan
+  tambah dan ubah data dokter di halaman yang berbeda", matching the
+  existing patient-management -> patient-create split). A dedicated page
+  for creating a Dokter profile: nama, Spesialisasi (a <select> from a
+  platform-wide curated list per ADR 0026 — not free text, and never a
+  filter facet), No. HP, Foto (upload with local preview, no real storage),
+  Biografi, and Layanan eligibility (ADR 0022).
+
+  No backend: submitting just shows a recap, same as patient-create's
+  pattern. This file has its own copy of LAYANAN/SPESIALISASI_LIST so it
+  stays a single double-clickable file — see dokter-management.prototype.html
+  for the shared roster shape.
+
+  UPDATE (feedback round 2): added Jenis Kelamin (Laki-laki/Perempuan),
+  matching the L/P convention already used for Patient.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+const LAYANAN = [
+  { id: 'l1', nama: 'Konsultasi Umum' },
+  { id: 'l2', nama: 'Gigi' },
+  { id: 'l3', nama: 'Fisioterapi' },
+  { id: 'l4', nama: 'Anak' },
+  { id: 'l5', nama: 'Mata' },
+  { id: 'l6', nama: 'THT' },
+  { id: 'l7', nama: 'Kulit & Kelamin' },
+  { id: 'l8', nama: 'Jantung' },
+];
+
+// Platform-wide, Super-Admin-curated list (ADR 0026) — not per-Klinik, not free text.
+const SPESIALISASI_LIST = ['Umum', 'Gigi', 'Anak', 'Mata', 'THT', 'Kulit & Kelamin', 'Jantung', 'Fisioterapi'];
+
+const state = { fotoDataUrl: null, saved: null };
+
+function initials(nama) { return (nama || '?').replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+function jenisKelaminLabel(jk) { return jk === 'L' ? 'Laki-laki' : 'Perempuan'; }
+
+function handleFotoChange(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => { state.fotoDataUrl = e.target.result; render(); };
+  reader.readAsDataURL(file);
+}
+
+function submitForm(e) {
+  e.preventDefault();
+  const nama = document.getElementById('f-nama').value.trim();
+  const jenisKelamin = document.querySelector('input[name="f-jk"]:checked')?.value;
+  const spesialisasi = document.getElementById('f-spesialisasi').value;
+  const telepon = document.getElementById('f-telepon').value.trim();
+  const biografi = document.getElementById('f-biografi').value.trim();
+  if (!nama || !jenisKelamin || !spesialisasi || !telepon) { alert('Nama, jenis kelamin, spesialisasi, dan No. HP wajib diisi.'); return; }
+  const layananIds = [...document.querySelectorAll('.f-layanan:checked')].map(cb => cb.value);
+
+  state.saved = { nama, jenisKelamin, spesialisasi, telepon, biografi, layananIds, foto: state.fotoDataUrl };
+  render();
+}
+
+function resetForm() {
+  state.fotoDataUrl = null;
+  state.saved = null;
+  render();
+}
+
+function fotoPicker(previewLabel) {
+  return `
+    <div class="flex items-center gap-4">
+      <div class="w-20 h-20 rounded-full overflow-hidden bg-blue-100 text-blue-700 flex items-center justify-center text-xl font-semibold shrink-0">
+        ${state.fotoDataUrl ? `<img src="${state.fotoDataUrl}" class="w-full h-full object-cover">` : `<span id="f-initials-preview">${previewLabel}</span>`}
+      </div>
+      <label class="cursor-pointer">
+        <span class="inline-block bg-white border border-slate-300 hover:bg-slate-50 text-sm font-medium px-3 py-1.5 rounded-lg">Upload Foto</span>
+        <input type="file" accept="image/*" class="hidden" onchange="handleFotoChange(this)">
+      </label>
+    </div>`;
+}
+
+function layananCheckboxes() {
+  return LAYANAN.map(l => `
+    <label class="flex items-center gap-2 text-sm px-2 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
+      <input type="checkbox" class="f-layanan" value="${l.id}">
+      ${l.nama}
+    </label>`).join('');
+}
+
+function render() {
+  if (state.saved) {
+    const s = state.saved;
+    document.getElementById('app').innerHTML = `
+      <div class="max-w-md mx-auto p-6">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 text-center">
+          <div class="w-16 h-16 mx-auto rounded-full overflow-hidden bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl font-semibold mb-4">
+            ${s.foto ? `<img src="${s.foto}" class="w-full h-full object-cover">` : initials(s.nama)}
+          </div>
+          <h1 class="text-lg font-semibold text-slate-800 mb-1">Dokter ditambahkan</h1>
+          <p class="text-sm text-slate-500 mb-4">${esc(s.nama)} · ${jenisKelaminLabel(s.jenisKelamin)} · ${esc(s.spesialisasi)} · ${esc(s.telepon)}</p>
+          <div class="flex flex-wrap gap-1.5 justify-center mb-6">
+            ${s.layananIds.map(id => `<span class="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">${LAYANAN.find(l => l.id === id).nama}</span>`).join('') || '<span class="text-sm text-slate-400">Belum ada layanan dipilih</span>'}
+          </div>
+          <div class="flex gap-2 justify-center">
+            <button onclick="resetForm()" class="px-4 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50">Tambah Dokter Lain</button>
+            <a href="dokter-management.prototype.html" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg">← Kembali ke Direktori</a>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  document.getElementById('app').innerHTML = `
+    <div class="max-w-lg mx-auto p-6">
+      <a href="dokter-management.prototype.html" class="text-sm text-slate-500 hover:underline">← Kembali ke Direktori Dokter</a>
+      <h1 class="text-lg font-semibold text-slate-800 mt-2 mb-5">Tambah Dokter</h1>
+
+      <form onsubmit="submitForm(event)" class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-2">Foto</label>
+          ${fotoPicker('?')}
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Nama</label>
+          <input id="f-nama" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="dr. Nama Lengkap">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-2">Jenis Kelamin</label>
+          <div class="flex gap-4 text-sm">
+            <label class="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="f-jk" value="L"> Laki-laki</label>
+            <label class="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="f-jk" value="P"> Perempuan</label>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Spesialisasi</label>
+          <select id="f-spesialisasi" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+            <option value="">Pilih spesialisasi…</option>
+            ${SPESIALISASI_LIST.map(s => `<option value="${s}">${s}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">No. HP</label>
+          <input id="f-telepon" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="08xxxxxxxxxx">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-1">Biografi <span class="text-slate-400 font-normal">(opsional)</span></label>
+          <textarea id="f-biografi" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Latar belakang, pengalaman, fokus praktik…"></textarea>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-2">Layanan yang dapat ditangani</label>
+          <div class="grid grid-cols-2 gap-2">${layananCheckboxes()}</div>
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg">Simpan</button>
+          <a href="dokter-management.prototype.html" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Batal</a>
+        </div>
+      </form>
+    </div>`;
+}
+
+render();
+</script>
+</body>
+</html>

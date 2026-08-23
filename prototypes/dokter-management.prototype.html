@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Dokter Management</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the Admin Klinik screen for managing Dokter
+  *profiles* look like — adding a Dokter, assigning which Layanan they're
+  eligible to perform, and creating their login account (issue #1 stories
+  #8, #10, #11)? Distinct from penjadwalan-dokter.prototype.html, which
+  covers a Dokter's weekly Jadwal/Pengecualian, not their profile — this
+  screen links out to that one ("Atur Jadwal →") rather than re-modeling
+  scheduling here. See CONTEXT.md for Dokter, Layanan, Admin Klinik; ADR
+  0022 for why Layanan *eligibility* (assigned here) is a different thing
+  from Layanan *exclusivity*; ADR 0026 for Spesialisasi.
+
+  UPDATE (feedback round 1 — consolidation): three variants were tried —
+  A (Direktori tabel + slide-over), B (Split roster/detail), C (Grid
+  kartu + expand). Feedback picked **Variant A**; B and C are gone, along
+  with the variant switcher. On top of picking A:
+    - Search by name, filter by Layanan, and pagination (5 per page)
+      added to the directory. Per ADR 0026, Spesialisasi is deliberately
+      *not* a filter/search facet here — informational only.
+    - Foto (with upload) and Biografi (free-text) added to the Dokter
+      profile.
+    - "Tambah Dokter" and "Ubah Dokter" moved off this page entirely, onto
+      their own sibling pages — dokter-create.prototype.html and
+      dokter-detail.prototype.html?id= — the same split already used by
+      patient-management -> patient-create / patient-detail. Each file
+      keeps its own copy of the roster (see those files), matching that
+      existing convention; nothing here persists across files.
+    - Spesialisasi is now a <select> drawn from a platform-wide curated
+      list (SPESIALISASI_LIST) instead of free text, per ADR 0026 — this
+      list, and the account-invite/eligibility controls, live on the
+      create/detail pages now, not here.
+
+  UPDATE (feedback round 2):
+    - Jenis Kelamin (Laki-laki/Perempuan) added to the Dokter profile,
+      shown as its own column here and editable on create/detail —
+      following the same L/P convention already used for Patient in
+      patient-management.prototype.html / patient-detail.prototype.html.
+    - A Spesialisasi filter was added to this list, explicitly despite
+      ADR 0026 saying Spesialisasi must never be a filter/search facet
+      ("purely informational... passive context, never a filter or
+      search facet"). This was a deliberate call made when this feedback
+      was given, not an oversight — flagging it here because ADR 0026
+      now needs to be revisited/superseded (via domain-modeling/grilling)
+      to match, rather than left silently contradicted.
+
+  No backend, no persistence — everything is canned in-memory data, reset
+  on reload.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md). Same roster/eligibility shape as
+// penjadwalan-dokter.prototype.html and dokter-create/dokter-detail so all
+// four prototypes read as the same clinic.
+// ---------------------------------------------------------------------------
+const LAYANAN = [
+  { id: 'l1', nama: 'Konsultasi Umum' },
+  { id: 'l2', nama: 'Gigi' },
+  { id: 'l3', nama: 'Fisioterapi' },
+  { id: 'l4', nama: 'Anak' },
+  { id: 'l5', nama: 'Mata' },
+  { id: 'l6', nama: 'THT' },
+  { id: 'l7', nama: 'Kulit & Kelamin' },
+  { id: 'l8', nama: 'Jantung' },
+];
+
+let DOKTER = [
+  { id: 'd1', nama: 'dr. Amelia Putri', jenisKelamin: 'P', spesialisasi: 'Umum', telepon: '081211110001', email: 'amelia@kliniksehat.id', akun: 'aktif', layananIds: ['l1'], foto: null, biografi: 'Dokter umum dengan 8 tahun pengalaman di layanan primer.' },
+  { id: 'd2', nama: 'dr. Bagus Santoso', jenisKelamin: 'L', spesialisasi: 'Gigi', telepon: '081211110002', email: 'bagus@kliniksehat.id', akun: 'aktif', layananIds: ['l2'], foto: null, biografi: '' },
+  { id: 'd3', nama: 'dr. Citra Dewi', jenisKelamin: 'P', spesialisasi: 'Fisioterapi', telepon: '081211110003', email: 'citra@kliniksehat.id', akun: 'diundang', layananIds: ['l3'], foto: null, biografi: '' },
+  { id: 'd4', nama: 'dr. Dimas Wijaya', jenisKelamin: 'L', spesialisasi: 'Anak', telepon: '081211110004', email: 'dimas@kliniksehat.id', akun: 'aktif', layananIds: ['l1', 'l4'], foto: null, biografi: 'Fokus pada tumbuh kembang anak usia 0-12 tahun.' },
+  { id: 'd5', nama: 'dr. Rina Hartono', jenisKelamin: 'P', spesialisasi: 'Mata', telepon: '081211110005', email: null, akun: 'belum ada akun', layananIds: ['l5'], foto: null, biografi: '' },
+  { id: 'd6', nama: 'dr. Yusuf Hakim', jenisKelamin: 'L', spesialisasi: 'THT', telepon: '081211110006', email: 'yusuf@kliniksehat.id', akun: 'aktif', layananIds: ['l6'], foto: null, biografi: '' },
+  { id: 'd7', nama: 'dr. Maya Kusuma', jenisKelamin: 'P', spesialisasi: 'Kulit & Kelamin', telepon: '081211110007', email: 'maya@kliniksehat.id', akun: 'diundang', layananIds: ['l7'], foto: null, biografi: '' },
+  { id: 'd8', nama: 'dr. Hendra Saputra', jenisKelamin: 'L', spesialisasi: 'Jantung', telepon: '081211110008', email: null, akun: 'belum ada akun', layananIds: ['l8'], foto: null, biografi: '' },
+];
+
+const PAGE_SIZE = 5;
+
+// Platform-wide, Super-Admin-curated list (ADR 0026).
+const SPESIALISASI_LIST = ['Umum', 'Gigi', 'Anak', 'Mata', 'THT', 'Kulit & Kelamin', 'Jantung', 'Fisioterapi'];
+
+const state = {
+  search: '',
+  layananFilter: '',
+  spesialisasiFilter: '',
+  page: 1,
+};
+
+function layananNama(id) { return LAYANAN.find(l => l.id === id).nama; }
+function initials(nama) { return nama.replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+function jenisKelaminLabel(jk) { return jk === 'L' ? 'Laki-laki' : 'Perempuan'; }
+
+function akunBadge(akun) {
+  const map = {
+    'aktif': 'bg-emerald-100 text-emerald-700',
+    'diundang': 'bg-amber-100 text-amber-700',
+    'belum ada akun': 'bg-slate-200 text-slate-600',
+  };
+  return `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${map[akun]}">${akun}</span>`;
+}
+
+function avatar(d, sizeCls) {
+  if (d.foto) return `<img src="${d.foto}" class="${sizeCls} rounded-full object-cover shrink-0">`;
+  return `<div class="${sizeCls} rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">${initials(d.nama)}</div>`;
+}
+
+function filteredDokter() {
+  const q = state.search.trim().toLowerCase();
+  return DOKTER.filter(d => {
+    if (q && !d.nama.toLowerCase().includes(q)) return false;
+    if (state.layananFilter && !d.layananIds.includes(state.layananFilter)) return false;
+    if (state.spesialisasiFilter && d.spesialisasi !== state.spesialisasiFilter) return false;
+    return true;
+  });
+}
+
+function updateSearch(v) { state.search = v; state.page = 1; render(); }
+function updateLayananFilter(v) { state.layananFilter = v; state.page = 1; render(); }
+function updateSpesialisasiFilter(v) { state.spesialisasiFilter = v; state.page = 1; render(); }
+function goToPage(p) { state.page = p; render(); }
+
+function render() {
+  const all = filteredDokter();
+  const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+  state.page = Math.min(state.page, totalPages);
+  const pageItems = all.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+
+  const rows = pageItems.map(d => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onclick="location.href='dokter-detail.prototype.html?id=${d.id}'">
+      <td class="px-4 py-3">
+        <div class="flex items-center gap-3">
+          ${avatar(d, 'w-9 h-9')}
+          <div>
+            <div class="font-medium text-slate-800">${esc(d.nama)}</div>
+            <div class="text-xs text-slate-500">${esc(d.telepon)}</div>
+          </div>
+        </div>
+      </td>
+      <td class="px-4 py-3 text-sm text-slate-600">${jenisKelaminLabel(d.jenisKelamin)}</td>
+      <td class="px-4 py-3 text-sm text-slate-600">${esc(d.spesialisasi)}</td>
+      <td class="px-4 py-3">
+        <div class="flex flex-wrap gap-1 max-w-xs">
+          ${d.layananIds.map(id => `<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">${layananNama(id)}</span>`).join('')}
+        </div>
+      </td>
+      <td class="px-4 py-3">${akunBadge(d.akun)}</td>
+      <td class="px-4 py-3 text-right whitespace-nowrap" onclick="event.stopPropagation()">
+        <a href="penjadwalan-dokter.prototype.html" class="text-xs font-medium text-slate-500 hover:underline mr-3">Atur Jadwal →</a>
+        <a href="dokter-detail.prototype.html?id=${d.id}" class="text-xs font-medium text-slate-700 hover:underline">Edit</a>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="6" class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada dokter yang cocok dengan pencarian/filter.</td></tr>`;
+
+  document.getElementById('app').innerHTML = `
+    <div class="max-w-5xl mx-auto p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h1 class="text-lg font-semibold text-slate-800">Dokter</h1>
+          <p class="text-sm text-slate-500">${DOKTER.length} dokter terdaftar di klinik ini</p>
+        </div>
+        <a href="dokter-create.prototype.html" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">+ Tambah Dokter</a>
+      </div>
+
+      <div class="flex flex-wrap gap-3 mb-4">
+        <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama dokter…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+        <select onchange="updateLayananFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Layanan</option>
+          ${LAYANAN.map(l => `<option value="${l.id}" ${state.layananFilter === l.id ? 'selected' : ''}>${l.nama}</option>`).join('')}
+        </select>
+        <select onchange="updateSpesialisasiFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Spesialisasi</option>
+          ${SPESIALISASI_LIST.map(s => `<option value="${s}" ${state.spesialisasiFilter === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left">
+          <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+            <tr><th class="px-4 py-3">Dokter</th><th class="px-4 py-3">Jenis Kelamin</th><th class="px-4 py-3">Spesialisasi</th><th class="px-4 py-3">Layanan</th><th class="px-4 py-3">Akun</th><th class="px-4 py-3"></th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
+        <span>${all.length ? `Menampilkan ${(state.page - 1) * PAGE_SIZE + 1}–${Math.min(state.page * PAGE_SIZE, all.length)} dari ${all.length}` : ''}</span>
+        <div class="flex items-center gap-2">
+          <button onclick="goToPage(${state.page - 1})" ${state.page <= 1 ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">‹ Sebelumnya</button>
+          <span class="text-xs text-slate-500">Halaman ${state.page} dari ${totalPages}</span>
+          <button onclick="goToPage(${state.page + 1})" ${state.page >= totalPages ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">Berikutnya ›</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+render();
+</script>
+</body>
+</html>
