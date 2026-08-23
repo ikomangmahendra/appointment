@@ -37,6 +37,19 @@
       list, and the account-invite/eligibility controls, live on the
       create/detail pages now, not here.
 
+  UPDATE (feedback round 2):
+    - Jenis Kelamin (Laki-laki/Perempuan) added to the Dokter profile,
+      shown as its own column here and editable on create/detail —
+      following the same L/P convention already used for Patient in
+      patient-management.prototype.html / patient-detail.prototype.html.
+    - A Spesialisasi filter was added to this list, explicitly despite
+      ADR 0026 saying Spesialisasi must never be a filter/search facet
+      ("purely informational... passive context, never a filter or
+      search facet"). This was a deliberate call made when this feedback
+      was given, not an oversight — flagging it here because ADR 0026
+      now needs to be revisited/superseded (via domain-modeling/grilling)
+      to match, rather than left silently contradicted.
+
   No backend, no persistence — everything is canned in-memory data, reset
   on reload.
 
@@ -77,26 +90,31 @@ const LAYANAN = [
 ];
 
 let DOKTER = [
-  { id: 'd1', nama: 'dr. Amelia Putri', spesialisasi: 'Umum', telepon: '081211110001', email: 'amelia@kliniksehat.id', akun: 'aktif', layananIds: ['l1'], foto: null, biografi: 'Dokter umum dengan 8 tahun pengalaman di layanan primer.' },
-  { id: 'd2', nama: 'dr. Bagus Santoso', spesialisasi: 'Gigi', telepon: '081211110002', email: 'bagus@kliniksehat.id', akun: 'aktif', layananIds: ['l2'], foto: null, biografi: '' },
-  { id: 'd3', nama: 'dr. Citra Dewi', spesialisasi: 'Fisioterapi', telepon: '081211110003', email: 'citra@kliniksehat.id', akun: 'diundang', layananIds: ['l3'], foto: null, biografi: '' },
-  { id: 'd4', nama: 'dr. Dimas Wijaya', spesialisasi: 'Anak', telepon: '081211110004', email: 'dimas@kliniksehat.id', akun: 'aktif', layananIds: ['l1', 'l4'], foto: null, biografi: 'Fokus pada tumbuh kembang anak usia 0-12 tahun.' },
-  { id: 'd5', nama: 'dr. Rina Hartono', spesialisasi: 'Mata', telepon: '081211110005', email: null, akun: 'belum ada akun', layananIds: ['l5'], foto: null, biografi: '' },
-  { id: 'd6', nama: 'dr. Yusuf Hakim', spesialisasi: 'THT', telepon: '081211110006', email: 'yusuf@kliniksehat.id', akun: 'aktif', layananIds: ['l6'], foto: null, biografi: '' },
-  { id: 'd7', nama: 'dr. Maya Kusuma', spesialisasi: 'Kulit & Kelamin', telepon: '081211110007', email: 'maya@kliniksehat.id', akun: 'diundang', layananIds: ['l7'], foto: null, biografi: '' },
-  { id: 'd8', nama: 'dr. Hendra Saputra', spesialisasi: 'Jantung', telepon: '081211110008', email: null, akun: 'belum ada akun', layananIds: ['l8'], foto: null, biografi: '' },
+  { id: 'd1', nama: 'dr. Amelia Putri', jenisKelamin: 'P', spesialisasi: 'Umum', telepon: '081211110001', email: 'amelia@kliniksehat.id', akun: 'aktif', layananIds: ['l1'], foto: null, biografi: 'Dokter umum dengan 8 tahun pengalaman di layanan primer.' },
+  { id: 'd2', nama: 'dr. Bagus Santoso', jenisKelamin: 'L', spesialisasi: 'Gigi', telepon: '081211110002', email: 'bagus@kliniksehat.id', akun: 'aktif', layananIds: ['l2'], foto: null, biografi: '' },
+  { id: 'd3', nama: 'dr. Citra Dewi', jenisKelamin: 'P', spesialisasi: 'Fisioterapi', telepon: '081211110003', email: 'citra@kliniksehat.id', akun: 'diundang', layananIds: ['l3'], foto: null, biografi: '' },
+  { id: 'd4', nama: 'dr. Dimas Wijaya', jenisKelamin: 'L', spesialisasi: 'Anak', telepon: '081211110004', email: 'dimas@kliniksehat.id', akun: 'aktif', layananIds: ['l1', 'l4'], foto: null, biografi: 'Fokus pada tumbuh kembang anak usia 0-12 tahun.' },
+  { id: 'd5', nama: 'dr. Rina Hartono', jenisKelamin: 'P', spesialisasi: 'Mata', telepon: '081211110005', email: null, akun: 'belum ada akun', layananIds: ['l5'], foto: null, biografi: '' },
+  { id: 'd6', nama: 'dr. Yusuf Hakim', jenisKelamin: 'L', spesialisasi: 'THT', telepon: '081211110006', email: 'yusuf@kliniksehat.id', akun: 'aktif', layananIds: ['l6'], foto: null, biografi: '' },
+  { id: 'd7', nama: 'dr. Maya Kusuma', jenisKelamin: 'P', spesialisasi: 'Kulit & Kelamin', telepon: '081211110007', email: 'maya@kliniksehat.id', akun: 'diundang', layananIds: ['l7'], foto: null, biografi: '' },
+  { id: 'd8', nama: 'dr. Hendra Saputra', jenisKelamin: 'L', spesialisasi: 'Jantung', telepon: '081211110008', email: null, akun: 'belum ada akun', layananIds: ['l8'], foto: null, biografi: '' },
 ];
 
 const PAGE_SIZE = 5;
 
+// Platform-wide, Super-Admin-curated list (ADR 0026).
+const SPESIALISASI_LIST = ['Umum', 'Gigi', 'Anak', 'Mata', 'THT', 'Kulit & Kelamin', 'Jantung', 'Fisioterapi'];
+
 const state = {
   search: '',
   layananFilter: '',
+  spesialisasiFilter: '',
   page: 1,
 };
 
 function layananNama(id) { return LAYANAN.find(l => l.id === id).nama; }
 function initials(nama) { return nama.replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+function jenisKelaminLabel(jk) { return jk === 'L' ? 'Laki-laki' : 'Perempuan'; }
 
 function akunBadge(akun) {
   const map = {
@@ -117,12 +135,14 @@ function filteredDokter() {
   return DOKTER.filter(d => {
     if (q && !d.nama.toLowerCase().includes(q)) return false;
     if (state.layananFilter && !d.layananIds.includes(state.layananFilter)) return false;
+    if (state.spesialisasiFilter && d.spesialisasi !== state.spesialisasiFilter) return false;
     return true;
   });
 }
 
 function updateSearch(v) { state.search = v; state.page = 1; render(); }
-function updateFilter(v) { state.layananFilter = v; state.page = 1; render(); }
+function updateLayananFilter(v) { state.layananFilter = v; state.page = 1; render(); }
+function updateSpesialisasiFilter(v) { state.spesialisasiFilter = v; state.page = 1; render(); }
 function goToPage(p) { state.page = p; render(); }
 
 function render() {
@@ -142,6 +162,7 @@ function render() {
           </div>
         </div>
       </td>
+      <td class="px-4 py-3 text-sm text-slate-600">${jenisKelaminLabel(d.jenisKelamin)}</td>
       <td class="px-4 py-3 text-sm text-slate-600">${esc(d.spesialisasi)}</td>
       <td class="px-4 py-3">
         <div class="flex flex-wrap gap-1 max-w-xs">
@@ -153,7 +174,7 @@ function render() {
         <a href="penjadwalan-dokter.prototype.html" class="text-xs font-medium text-slate-500 hover:underline mr-3">Atur Jadwal →</a>
         <a href="dokter-detail.prototype.html?id=${d.id}" class="text-xs font-medium text-slate-700 hover:underline">Edit</a>
       </td>
-    </tr>`).join('') || `<tr><td colspan="5" class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada dokter yang cocok dengan pencarian/filter.</td></tr>`;
+    </tr>`).join('') || `<tr><td colspan="6" class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada dokter yang cocok dengan pencarian/filter.</td></tr>`;
 
   document.getElementById('app').innerHTML = `
     <div class="max-w-5xl mx-auto p-6">
@@ -167,16 +188,20 @@ function render() {
 
       <div class="flex flex-wrap gap-3 mb-4">
         <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama dokter…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-        <select onchange="updateFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+        <select onchange="updateLayananFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
           <option value="">Semua Layanan</option>
           ${LAYANAN.map(l => `<option value="${l.id}" ${state.layananFilter === l.id ? 'selected' : ''}>${l.nama}</option>`).join('')}
+        </select>
+        <select onchange="updateSpesialisasiFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Spesialisasi</option>
+          ${SPESIALISASI_LIST.map(s => `<option value="${s}" ${state.spesialisasiFilter === s ? 'selected' : ''}>${s}</option>`).join('')}
         </select>
       </div>
 
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left">
           <thead class="bg-slate-50 text-xs uppercase text-slate-500">
-            <tr><th class="px-4 py-3">Dokter</th><th class="px-4 py-3">Spesialisasi</th><th class="px-4 py-3">Layanan</th><th class="px-4 py-3">Akun</th><th class="px-4 py-3"></th></tr>
+            <tr><th class="px-4 py-3">Dokter</th><th class="px-4 py-3">Jenis Kelamin</th><th class="px-4 py-3">Spesialisasi</th><th class="px-4 py-3">Layanan</th><th class="px-4 py-3">Akun</th><th class="px-4 py-3"></th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>

@@ -20,6 +20,9 @@
   stays a single double-clickable file — see dokter-management.prototype.html
   for the shared roster shape.
 
+  UPDATE (feedback round 2): added Jenis Kelamin (Laki-laki/Perempuan),
+  matching the L/P convention already used for Patient.
+
   Run: open this file directly in a browser (double-click / File > Open).
 -->
 <script src="https://cdn.tailwindcss.com"></script>
@@ -55,6 +58,7 @@ const SPESIALISASI_LIST = ['Umum', 'Gigi', 'Anak', 'Mata', 'THT', 'Kulit & Kelam
 const state = { fotoDataUrl: null, saved: null };
 
 function initials(nama) { return (nama || '?').replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+function jenisKelaminLabel(jk) { return jk === 'L' ? 'Laki-laki' : 'Perempuan'; }
 
 function handleFotoChange(input) {
   const file = input.files && input.files[0];
@@ -67,13 +71,14 @@ function handleFotoChange(input) {
 function submitForm(e) {
   e.preventDefault();
   const nama = document.getElementById('f-nama').value.trim();
+  const jenisKelamin = document.querySelector('input[name="f-jk"]:checked')?.value;
   const spesialisasi = document.getElementById('f-spesialisasi').value;
   const telepon = document.getElementById('f-telepon').value.trim();
   const biografi = document.getElementById('f-biografi').value.trim();
-  if (!nama || !spesialisasi || !telepon) { alert('Nama, spesialisasi, dan No. HP wajib diisi.'); return; }
+  if (!nama || !jenisKelamin || !spesialisasi || !telepon) { alert('Nama, jenis kelamin, spesialisasi, dan No. HP wajib diisi.'); return; }
   const layananIds = [...document.querySelectorAll('.f-layanan:checked')].map(cb => cb.value);
 
-  state.saved = { nama, spesialisasi, telepon, biografi, layananIds, foto: state.fotoDataUrl };
+  state.saved = { nama, jenisKelamin, spesialisasi, telepon, biografi, layananIds, foto: state.fotoDataUrl };
   render();
 }
 
@@ -114,7 +119,7 @@ function render() {
             ${s.foto ? `<img src="${s.foto}" class="w-full h-full object-cover">` : initials(s.nama)}
           </div>
           <h1 class="text-lg font-semibold text-slate-800 mb-1">Dokter ditambahkan</h1>
-          <p class="text-sm text-slate-500 mb-4">${esc(s.nama)} · ${esc(s.spesialisasi)} · ${esc(s.telepon)}</p>
+          <p class="text-sm text-slate-500 mb-4">${esc(s.nama)} · ${jenisKelaminLabel(s.jenisKelamin)} · ${esc(s.spesialisasi)} · ${esc(s.telepon)}</p>
           <div class="flex flex-wrap gap-1.5 justify-center mb-6">
             ${s.layananIds.map(id => `<span class="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">${LAYANAN.find(l => l.id === id).nama}</span>`).join('') || '<span class="text-sm text-slate-400">Belum ada layanan dipilih</span>'}
           </div>
@@ -140,6 +145,13 @@ function render() {
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">Nama</label>
           <input id="f-nama" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="dr. Nama Lengkap">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-500 mb-2">Jenis Kelamin</label>
+          <div class="flex gap-4 text-sm">
+            <label class="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="f-jk" value="L"> Laki-laki</label>
+            <label class="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="f-jk" value="P"> Perempuan</label>
+          </div>
         </div>
         <div>
           <label class="block text-xs font-medium text-slate-500 mb-1">Spesialisasi</label>

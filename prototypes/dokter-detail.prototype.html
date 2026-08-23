@@ -19,6 +19,9 @@
   This file has its own copy of the roster (see dokter-management's for
   the "real" shared shape) so it stays a single double-clickable file.
 
+  UPDATE (feedback round 2): added Jenis Kelamin (Laki-laki/Perempuan),
+  matching the L/P convention already used for Patient.
+
   Run: open this file directly in a browser (double-click / File > Open).
   Try: ?id=d1..d8 — d3/d7 are "diundang", d5/d8 are "belum ada akun".
 -->
@@ -52,14 +55,14 @@ const LAYANAN = [
 const SPESIALISASI_LIST = ['Umum', 'Gigi', 'Anak', 'Mata', 'THT', 'Kulit & Kelamin', 'Jantung', 'Fisioterapi'];
 
 let DOKTER = [
-  { id: 'd1', nama: 'dr. Amelia Putri', spesialisasi: 'Umum', telepon: '081211110001', email: 'amelia@kliniksehat.id', akun: 'aktif', layananIds: ['l1'], foto: null, biografi: 'Dokter umum dengan 8 tahun pengalaman di layanan primer.' },
-  { id: 'd2', nama: 'dr. Bagus Santoso', spesialisasi: 'Gigi', telepon: '081211110002', email: 'bagus@kliniksehat.id', akun: 'aktif', layananIds: ['l2'], foto: null, biografi: '' },
-  { id: 'd3', nama: 'dr. Citra Dewi', spesialisasi: 'Fisioterapi', telepon: '081211110003', email: 'citra@kliniksehat.id', akun: 'diundang', layananIds: ['l3'], foto: null, biografi: '' },
-  { id: 'd4', nama: 'dr. Dimas Wijaya', spesialisasi: 'Anak', telepon: '081211110004', email: 'dimas@kliniksehat.id', akun: 'aktif', layananIds: ['l1', 'l4'], foto: null, biografi: 'Fokus pada tumbuh kembang anak usia 0-12 tahun.' },
-  { id: 'd5', nama: 'dr. Rina Hartono', spesialisasi: 'Mata', telepon: '081211110005', email: null, akun: 'belum ada akun', layananIds: ['l5'], foto: null, biografi: '' },
-  { id: 'd6', nama: 'dr. Yusuf Hakim', spesialisasi: 'THT', telepon: '081211110006', email: 'yusuf@kliniksehat.id', akun: 'aktif', layananIds: ['l6'], foto: null, biografi: '' },
-  { id: 'd7', nama: 'dr. Maya Kusuma', spesialisasi: 'Kulit & Kelamin', telepon: '081211110007', email: 'maya@kliniksehat.id', akun: 'diundang', layananIds: ['l7'], foto: null, biografi: '' },
-  { id: 'd8', nama: 'dr. Hendra Saputra', spesialisasi: 'Jantung', telepon: '081211110008', email: null, akun: 'belum ada akun', layananIds: ['l8'], foto: null, biografi: '' },
+  { id: 'd1', nama: 'dr. Amelia Putri', jenisKelamin: 'P', spesialisasi: 'Umum', telepon: '081211110001', email: 'amelia@kliniksehat.id', akun: 'aktif', layananIds: ['l1'], foto: null, biografi: 'Dokter umum dengan 8 tahun pengalaman di layanan primer.' },
+  { id: 'd2', nama: 'dr. Bagus Santoso', jenisKelamin: 'L', spesialisasi: 'Gigi', telepon: '081211110002', email: 'bagus@kliniksehat.id', akun: 'aktif', layananIds: ['l2'], foto: null, biografi: '' },
+  { id: 'd3', nama: 'dr. Citra Dewi', jenisKelamin: 'P', spesialisasi: 'Fisioterapi', telepon: '081211110003', email: 'citra@kliniksehat.id', akun: 'diundang', layananIds: ['l3'], foto: null, biografi: '' },
+  { id: 'd4', nama: 'dr. Dimas Wijaya', jenisKelamin: 'L', spesialisasi: 'Anak', telepon: '081211110004', email: 'dimas@kliniksehat.id', akun: 'aktif', layananIds: ['l1', 'l4'], foto: null, biografi: 'Fokus pada tumbuh kembang anak usia 0-12 tahun.' },
+  { id: 'd5', nama: 'dr. Rina Hartono', jenisKelamin: 'P', spesialisasi: 'Mata', telepon: '081211110005', email: null, akun: 'belum ada akun', layananIds: ['l5'], foto: null, biografi: '' },
+  { id: 'd6', nama: 'dr. Yusuf Hakim', jenisKelamin: 'L', spesialisasi: 'THT', telepon: '081211110006', email: 'yusuf@kliniksehat.id', akun: 'aktif', layananIds: ['l6'], foto: null, biografi: '' },
+  { id: 'd7', nama: 'dr. Maya Kusuma', jenisKelamin: 'P', spesialisasi: 'Kulit & Kelamin', telepon: '081211110007', email: 'maya@kliniksehat.id', akun: 'diundang', layananIds: ['l7'], foto: null, biografi: '' },
+  { id: 'd8', nama: 'dr. Hendra Saputra', jenisKelamin: 'L', spesialisasi: 'Jantung', telepon: '081211110008', email: null, akun: 'belum ada akun', layananIds: ['l8'], foto: null, biografi: '' },
 ];
 
 const id = new URLSearchParams(location.search).get('id') || 'd1';
@@ -67,6 +70,7 @@ const dokter = DOKTER.find(d => d.id === id) || DOKTER[0];
 const state = { fotoDataUrl: dokter.foto, toast: null };
 
 function initials(nama) { return nama.replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+function jenisKelaminLabel(jk) { return jk === 'L' ? 'Laki-laki' : 'Perempuan'; }
 
 function akunBadge(akun) {
   const map = {
@@ -88,12 +92,13 @@ function handleFotoChange(input) {
 function saveForm(e) {
   e.preventDefault();
   const nama = document.getElementById('f-nama').value.trim();
+  const jenisKelamin = document.querySelector('input[name="f-jk"]:checked')?.value;
   const spesialisasi = document.getElementById('f-spesialisasi').value;
   const telepon = document.getElementById('f-telepon').value.trim();
-  if (!nama || !spesialisasi || !telepon) { alert('Nama, spesialisasi, dan No. HP wajib diisi.'); return; }
+  if (!nama || !jenisKelamin || !spesialisasi || !telepon) { alert('Nama, jenis kelamin, spesialisasi, dan No. HP wajib diisi.'); return; }
   const biografi = document.getElementById('f-biografi').value.trim();
   const layananIds = [...document.querySelectorAll('.f-layanan:checked')].map(cb => cb.value);
-  Object.assign(dokter, { nama, spesialisasi, telepon, biografi, layananIds, foto: state.fotoDataUrl });
+  Object.assign(dokter, { nama, jenisKelamin, spesialisasi, telepon, biografi, layananIds, foto: state.fotoDataUrl });
   state.toast = 'Perubahan disimpan.';
   render();
 }
@@ -137,7 +142,7 @@ function render() {
         </div>
         <div>
           <h1 class="text-lg font-semibold text-slate-800">${esc(dokter.nama)}</h1>
-          <p class="text-sm text-slate-500">${esc(dokter.spesialisasi)} · ${esc(dokter.telepon)}</p>
+          <p class="text-sm text-slate-500">${jenisKelaminLabel(dokter.jenisKelamin)} · ${esc(dokter.spesialisasi)} · ${esc(dokter.telepon)}</p>
         </div>
       </div>
 
@@ -161,6 +166,13 @@ function render() {
           <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">Nama</label>
             <input id="f-nama" value="${esc(dokter.nama)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-500 mb-2">Jenis Kelamin</label>
+            <div class="flex gap-4 text-sm">
+              <label class="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="f-jk" value="L" ${dokter.jenisKelamin === 'L' ? 'checked' : ''}> Laki-laki</label>
+              <label class="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="f-jk" value="P" ${dokter.jenisKelamin === 'P' ? 'checked' : ''}> Perempuan</label>
+            </div>
           </div>
           <div>
             <label class="block text-xs font-medium text-slate-500 mb-1">Spesialisasi</label>
