@@ -93,6 +93,21 @@
       "Guest Patient" even after the conversion — Booked By is an audit
       trail of what happened, not a live pointer to the current account.
 
+  UPDATE (feedback round 4 — UI detail pass, against
+  patient-booking-mobile.prototype.html as reference): Pilih Layanan cards
+  now show harga and desc alongside nama (that prototype's Layanan mock
+  shape); Pilih Dokter cards show every Layanan a Dokter performs, not just
+  the one currently selected, and drop the "N dokter lain tidak praktik"
+  aside as noise the Dokter list itself already conveys. Slot Hold
+  (ADR 0014/0016) is now visible here too: picking a Slot starts a
+  ⏱ "Slot ditahan untuk Anda" countdown badge (default 5 min, bounded 2-15,
+  override with ?holdMinutes=N) shown through every remaining step up to
+  Konfirmasi, expiring back to Pilih Jam with an explanation if not
+  finalized in time — see the debug "simulasikan hold habis" button.
+  "Pasien Baru" gained a "Gunakan No. HP saya" checkbox that fills the
+  phone field from the logged-in User's own number, for the common case of
+  a dependent who shares the User's phone rather than having their own.
+
   No backend, no persistence, no real OAuth/SMS — everything is canned
   in-memory mock data, reset on browser reload. Any 4-6 digit code is
   accepted as a valid OTP. See the harness banner below for test values.
@@ -188,6 +203,7 @@
   .card-body { flex: 1; min-width: 0; }
   .card-title { font-weight: 700; font-size: 14.5px; }
   .card-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .card-price { flex: none; font-size: 13px; font-weight: 700; color: var(--accent); }
 
   .avatar {
     width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #fff;
@@ -216,11 +232,23 @@
 
   .banner-info { background: #fff7e6; border: 1.5px solid #f3d9ae; border-radius: 12px; padding: 10px 14px; font-size: 12.5px; line-height: 1.5; }
   .banner-note { background: #eef4ff; border: 1.5px solid #bcd2ff; border-radius: 12px; padding: 10px 14px; font-size: 12.5px; line-height: 1.5; }
+  .hold-badge {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    background: #fff7e6; border: 1.5px solid #f3d9ae; border-radius: 12px; padding: 10px 14px;
+    font-size: 12.5px; color: #92610c;
+  }
+  .hold-badge b { font-variant-numeric: tabular-nums; }
+  .err { color: #c0392b; font-size: 12.5px; margin: 0; }
 
   .check-hero { width: 64px; height: 64px; border-radius: 50%; background: #e8f5e9; color: #2e7d32; display: flex; align-items: center; justify-content: center; font-size: 32px; margin: 0 auto 6px; }
 
   .consent-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
   .consent-row input { margin-top: 2px; flex: none; }
+
+  #dbgHoldExpire {
+    position: fixed; right: 10px; bottom: 14px; z-index: 100; font-size: 11px;
+    background: #92610c; color: #fff; border: none; border-radius: 8px; padding: 5px 8px; opacity: .7;
+  }
 </style>
 </head>
 <body>
@@ -232,15 +260,17 @@
 <div id="stage"><div id="phone">
   <div id="app" style="display:flex;flex:1;flex-direction:column;"></div>
 </div></div>
+<button id="dbgHoldExpire" onclick="simulateHoldExpired()">⏱ simulasikan hold habis</button>
 
 <script>
 /* ---------------- mock data ---------------- */
 const KLINIK = { nama: "Klinik Sehat Mandiri" };
 const LAYANAN = [
-  { id: "umum", nama: "Pemeriksaan Umum", durasi: 20 },
-  { id: "gigi", nama: "Gigi", durasi: 30 },
-  { id: "vaksin", nama: "Vaksinasi", durasi: 15 },
+  { id: "umum", nama: "Pemeriksaan Umum", durasi: 20, harga: 150000, desc: "Konsultasi dokter umum untuk keluhan sehari-hari." },
+  { id: "gigi", nama: "Gigi", durasi: 30, harga: 300000, desc: "Pemeriksaan dan perawatan gigi." },
+  { id: "vaksin", nama: "Vaksinasi", durasi: 15, harga: 250000, desc: "Vaksinasi dewasa dan anak." },
 ];
+function idr(n) { return "Rp" + n.toLocaleString("id-ID"); }
 // hari: 0=Minggu..6=Sabtu, per Jadwal (recurring weekly template, CONTEXT.md).
 // pengecualian: diffDays values (0=hari ini,1=besok,2=besok lusa,...) where a
 // one-off Pengecualian Jadwal (e.g. cuti) overrides the recurring template.
@@ -259,10 +289,52 @@ function dokterTersediaTanggal(d) {
   if (d.pengecualian && d.pengecualian.includes(a.dateOffsetDays)) return false;
   return d.hari.includes(a.dateObj.getDay());
 }
+function dokterInitial(nama) { return nama.replace(/^(dr|drg)\.\s*/, "")[0]; }
 function maskPhone(phone) {
   const digits = phone.replace(/\D/g, "");
   if (digits.length <= 6) return phone;
   return digits.slice(0, 4) + "••••" + digits.slice(-4);
+}
+
+// Slot Hold (CONTEXT.md / ADR 0014, 0016): a Slot picked at "Pilih Jam" is
+// held for a per-Klinik-configurable duration (default 5 min, bounded 2-15
+// — override with ?holdMinutes=N for this demo) so it isn't lost mid-flow.
+const HOLD_MINUTES = (() => {
+  const v = parseInt(new URLSearchParams(location.search).get("holdMinutes"), 10);
+  return isNaN(v) ? 5 : Math.max(2, Math.min(15, v));
+})();
+const HOLD_MS = HOLD_MINUTES * 60 * 1000;
+function isSlotHoldExpired() { return !!a.slotHeldAt && (Date.now() - a.slotHeldAt) > HOLD_MS; }
+function holdRemainingLabel() {
+  const rem = Math.max(0, HOLD_MS - (Date.now() - (a.slotHeldAt || Date.now())));
+  const m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000);
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+function holdBadgeHtml() {
+  if (!a.slotHeldAt) return "";
+  return `<div class="hold-badge"><span>⏱ Slot ditahan untuk Anda</span><b id="holdRemaining">${holdRemainingLabel()}</b></div>`;
+}
+let holdTimer = null;
+function manageHoldTimer() {
+  const shouldRun = a.slotHeldAt && ["patient", "patientNewForm", "patientMatchOtp", "confirm"].includes(a.step);
+  if (shouldRun && !holdTimer) {
+    holdTimer = setInterval(() => {
+      if (isSlotHoldExpired()) {
+        a.slot = null; a.slotHeldAt = null;
+        a.err = "Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.";
+        a.step = "slot"; render(); return;
+      }
+      const el = document.getElementById("holdRemaining");
+      if (el) el.textContent = holdRemainingLabel();
+    }, 1000);
+  } else if (!shouldRun && holdTimer) {
+    clearInterval(holdTimer); holdTimer = null;
+  }
+}
+function simulateHoldExpired() {
+  if (!a.slotHeldAt) return;
+  a.slotHeldAt = Date.now() - HOLD_MS - 1000;
+  render();
 }
 
 // Simulated backend: every User account, keyed by phone (unique per User,
@@ -305,12 +377,13 @@ function initialState() {
     pendingPhone: "",            // phone entered for a fresh Google signup, pre-OTP
     guestName: "", guestPhone: "",
     layanan: null, dateObj: null, dateOffsetDays: null, dateLabel: "",
-    dokter: null, slot: null,
+    dokter: null, slot: null, slotHeldAt: null,  // Slot Hold: set the moment a Slot is picked
     patientId: null,
     newPatientForm: null,        // {nama, phone, dob, gender, nik} awaiting match-check
     matchedExternal: null,       // EXTERNAL_PATIENTS entry the new-patient form matched
     keluhan: "",
     justConverted: false,        // guest just tapped "Simpan sebagai akun" on the done screen
+    err: null,
   };
 }
 let a = initialState();
@@ -328,6 +401,7 @@ function render() {
   };
   root().innerHTML = screens[a.step]();
   if (["otpLogin", "guestOtp", "patientMatchOtp"].includes(a.step)) startResendTimer(30);
+  manageHoldTimer();
 }
 
 /* ---- OTP resend cooldown, shared by every OTP screen (one at a time) ---- */
@@ -511,7 +585,8 @@ function screenLayanan() {
     <div class="topbar"><button class="back-btn" onclick="reset();">&#8592;</button><h1 class="title">Pilih Layanan</h1></div>
     <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
     ${LAYANAN.map(l => `<div class="card" onclick="a.layanan='${l.id}'; a.dokter=null; a.slot=null; a.step='tanggal'; render();">
-      <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit</div></div>
+      <div class="card-body"><div class="card-title">${l.nama}</div><div class="card-sub">${l.durasi} menit &middot; ${l.desc}</div></div>
+      <div class="card-price">${idr(l.harga)}</div>
     </div>`).join("")}
   </div>`;
 }
@@ -562,10 +637,9 @@ function screenDokter() {
       <div class="banner-info">Tidak ada dokter ${fmtLayanan(a.layanan)} yang praktik pada ${a.dateLabel} (jadwal mingguan / cuti). Coba tanggal lain.</div>
       <button class="secondary-btn" onclick="a.step='tanggal'; render();">Pilih Tanggal Lain</button>
     ` : tersedia.map(d => `<div class="card" onclick="a.dokter='${d.id}'; a.slot=null; a.step='slot'; render();">
-      <div class="avatar">${d.nama[3]}</div>
-      <div class="card-body"><div class="card-title">${d.nama}</div><div class="card-sub">${fmtLayanan(a.layanan)}</div></div>
+      <div class="avatar">${dokterInitial(d.nama)}</div>
+      <div class="card-body"><div class="card-title">${d.nama}</div><div class="card-sub">${d.layanan.map(fmtLayanan).join(", ")}</div></div>
     </div>`).join("")}
-    ${all.length > tersedia.length ? `<p class="subtitle">${all.length - tersedia.length} dokter lain tidak praktik pada tanggal ini.</p>` : ""}
   </div>`;
 }
 function screenSlot() {
@@ -573,10 +647,11 @@ function screenSlot() {
     <div class="topbar"><button class="back-btn" onclick="a.step='dokter'; render();">&#8592;</button><h1 class="title">Pilih Jam</h1></div>
     <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
     <p class="subtitle">${fmtDokter(a.dokter)} · ${a.dateLabel}</p>
+    ${a.err ? `<p class="err">${a.err}</p>` : ""}
     <div class="slot-grid">
       ${slotsFor(a.dokter, a.dateOffsetDays).map(sl => sl.booked
         ? `<div class="slot booked">${sl.time}</div>`
-        : `<div class="slot" onclick="a.slot='${sl.time}'; afterSlot();">${sl.time}</div>`).join("")}
+        : `<div class="slot" onclick="a.slot='${sl.time}'; a.slotHeldAt=Date.now(); a.err=null; afterSlot();">${sl.time}</div>`).join("")}
     </div>
   </div>`;
 }
@@ -591,6 +666,7 @@ function screenPatient() {
   return `<div class="screen">
     <div class="topbar"><button class="back-btn" onclick="a.step='slot'; render();">&#8592;</button><h1 class="title">Untuk Siapa?</h1></div>
     <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    ${holdBadgeHtml()}
     <p class="subtitle">Masuk sebagai ${a.session.nama}. Satu Appointment hanya untuk satu pasien — untuk anggota keluarga lain, buat booking terpisah.</p>
     ${patients.map(p => `<div class="card ${a.patientId===p.id?'sel':''}" onclick="a.patientId='${p.id}'; render();">
       <div class="avatar ${p.rel==='Anda'?'':'alt'}">${p.nama[0]}</div>
@@ -607,11 +683,16 @@ function afterPatient() {
 function screenPatientNewForm() {
   return `<div class="screen">
     <div class="topbar"><button class="back-btn" onclick="a.step='patient'; render();">&#8592;</button><h1 class="title">Pasien Baru</h1></div>
+    ${holdBadgeHtml()}
     <p class="subtitle">Masukkan data orang yang akan diperiksa (anak, orang tua, dsb).</p>
     <label class="field-label">Nama</label>
     <input class="field" id="in_npNama" placeholder="Nama lengkap">
     <label class="field-label">No. HP</label>
     <input class="field" id="in_npPhone" placeholder="08xxxxxxxxxx">
+    <label class="consent-row">
+      <input type="checkbox" id="in_npUseMyPhone" onchange="toggleUseMyPhone()">
+      Gunakan No. HP saya (${maskPhone(a.session.phone)})
+    </label>
     <p class="subtitle" style="margin:0;">Coba 081277777777 untuk simulasi pasien yang sudah pernah berobat di sini.</p>
     <label class="field-label">Tanggal Lahir</label>
     <input class="field" type="date" id="in_npDob">
@@ -638,6 +719,12 @@ function selectGender(g) {
 function toggleNikConsent() {
   const nik = document.getElementById("in_npNik").value.trim();
   document.getElementById("nikConsentRow").style.display = nik ? "flex" : "none";
+}
+function toggleUseMyPhone() {
+  const checked = document.getElementById("in_npUseMyPhone").checked;
+  const phoneInput = document.getElementById("in_npPhone");
+  phoneInput.value = checked ? a.session.phone : "";
+  phoneInput.readOnly = checked;
 }
 function submitNewPatientForm() {
   const nama = document.getElementById("in_npNama").value.trim();
@@ -672,6 +759,7 @@ function finalizeNewPatient(linked) {
 function screenPatientMatchOtp() {
   return `<div class="screen">
     <div class="topbar"><button class="back-btn" onclick="a.step='patientNewForm'; render();">&#8592;</button><h1 class="title">Konfirmasi Diperlukan</h1></div>
+    ${holdBadgeHtml()}
     <div class="banner-note">No. HP yang dimasukkan cocok dengan Patient yang sudah pernah berobat di sini. Untuk menjaga privasi, kode OTP dikirim ke nomor tersebut — bukan ke Anda — untuk konfirmasi keterkaitan sebelum riwayatnya ditautkan.</div>
     <input class="field" id="in_matchOtp" placeholder="Kode OTP dari pasien tersebut" maxlength="6">
     <button class="primary-btn" onclick="submitMatchOtp()">Verifikasi &amp; Tautkan</button>
@@ -691,6 +779,7 @@ function screenConfirm() {
   const bookedBy = a.session ? `User (${a.session.nama})` : "Guest Patient";
   return `<div class="screen">
     <div class="topbar"><button class="back-btn" onclick="a.step = a.session ? 'patient' : 'slot'; render();">&#8592;</button><h1 class="title">Konfirmasi</h1></div>
+    ${holdBadgeHtml()}
     <div class="summary">
       <b>${fmtLayanan(a.layanan)}</b> dengan ${fmtDokter(a.dokter)}<br>
       ${a.dateLabel}, ${a.slot} · Pasien: ${patientName}<br>
@@ -698,8 +787,18 @@ function screenConfirm() {
     </div>
     <label class="field-label">Keluhan (opsional)</label>
     <textarea class="field" id="in_keluhan" rows="2" placeholder="Ceritakan keluhan Anda…"></textarea>
-    <button class="primary-btn" onclick="a.keluhan=document.getElementById('in_keluhan').value; a.step='done'; render();">Konfirmasi Booking</button>
+    <button class="primary-btn" onclick="submitConfirm()">Konfirmasi Booking</button>
   </div>`;
+}
+function submitConfirm() {
+  if (isSlotHoldExpired()) {
+    a.slot = null; a.slotHeldAt = null;
+    a.err = "Slot yang Anda pilih sudah lewat batas waktu tahan dan mungkin sudah diambil orang lain. Silakan pilih jam lain.";
+    a.step = "slot"; render(); return;
+  }
+  a.keluhan = document.getElementById("in_keluhan").value;
+  a.slotHeldAt = null; // held Slot becomes a real Appointment — hold concept no longer applies
+  a.step = "done"; render();
 }
 function screenDone() {
   const wasGuest = !a.session || a.justConverted;
