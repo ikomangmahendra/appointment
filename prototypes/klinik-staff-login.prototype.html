@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Klinik Staff Login</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the login page for Klinik *staff* (Admin Klinik,
+  Resepsionis, Staf Layanan, Dokter) look like — the screen that precedes
+  role-dashboard.prototype.html? Distinct from
+  booking-user-login-sso.prototype.html, which is the Patient-facing User
+  login (Google SSO / email+password, OTP-gated) for the booking app —
+  this one is staff signing into the clinic's own management side.
+
+  Per ADR 0028, staff never has a password set *for* them — Admin Klinik
+  invites by email and the staff member sets their own password via the
+  invite link, so the email+password path has no "temporary password"
+  concept. Until that invite is accepted, login isn't usable yet (see
+  Undangan Akun, CONTEXT.md), surfaced as an explicit error rather than a
+  generic "wrong password." Per ADR 0029, a Dokter's login access can also
+  be revoked independently of deactivating their profile — modeled here as
+  a separate "dinonaktifkan" account status with its own error message,
+  distinct from "diundang."
+
+  UPDATE (feedback round 1 — consolidation + 2FA): three variants were
+  tried — A (Panel Split Klinik), B (Kartu Progresif, email-then-password),
+  C (Pilih Peran Dulu, role tile picker). Feedback picked **Variant A**; B
+  and C are gone, along with the variant switcher — there's only one
+  screen now. On top of picking A:
+    - Added "Masuk dengan Google" (SSO), matching the login-method choice
+      already established in booking-user-login-sso.prototype.html, though
+      Google SSO for *staff* isn't part of the CONTEXT.md/ADR domain yet
+      (Undangan Akun only documents email+password) — modeled here as a
+      prototyping exploration, not a settled decision. Demo-only: it
+      always resolves to one fixed Google-linked identity (Ni Made Sari /
+      Admin Klinik) after a brief "menghubungkan" delay, then feeds into
+      the same lookupAccount() blocked-state checks as the password path.
+    - Added a second-factor OTP step after either login path succeeds —
+      also a new exploration, not yet in CONTEXT.md/ADR — with a choice of
+      delivery: WhatsApp (a code "sent" to the staff member's phone) or an
+      Authenticator app (a 6-digit TOTP the staff member already has
+      configured). Any 6-digit code is accepted in this prototype, same as
+      the "kode apa saja tetap diterima" convention in
+      booking-user-login-sso.prototype.html.
+    - The WhatsApp option has a "Kirim ulang kode" resend control with a
+      30s cooldown, reusing the exact resend/cooldown pattern from
+      booking-user-login-sso.prototype.html (direct DOM update on tick
+      rather than a full re-render, so the code input isn't disturbed).
+      The Authenticator option has no resend — the code just rotates on
+      the staff member's own device.
+
+  Canned ACCOUNTS cover all three login outcomes staff can hit: aktif
+  (logs in fine, then hits the OTP step), diundang (invite sent, not yet
+  accepted — blocked per ADR 0028, before OTP is ever reached), dinonaktif
+  (login revoked per ADR 0029, likewise blocked pre-OTP). Demo credentials
+  are listed on-screen and click-to-fill, since there's no real backend to
+  check against. A successful login (email+password or Google, then OTP)
+  doesn't actually navigate anywhere — it renders a "berhasil masuk"
+  confirmation naming the role/dashboard it would hand off to, matching
+  the prototype-skill rule against wiring to real navigation/mutations.
+  Same clinic identity (Klinik Sehat Bahagia) as role-dashboard.prototype
+  .html, and the same dokter roster/email domain/phone numbers
+  (kliniksehat.id, 0812111100xx) as dokter-management.prototype.html, so
+  all three read as one clinic.
+
+  No backend, no persistence — everything is canned in-memory data, reset
+  on reload.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md) — same clinic identity as
+// role-dashboard.prototype.html, same dokter roster/email domain/phone
+// numbers as dokter-management.prototype.html.
+// ---------------------------------------------------------------------------
+const KLINIK = { name: 'Klinik Sehat Bahagia', kota: 'Bandung' };
+
+const ROLES = [
+  { key: 'admin_klinik', label: 'Admin Klinik' },
+  { key: 'resepsionis', label: 'Resepsionis' },
+  { key: 'staf_layanan', label: 'Staf Layanan' },
+  { key: 'dokter', label: 'Dokter' },
+];
+
+const GOOGLE_DEMO_EMAIL = 'admin@kliniksehat.id';
+
+const ACCOUNTS = [
+  { email: 'admin@kliniksehat.id', password: 'admin123', nama: 'Ni Made Sari', role: 'admin_klinik', status: 'aktif', telepon: '081211110010' },
+  { email: 'dewi@kliniksehat.id', password: 'resepsionis123', nama: 'Dewi Lestari', role: 'resepsionis', status: 'aktif', telepon: '081211110011' },
+  { email: 'agus@kliniksehat.id', password: 'staflayanan123', nama: 'Agus Setiawan', role: 'staf_layanan', status: 'aktif', telepon: '081211110012' },
+  { email: 'amelia@kliniksehat.id', password: 'dokter123', nama: 'dr. Amelia Putri', role: 'dokter', status: 'aktif', telepon: '081211110001' },
+  { email: 'citra@kliniksehat.id', password: null, nama: 'dr. Citra Dewi', role: 'dokter', status: 'diundang', telepon: '081211110003' },
+  { email: 'yusuf@kliniksehat.id', password: 'dokter123', nama: 'dr. Yusuf Hakim', role: 'dokter', status: 'dinonaktifkan', telepon: '081211110006' },
+];
+
+function roleLabel(key) { return ROLES.find(r => r.key === key)?.label ?? key; }
+function accountByEmail(email) { return ACCOUNTS.find(a => a.email.toLowerCase() === String(email || '').trim().toLowerCase()); }
+function maskPhone(telepon) { return telepon.slice(0, 4) + '-' + '•'.repeat(telepon.length - 7) + '-' + telepon.slice(-3); }
+
+// Given an email, returns { ok, account, error }.
+//   ok: true         — account exists and is loggable-in-principle (email+
+//                       password still needs its own password check; Google
+//                       SSO treats this alone as sufficient to proceed to OTP)
+//   ok: false         — unknown email, or a known email whose status blocks
+//                       login outright (diundang / dinonaktifkan) — no
+//                       password or SSO will ever help either of those
+function lookupAccount(email) {
+  const acc = accountByEmail(email);
+  if (!acc) return { ok: false, error: 'Email atau password salah.' };
+  if (acc.status === 'diundang') {
+    return { ok: false, account: acc, error: 'Undangan akun untuk email ini belum diterima. Cek email Anda untuk link undangan dan atur password terlebih dahulu.' };
+  }
+  if (acc.status === 'dinonaktifkan') {
+    return { ok: false, account: acc, error: 'Akses login untuk akun ini telah dinonaktifkan. Hubungi Admin Klinik Anda.' };
+  }
+  return { ok: true, account: acc };
+}
+
+function attemptLogin(email, password) {
+  const found = lookupAccount(email);
+  if (!found.ok) return found;
+  // wrong-password and unknown-email share the same generic message so a
+  // login attempt never reveals whether an email is registered
+  if (found.account.password !== password) return { ok: false, error: 'Email atau password salah.' };
+  return { ok: true, account: found.account };
+}
+
+// ---------------------------------------------------------------------------
+// Shared state
+// ---------------------------------------------------------------------------
+function initialState() {
+  return {
+    step: 'login',          // 'login' | 'otp' | 'success'
+    email: '',
+    password: '',
+    error: null,
+    googleConnecting: false,
+    pendingAccount: null,   // account that passed login, awaiting OTP
+    otpMethod: 'whatsapp',  // 'whatsapp' | 'authenticator'
+    otpCode: '',
+    otpError: null,
+    forgotOpen: false,
+    forgotEmail: '',
+    forgotSent: false,
+  };
+}
+let state = initialState();
+function resetLoginState() { state = initialState(); render(); }
+
+// ---------------------------------------------------------------------------
+// Shared bits
+// ---------------------------------------------------------------------------
+function demoAccountsPanel() {
+  const statusBadge = {
+    aktif: '<span class="text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded text-[10px] font-medium">aktif</span>',
+    diundang: '<span class="text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded text-[10px] font-medium">diundang</span>',
+    dinonaktifkan: '<span class="text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded text-[10px] font-medium">dinonaktifkan</span>',
+  };
+  return `
+    <div class="border border-slate-200 rounded-lg bg-slate-50 p-3 text-xs">
+      <div class="font-medium text-slate-500 mb-2">Akun demo (klik untuk isi otomatis)</div>
+      <div class="space-y-1.5">
+        ${ACCOUNTS.map(a => `
+          <button data-action="fill-demo" data-email="${esc(a.email)}" data-password="${esc(a.password ?? '')}"
+                  class="w-full flex items-center justify-between gap-2 text-left px-2 py-1.5 rounded hover:bg-white border border-transparent hover:border-slate-200">
+            <span class="truncate">
+              <span class="font-medium">${esc(a.nama)}</span>
+              <span class="text-slate-400">· ${esc(roleLabel(a.role))}</span>
+            </span>
+            ${statusBadge[a.status]}
+          </button>
+        `).join('')}
+      </div>
+    </div>`;
+}
+
+function errorBanner(msg) {
+  if (!msg) return '';
+  return `<div class="bg-rose-50 border border-rose-200 text-rose-700 text-sm rounded-lg px-3 py-2">${esc(msg)}</div>`;
+}
+
+function forgotPasswordBlock() {
+  if (!state.forgotOpen) {
+    return `<button data-action="open-forgot" class="text-sm text-slate-500 hover:text-slate-700 underline">Lupa password?</button>`;
+  }
+  if (state.forgotSent) {
+    return `
+      <div class="bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-lg px-3 py-2">
+        Jika email tersebut terdaftar, kami sudah mengirim link reset password ke sana.
+      </div>`;
+  }
+  return `
+    <div class="border border-slate-200 rounded-lg p-3 space-y-2">
+      <div class="text-sm font-medium">Reset password</div>
+      <input data-bind="forgotEmail" type="email" placeholder="Email akun Anda" value="${esc(state.forgotEmail)}"
+             class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+      <div class="flex items-center gap-2">
+        <button data-action="submit-forgot" class="bg-slate-900 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-slate-800">Kirim link reset</button>
+        <button data-action="close-forgot" class="text-sm text-slate-500 hover:text-slate-700">Batal</button>
+      </div>
+    </div>`;
+}
+
+function googleButton() {
+  return `
+    <button data-action="google-login" class="w-full flex items-center justify-center gap-2 border border-slate-300 rounded-lg px-3 py-2.5 text-sm font-medium hover:bg-slate-50">
+      <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.6 29.3 35.5 24 35.5c-6.4 0-11.7-4.6-13-10.7-.3-1.2-.4-2.4-.4-3.7s.1-2.5.4-3.7C12.3 11.1 17.6 6.5 24 6.5c3.2 0 6.1 1.1 8.4 3.1l5.9-5.9C34.9 0.5 29.7-1 24-1 11.8-1 1.6 8.3 1.6 20.5S11.8 42 24 42c11.6 0 21.4-8.4 21.4-21.5 0-1.4-.2-2.7-.4-4z"/>
+        <path fill="#FF3D00" d="M6.3 12.7l6.6 4.8C14.6 13.6 18.9 11 24 11c3.2 0 6.1 1.1 8.4 3.1l5.9-5.9C34.9 4.5 29.7 3 24 3 16.3 3 9.7 7.3 6.3 12.7z"/>
+        <path fill="#4CAF50" d="M24 41.5c5.6 0 10.7-2.1 14.5-5.7l-6.7-5.5c-2 1.5-4.7 2.5-7.8 2.5-5.3 0-9.7-3.4-11.3-8.1l-6.7 5.2C9.6 36.8 16.2 41.5 24 41.5z"/>
+        <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.2 5.6l6.7 5.5c-.5.4 7.2-5.3 7.2-15.6 0-1.4-.2-2.7-.4-4z"/>
+      </svg>
+      Masuk dengan Google
+    </button>
+    <div class="text-center text-[11px] text-slate-400 mt-1">Demo: akan masuk sebagai Ni Made Sari (Admin Klinik)</div>`;
+}
+
+function googleConnectingBlock() {
+  return `
+    <div class="flex flex-col items-center justify-center py-10 gap-3">
+      <div class="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin"></div>
+      <div class="text-sm text-slate-500">Menghubungkan ke Google…</div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Screen — Panel Split Klinik (branding kiri, form kanan)
+// ---------------------------------------------------------------------------
+function renderLogin() {
+  return `
+    <div class="min-h-screen flex">
+      <div class="hidden md:flex flex-col justify-between w-1/2 bg-slate-900 text-white p-10">
+        <div class="text-lg font-semibold">${esc(KLINIK.name)}</div>
+        <div>
+          <div class="text-3xl font-semibold leading-tight mb-3">Kelola klinik Anda<br>dari satu tempat.</div>
+          <div class="text-slate-300 text-sm max-w-sm">Jadwal Dokter, Layanan, dan antrian pasien harian —
+          semua staf ${esc(KLINIK.name)} masuk lewat halaman yang sama.</div>
+        </div>
+        <div class="text-slate-500 text-xs">${esc(KLINIK.kota)} · Portal staf klinik</div>
+      </div>
+      <div class="flex-1 flex items-center justify-center p-6">
+        <div class="w-full max-w-sm">
+          <div class="md:hidden text-sm font-medium text-slate-500 mb-6">${esc(KLINIK.name)}</div>
+          <div class="text-xl font-semibold mb-1">Masuk ke Portal Staf</div>
+          <div class="text-sm text-slate-500 mb-6">Gunakan email dan password akun staf Anda, atau lewat Google.</div>
+
+          ${state.googleConnecting ? googleConnectingBlock() : `
+            ${googleButton()}
+            <div class="flex items-center gap-3 my-4 text-xs text-slate-400">
+              <div class="flex-1 h-px bg-slate-200"></div>atau<div class="flex-1 h-px bg-slate-200"></div>
+            </div>
+            <form data-form="login" class="space-y-3">
+              <div>
+                <label class="text-xs font-medium text-slate-500">Email</label>
+                <input data-bind="email" type="email" placeholder="nama@kliniksehat.id" value="${esc(state.email)}"
+                       class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+              </div>
+              <div>
+                <label class="text-xs font-medium text-slate-500">Password</label>
+                <input data-bind="password" type="password" placeholder="••••••••" value="${esc(state.password)}"
+                       class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+              </div>
+              ${errorBanner(state.error)}
+              <button type="submit" class="w-full bg-slate-900 text-white text-sm font-medium px-3 py-2.5 rounded-lg hover:bg-slate-800">Masuk</button>
+            </form>
+            <div class="mt-3">${forgotPasswordBlock()}</div>
+            <div class="mt-6">${demoAccountsPanel()}</div>
+          `}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Screen — OTP (second factor after email+password or Google succeeds)
+// ---------------------------------------------------------------------------
+function renderOtp() {
+  const acc = state.pendingAccount;
+  const methodTab = (key, label) => `
+    <button data-action="otp-method" data-method="${key}"
+            class="flex-1 text-sm font-medium py-2 rounded-lg ${state.otpMethod === key ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}">${label}</button>`;
+
+  const methodBody = state.otpMethod === 'whatsapp' ? `
+      <div class="text-sm text-slate-500 mb-3">
+        Kode terkirim lewat WhatsApp ke <span class="font-medium text-slate-700">${esc(maskPhone(acc.telepon))}</span>.
+      </div>` : `
+      <div class="text-sm text-slate-500 mb-3">
+        Buka aplikasi Authenticator Anda dan masukkan kode 6 digit yang tampil di sana.
+      </div>`;
+
+  return `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8">
+        <div class="text-center mb-6">
+          <div class="text-xs uppercase tracking-wide text-slate-400 mb-1">${esc(KLINIK.name)}</div>
+          <div class="text-lg font-semibold">Verifikasi 2 Langkah</div>
+        </div>
+        <div class="flex items-center gap-3 mb-4 p-3 bg-slate-50 rounded-lg">
+          <div class="w-9 h-9 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">${esc(initials(acc.nama))}</div>
+          <div class="min-w-0">
+            <div class="text-sm font-medium truncate">${esc(acc.nama)}</div>
+            <div class="text-xs text-slate-500">${esc(roleLabel(acc.role))} · ${esc(acc.email)}</div>
+          </div>
+        </div>
+
+        <div class="flex gap-2 mb-4">
+          ${methodTab('whatsapp', 'WhatsApp')}
+          ${methodTab('authenticator', 'Authenticator')}
+        </div>
+        ${methodBody}
+
+        <form data-form="otp" class="space-y-3">
+          <div>
+            <label class="text-xs font-medium text-slate-500">Kode OTP (6 digit)</label>
+            <input data-bind="otpCode" inputmode="numeric" maxlength="6" placeholder="123456" value="${esc(state.otpCode)}"
+                   class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-slate-400">
+          </div>
+          ${errorBanner(state.otpError)}
+          <button type="submit" class="w-full bg-slate-900 text-white text-sm font-medium px-3 py-2.5 rounded-lg hover:bg-slate-800">Verifikasi</button>
+        </form>
+
+        ${state.otpMethod === 'whatsapp' ? `
+          <div class="flex flex-col items-center gap-1 mt-4">
+            <button id="otpResendBtn" data-action="resend-otp" disabled class="text-sm text-slate-400">Kirim ulang kode (30s)</button>
+            <div id="otpResendNote" class="text-xs text-emerald-600"></div>
+          </div>` : ''}
+
+        <button type="button" data-action="back-to-login" class="w-full text-sm text-slate-500 hover:text-slate-700 mt-4">← Bukan Anda? Kembali ke login</button>
+      </div>
+    </div>`;
+}
+
+function initials(nama) { return nama.replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+// ---------------------------------------------------------------------------
+// Screen — success
+// ---------------------------------------------------------------------------
+function renderSuccess() {
+  const acc = state.pendingAccount;
+  return `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
+        <div class="text-center py-6">
+          <div class="w-14 h-14 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl font-semibold mx-auto mb-4">✓</div>
+          <div class="text-lg font-semibold mb-1">Berhasil masuk</div>
+          <div class="text-sm text-slate-500 mb-4">
+            Halo, <span class="font-medium text-slate-700">${esc(acc.nama)}</span> — masuk sebagai
+            <span class="font-medium text-slate-700">${esc(roleLabel(acc.role))}</span>.
+            Akan diarahkan ke Dashboard (lihat role-dashboard.prototype.html).
+          </div>
+          <button data-action="logout" class="text-sm text-slate-500 underline hover:text-slate-700">Keluar &amp; coba akun lain</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// OTP resend cooldown — direct DOM update on tick (not a full render), same
+// pattern as booking-user-login-sso.prototype.html, so the code input the
+// staff member is typing into is never disturbed.
+// ---------------------------------------------------------------------------
+let otpResendTimer = null;
+function startResendTimer(seconds) {
+  if (otpResendTimer) clearInterval(otpResendTimer);
+  let remaining = seconds;
+  const tick = () => {
+    const btn = document.getElementById('otpResendBtn');
+    if (!btn) { clearInterval(otpResendTimer); otpResendTimer = null; return; } // left the OTP screen or switched method
+    if (remaining <= 0) {
+      btn.disabled = false;
+      btn.textContent = 'Kirim ulang kode';
+      btn.classList.remove('text-slate-400');
+      btn.classList.add('text-slate-700', 'underline', 'hover:text-slate-900');
+      clearInterval(otpResendTimer); otpResendTimer = null;
+    } else {
+      btn.disabled = true;
+      btn.textContent = `Kirim ulang kode (${remaining}s)`;
+      remaining--;
+    }
+  };
+  tick();
+  otpResendTimer = setInterval(tick, 1000);
+}
+
+// ---------------------------------------------------------------------------
+// Event delegation
+// ---------------------------------------------------------------------------
+document.addEventListener('submit', e => {
+  const form = e.target.closest('form[data-form]');
+  if (!form) return;
+  e.preventDefault();
+  const kind = form.dataset.form;
+
+  if (kind === 'login') {
+    const result = attemptLogin(state.email, state.password);
+    if (result.ok) { goToOtp(result.account); }
+    else { state.error = result.error; render(); }
+    return;
+  }
+
+  if (kind === 'otp') {
+    if (!/^\d{6}$/.test(state.otpCode.trim())) {
+      state.otpError = 'Kode harus 6 digit angka.';
+      render();
+      return;
+    }
+    state.otpError = null;
+    state.step = 'success';
+    render();
+    return;
+  }
+});
+
+document.addEventListener('input', e => {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  state[bind] = bind === 'otpCode' ? e.target.value.replace(/\D/g, '').slice(0, 6) : e.target.value;
+});
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  const action = t.dataset.action;
+
+  if (action === 'fill-demo') {
+    state.email = t.dataset.email;
+    state.password = t.dataset.password;
+    state.error = null;
+    render();
+    requestAnimationFrame(() => document.querySelector('[data-bind="password"], [data-bind="email"]')?.focus());
+  }
+  if (action === 'google-login') { startGoogleLogin(); }
+  if (action === 'logout') { resetLoginState(); }
+  if (action === 'back-to-login') { resetLoginState(); }
+  if (action === 'otp-method') {
+    state.otpMethod = t.dataset.method;
+    state.otpCode = '';
+    state.otpError = null;
+    render();
+  }
+  if (action === 'resend-otp') {
+    document.getElementById('otpResendNote').textContent = 'Kode baru terkirim (demo: kode apa saja tetap diterima).';
+    startResendTimer(30);
+  }
+  if (action === 'open-forgot') { state.forgotOpen = true; render(); }
+  if (action === 'close-forgot') { state.forgotOpen = false; state.forgotSent = false; render(); }
+  if (action === 'submit-forgot') { state.forgotSent = true; render(); }
+});
+
+function goToOtp(account) {
+  state.pendingAccount = account;
+  state.step = 'otp';
+  state.otpMethod = 'whatsapp';
+  state.otpCode = '';
+  state.otpError = null;
+  state.error = null;
+  render();
+}
+
+function startGoogleLogin() {
+  state.error = null;
+  state.googleConnecting = true;
+  render();
+  setTimeout(() => {
+    state.googleConnecting = false;
+    const result = lookupAccount(GOOGLE_DEMO_EMAIL);
+    if (result.ok) { goToOtp(result.account); }
+    else { state.error = result.error; render(); }
+  }, 900);
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+function render() {
+  const screens = { login: renderLogin, otp: renderOtp, success: renderSuccess };
+  document.getElementById('app').innerHTML = screens[state.step]();
+  if (state.step === 'otp' && state.otpMethod === 'whatsapp') startResendTimer(30);
+}
+
+render();
+</script>
+</body>
+</html>
