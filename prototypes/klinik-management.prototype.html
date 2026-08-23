@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Klinik Management</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Question: what should the Super-Admin screen for provisioning and
+  overseeing Klinik tenants look like — one level up from Dokter
+  Management (dokter-management.prototype.html), which is Admin Klinik
+  managing *within* one Klinik. This screen is Super-Admin managing the
+  Klinik tenants themselves. See CONTEXT.md for Platform, Klinik,
+  Super-Admin, Admin Klinik; ADR 0028 for Undangan Akun; ADR 0029 for the
+  deactivate-is-independent-of-login pattern this reuses for Klinik itself.
+
+  Follows the same directory + sibling create/detail split established by
+  Dokter Management: this file is the directory (search/filter/paginate,
+  read-only rows), "Provisi Klinik" and "Kelola Klinik" live on their own
+  pages — klinik-create.prototype.html and
+  klinik-detail.prototype.html?id=. Each file keeps its own copy of the
+  roster, matching that existing convention; nothing persists across files.
+
+  Open domain questions surfaced by this prototype, not yet answered by an
+  ADR (flagging rather than silently deciding):
+    - Who invites a Klinik's *first* Admin Klinik account? Undangan Akun
+      (ADR 0028) describes Admin Klinik inviting Resepsionis/Staf
+      Layanan/Dokter — it doesn't say who invites Admin Klinik itself. This
+      prototype assumes Super-Admin does it, at Klinik provisioning time,
+      using the same invite-by-email/self-set-password shape.
+    - Menonaktifkan Klinik here mirrors Menonaktifkan Dokter (ADR 0029:
+      soft-delete only, existing data preserved) but "what does a
+      deactivated Klinik's own booking page / staff logins actually do"
+      is left unanswered — shown here as a status flag only.
+
+  UPDATE (feedback round 1):
+    - Alamat is now a structured address (jalan/kelurahan/kecamatan/
+      kota-kabupaten/provinsi/kode pos, with lat/lng/placeId) instead of a
+      plain string, filled via the same Google-Places-style search
+      simulate already used for Patient (see patient-create.prototype.html
+      / patient-detail.prototype.html's addressSearchBlock — canned
+      suggestions, no real API). Editable on klinik-create/klinik-detail;
+      this file just displays kota + provinsi under the Klinik name.
+    - List filters: the Zona Waktu filter is removed and replaced with
+      Provinsi and Kabupaten/Kota filters (Kabupaten/Kota options narrow
+      to whichever Provinsi is selected). Zona Waktu stays as a column for
+      context — this feedback round only asked to drop it as a *filter*,
+      not remove the attribute.
+
+  No backend, no persistence — everything is canned in-memory data, reset
+  on reload.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+function mkAddress(street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId) {
+  return { street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId,
+    formatted: `${street}, ${kelurahan}, ${kecamatan}, ${kota}, ${provinsi} ${kodePos}` };
+}
+
+// ---------------------------------------------------------------------------
+// Canned domain data (see CONTEXT.md). Same Klinik shape as klinik-create
+// and klinik-detail so all three prototypes read as the same platform.
+// ---------------------------------------------------------------------------
+let KLINIK = [
+  { id: 'k1', nama: 'Klinik Sehat Sentosa', alamat: mkAddress('Jl. Merdeka No. 12', 'Cipete Utara', 'Kebayoran Baru', 'Jakarta Selatan', 'DKI Jakarta', '12150', -6.2608, 106.8006, 'place_k1'), zona: 'WIB', status: 'aktif', adminNama: 'Sari Wulandari', adminEmail: 'sari@kliniksehat.id', adminAkun: 'aktif', jumlahDokter: 8, jumlahLayanan: 6, jumlahStaf: 5 },
+  { id: 'k2', nama: 'Klinik Prima Medika', alamat: mkAddress('Jl. Sudirman No. 88', 'Embong Kaliasin', 'Genteng', 'Surabaya', 'Jawa Timur', '60271', -7.2604, 112.7379, 'place_k2'), zona: 'WIB', status: 'aktif', adminNama: 'Budi Hartanto', adminEmail: 'budi@primamedika.id', adminAkun: 'aktif', jumlahDokter: 5, jumlahLayanan: 4, jumlahStaf: 3 },
+  { id: 'k3', nama: 'Klinik Bali Husada', alamat: mkAddress('Jl. Raya Kuta No. 45', 'Kuta', 'Kuta', 'Badung', 'Bali', '80361', -8.7226, 115.1731, 'place_k3'), zona: 'WITA', status: 'aktif', adminNama: 'Made Wirawan', adminEmail: null, adminAkun: 'diundang', jumlahDokter: 3, jumlahLayanan: 3, jumlahStaf: 2 },
+  { id: 'k4', nama: 'Klinik Anugerah Sehat', alamat: mkAddress('Jl. Gatot Subroto No. 21', 'Petisah Tengah', 'Medan Petisah', 'Medan', 'Sumatera Utara', '20112', 3.5910, 98.6685, 'place_k4'), zona: 'WIB', status: 'aktif', adminNama: 'Rina Simamora', adminEmail: 'rina@anugerahsehat.id', adminAkun: 'aktif', jumlahDokter: 6, jumlahLayanan: 5, jumlahStaf: 4 },
+  { id: 'k5', nama: 'Klinik Timur Sejahtera', alamat: mkAddress('Jl. Cendrawasih No. 7', 'Trikora', 'Jayapura Utara', 'Jayapura', 'Papua', '99112', -2.5330, 140.7181, 'place_k5'), zona: 'WIT', status: 'nonaktif', adminNama: 'Yosef Mansnembra', adminEmail: 'yosef@timursejahtera.id', adminAkun: 'aktif', jumlahDokter: 2, jumlahLayanan: 2, jumlahStaf: 1 },
+  { id: 'k6', nama: 'Klinik Mitra Keluarga Baru', alamat: mkAddress('Jl. Ahmad Yani No. 33', 'Maricaya', 'Makassar', 'Makassar', 'Sulawesi Selatan', '90114', -5.1477, 119.4327, 'place_k6'), zona: 'WITA', status: 'aktif', adminNama: null, adminEmail: null, adminAkun: 'belum ada akun', jumlahDokter: 0, jumlahLayanan: 0, jumlahStaf: 0 },
+  { id: 'k7', nama: 'Klinik Cahaya Bunda', alamat: mkAddress('Jl. Diponegoro No. 19', 'Miroto', 'Semarang Tengah', 'Semarang', 'Jawa Tengah', '50131', -6.9932, 110.4203, 'place_k7'), zona: 'WIB', status: 'aktif', adminNama: 'Dewi Anggraini', adminEmail: 'dewi@cahayabunda.id', adminAkun: 'diundang', jumlahDokter: 4, jumlahLayanan: 3, jumlahStaf: 2 },
+];
+
+const PAGE_SIZE = 5;
+
+const state = {
+  search: '',
+  provinsiFilter: '',
+  kabupatenFilter: '',
+  statusFilter: '',
+  page: 1,
+};
+
+function provinsiList() { return [...new Set(KLINIK.map(k => k.alamat.provinsi))].sort(); }
+function kabupatenList(provinsi) { return [...new Set(KLINIK.filter(k => !provinsi || k.alamat.provinsi === provinsi).map(k => k.alamat.kota))].sort(); }
+
+function initials(nama) { return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+function statusBadge(status) {
+  return status === 'aktif'
+    ? `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Aktif</span>`
+    : `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium bg-slate-200 text-slate-600">Nonaktif</span>`;
+}
+
+function akunBadge(akun) {
+  const map = {
+    'aktif': 'bg-emerald-100 text-emerald-700',
+    'diundang': 'bg-amber-100 text-amber-700',
+    'belum ada akun': 'bg-slate-200 text-slate-600',
+  };
+  return `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${map[akun]}">${akun}</span>`;
+}
+
+function filteredKlinik() {
+  const q = state.search.trim().toLowerCase();
+  return KLINIK.filter(k => {
+    if (q && !k.nama.toLowerCase().includes(q)) return false;
+    if (state.provinsiFilter && k.alamat.provinsi !== state.provinsiFilter) return false;
+    if (state.kabupatenFilter && k.alamat.kota !== state.kabupatenFilter) return false;
+    if (state.statusFilter && k.status !== state.statusFilter) return false;
+    return true;
+  });
+}
+
+function updateSearch(v) { state.search = v; state.page = 1; render(); }
+function updateProvinsiFilter(v) { state.provinsiFilter = v; state.kabupatenFilter = ''; state.page = 1; render(); }
+function updateKabupatenFilter(v) { state.kabupatenFilter = v; state.page = 1; render(); }
+function updateStatusFilter(v) { state.statusFilter = v; state.page = 1; render(); }
+function goToPage(p) { state.page = p; render(); }
+
+function render() {
+  const all = filteredKlinik();
+  const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+  state.page = Math.min(state.page, totalPages);
+  const pageItems = all.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+
+  const rows = pageItems.map(k => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${k.status === 'nonaktif' ? 'opacity-60' : ''}" onclick="location.href='klinik-detail.prototype.html?id=${k.id}'">
+      <td class="px-4 py-3">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">${initials(k.nama)}</div>
+          <div>
+            <div class="font-medium text-slate-800">${esc(k.nama)}</div>
+            <div class="text-xs text-slate-500">${esc(k.alamat.kota)}, ${esc(k.alamat.provinsi)}</div>
+          </div>
+        </div>
+      </td>
+      <td class="px-4 py-3 text-sm text-slate-600">${k.zona}</td>
+      <td class="px-4 py-3">
+        <div class="text-sm text-slate-700">${k.adminNama ? esc(k.adminNama) : '<span class="text-slate-400">—</span>'}</div>
+        ${akunBadge(k.adminAkun)}
+      </td>
+      <td class="px-4 py-3 text-sm text-slate-600">
+        <span title="Dokter">${k.jumlahDokter} dokter</span> ·
+        <span title="Layanan">${k.jumlahLayanan} layanan</span> ·
+        <span title="Staf">${k.jumlahStaf} staf</span>
+      </td>
+      <td class="px-4 py-3">${statusBadge(k.status)}</td>
+      <td class="px-4 py-3 text-right whitespace-nowrap" onclick="event.stopPropagation()">
+        <a href="klinik-detail.prototype.html?id=${k.id}" class="text-xs font-medium text-slate-700 hover:underline">Kelola</a>
+      </td>
+    </tr>`).join('') || `<tr><td colspan="6" class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada klinik yang cocok dengan pencarian/filter.</td></tr>`;
+
+  document.getElementById('app').innerHTML = `
+    <div class="max-w-6xl mx-auto p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h1 class="text-lg font-semibold text-slate-800">Klinik</h1>
+          <p class="text-sm text-slate-500">${KLINIK.length} klinik terdaftar di platform</p>
+        </div>
+        <a href="klinik-create.prototype.html" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">+ Provisi Klinik</a>
+      </div>
+
+      <div class="flex flex-wrap gap-3 mb-4">
+        <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama klinik…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+        <select onchange="updateProvinsiFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Provinsi</option>
+          ${provinsiList().map(p => `<option value="${esc(p)}" ${state.provinsiFilter === p ? 'selected' : ''}>${esc(p)}</option>`).join('')}
+        </select>
+        <select onchange="updateKabupatenFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Kabupaten/Kota</option>
+          ${kabupatenList(state.provinsiFilter).map(kt => `<option value="${esc(kt)}" ${state.kabupatenFilter === kt ? 'selected' : ''}>${esc(kt)}</option>`).join('')}
+        </select>
+        <select onchange="updateStatusFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Status</option>
+          <option value="aktif" ${state.statusFilter === 'aktif' ? 'selected' : ''}>Aktif</option>
+          <option value="nonaktif" ${state.statusFilter === 'nonaktif' ? 'selected' : ''}>Nonaktif</option>
+        </select>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="w-full text-left">
+          <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+            <tr><th class="px-4 py-3">Klinik</th><th class="px-4 py-3">Zona Waktu</th><th class="px-4 py-3">Admin Klinik</th><th class="px-4 py-3">Sumber Daya</th><th class="px-4 py-3">Status</th><th class="px-4 py-3"></th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
+        <span>${all.length ? `Menampilkan ${(state.page - 1) * PAGE_SIZE + 1}–${Math.min(state.page * PAGE_SIZE, all.length)} dari ${all.length}` : ''}</span>
+        <div class="flex items-center gap-2">
+          <button onclick="goToPage(${state.page - 1})" ${state.page <= 1 ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">‹ Sebelumnya</button>
+          <span class="text-xs text-slate-500">Halaman ${state.page} dari ${totalPages}</span>
+          <button onclick="goToPage(${state.page + 1})" ${state.page >= totalPages ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">Berikutnya ›</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+render();
+</script>
+</body>
+</html>

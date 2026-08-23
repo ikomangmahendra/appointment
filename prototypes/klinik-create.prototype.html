@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Provisi Klinik</title>
+<!--
+  PROTOTYPE — throwaway code, do not build on top of this.
+
+  Sibling route to klinik-management.prototype.html, matching the
+  directory -> create/detail split already established by Dokter
+  Management. A dedicated page for a Super-Admin to provision a new Klinik
+  tenant: nama, alamat, zona waktu, plus (optional at this step) inviting
+  that Klinik's first Admin Klinik account by email — same invite-by-email,
+  self-set-password shape as Undangan Akun (ADR 0028), just performed by
+  Super-Admin instead of Admin Klinik since no Admin Klinik exists yet for
+  a brand-new Klinik. See CONTEXT.md for Platform/Klinik/Super-Admin.
+
+  No backend: submitting just shows a recap, same as dokter-create's
+  pattern. This file has its own copy of ZONA_LIST/ADDRESS_SUGGESTIONS so
+  it stays a single double-clickable file — see klinik-management's for
+  the shared roster shape.
+
+  UPDATE (feedback round 1): Alamat is now captured the same way Patient's
+  is — a Google-Places-style search simulate (see ADDRESS_SUGGESTIONS
+  below — canned, no real API) that fills structured sub-fields (jalan,
+  kelurahan, kecamatan, kota/kabupaten, provinsi, kode pos), editable
+  afterward, or "isi manual" to skip search entirely. Reuses the exact
+  addressSearchBlock/data-bind/data-action shape from
+  patient-create.prototype.html, which is also why this file switched from
+  reading form values via getElementById at submit-time to a controlled
+  `ui.draft` re-rendered on every keystroke — needed for the live
+  suggestions dropdown, and simplest to apply to the whole form rather than
+  mixing controlled/uncontrolled fields.
+
+  Run: open this file directly in a browser (double-click / File > Open).
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  [data-anim="in"] { animation: fade-in .15s ease-out; }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+
+<div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
+  🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan.
+</div>
+
+<div id="app"></div>
+
+<script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+const ZONA_LIST = ['WIB', 'WITA', 'WIT'];
+
+function mkAddress(street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId) {
+  return { street, kelurahan, kecamatan, kota, provinsi, kodePos, lat, lng, placeId,
+    formatted: `${street}, ${kelurahan}, ${kecamatan}, ${kota}, ${provinsi} ${kodePos}` };
+}
+function emptyAddress() { return { street: '', kelurahan: '', kecamatan: '', kota: '', provinsi: '', kodePos: '', lat: null, lng: null, placeId: null, formatted: '' }; }
+
+const ADDRESS_SUGGESTIONS = [
+  mkAddress('Jl. Melati No. 12', 'Sukaluyu', 'Cibeunying Kaler', 'Bandung', 'Jawa Barat', '40123', -6.8951, 107.6237, 'place_melati_12'),
+  mkAddress('Jl. Boulevard Raya No. 10', 'Kelapa Gading Barat', 'Kelapa Gading', 'Jakarta Utara', 'DKI Jakarta', '14240', -6.1610, 106.9095, 'place_boulevard_10'),
+  mkAddress('Jl. Pandanaran No. 5', 'Pekunden', 'Semarang Tengah', 'Semarang', 'Jawa Tengah', '50134', -6.9885, 110.4177, 'place_pandanaran_5'),
+  mkAddress('Jl. Slamet Riyadi No. 22', 'Sriwedari', 'Laweyan', 'Surakarta', 'Jawa Tengah', '57141', -7.5697, 110.8175, 'place_slametriyadi_22'),
+  mkAddress('Jl. Diponegoro No. 100', 'Renon', 'Denpasar Selatan', 'Denpasar', 'Bali', '80114', -8.6705, 115.2126, 'place_diponegoro_100'),
+  mkAddress('Jl. Veteran No. 8', 'Klojen', 'Klojen', 'Malang', 'Jawa Timur', '65119', -7.9797, 112.6304, 'place_veteran_8'),
+];
+
+function emptyDraft() { return { nama: '', zona: '', address: null, adminNama: '', adminEmail: '' }; }
+
+let ui = { draft: emptyDraft(), addressSearch: '', saved: null };
+
+function initials(nama) { return (nama || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
+
+function addressSearchBlock() {
+  const q = ui.addressSearch.trim();
+  const suggestions = q.length >= 3 ? ADDRESS_SUGGESTIONS.filter(s => s.formatted.toLowerCase().includes(q.toLowerCase())) : [];
+  const addr = ui.draft.address;
+  return `<div class="space-y-2">
+    <div class="relative">
+      <input data-bind="addressSearch" value="${esc(ui.addressSearch)}" placeholder="Cari alamat (Google Maps)..." class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      ${suggestions.length ? `<div data-anim="in" class="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-10 max-h-48 overflow-y-auto">
+        ${suggestions.map(s => `<div data-action="pick-address" data-place-id="${s.placeId}" class="cursor-pointer px-3 py-2 text-sm hover:bg-blue-50 border-b border-slate-100 last:border-0">📍 ${esc(s.formatted)}</div>`).join('')}
+      </div>` : ''}
+      ${q.length >= 3 && !suggestions.length ? `<div class="absolute left-0 right-0 mt-1 bg-white border border-dashed border-slate-300 rounded-md p-3 text-xs text-slate-400 z-10">Tidak ditemukan — coba kata kunci lain atau isi manual di bawah.</div>` : ''}
+    </div>
+    ${addr ? `<div data-anim="in" class="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200 rounded-md p-3">
+      <label class="block text-xs text-slate-400 col-span-2">Jalan<input data-bind="address.street" value="${esc(addr.street)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kelurahan<input data-bind="address.kelurahan" value="${esc(addr.kelurahan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kecamatan<input data-bind="address.kecamatan" value="${esc(addr.kecamatan)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kota/Kabupaten<input data-bind="address.kota" value="${esc(addr.kota)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Provinsi<input data-bind="address.provinsi" value="${esc(addr.provinsi)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <label class="block text-xs text-slate-400">Kode Pos<input data-bind="address.kodePos" value="${esc(addr.kodePos)}" class="mt-0.5 w-full border border-slate-300 rounded px-2 py-1.5 text-sm" /></label>
+      <button data-action="clear-address" class="col-span-2 text-xs text-slate-400 underline text-left">Hapus &amp; cari ulang</button>
+    </div>` : `<button data-action="manual-address" class="text-xs text-blue-600 underline">+ Isi alamat manual (tanpa pencarian)</button>`}
+  </div>`;
+}
+
+function addressLines(addr) {
+  if (!addr || !addr.street) return '<span class="text-slate-400 italic">belum diisi</span>';
+  return `<div>${esc(addr.street)}</div>
+    <div class="text-xs text-slate-500">${esc(addr.kelurahan || '-')}, ${esc(addr.kecamatan || '-')}</div>
+    <div class="text-xs text-slate-500">${esc(addr.kota || '-')}, ${esc(addr.provinsi || '-')} ${esc(addr.kodePos || '')}</div>`;
+}
+
+function renderForm() {
+  const d = ui.draft;
+  return `<div class="max-w-lg mx-auto p-6">
+    <a href="klinik-management.prototype.html" class="text-sm text-slate-500 hover:underline">← Kembali ke Daftar Klinik</a>
+    <h1 class="text-lg font-semibold text-slate-800 mt-2 mb-5">Provisi Klinik</h1>
+
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-4">
+      <label class="block">
+        <div class="text-xs font-medium text-slate-500 mb-1">Nama Klinik</div>
+        <input data-bind="nama" value="${esc(d.nama)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Klinik Nama Lengkap">
+      </label>
+      <div>
+        <div class="text-xs font-medium text-slate-500 mb-1">Alamat</div>
+        ${addressSearchBlock()}
+      </div>
+      <label class="block">
+        <div class="text-xs font-medium text-slate-500 mb-1">Zona Waktu</div>
+        <select data-bind="zona" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="" disabled ${!d.zona ? 'selected' : ''}>Pilih zona waktu…</option>
+          ${ZONA_LIST.map(z => `<option value="${z}" ${d.zona === z ? 'selected' : ''}>${z}</option>`).join('')}
+        </select>
+      </label>
+
+      <div class="pt-2 border-t border-slate-100">
+        <h2 class="text-sm font-semibold text-slate-700 mb-1">Admin Klinik Pertama <span class="text-slate-400 font-normal">(opsional — bisa diundang nanti)</span></h2>
+        <p class="text-xs text-slate-500 mb-3">Admin Klinik mengatur password login mereka sendiri lewat link undangan, sama seperti Undangan Akun untuk Dokter/staf.</p>
+        <div class="space-y-3">
+          <label class="block">
+            <div class="text-xs font-medium text-slate-500 mb-1">Nama</div>
+            <input data-bind="adminNama" value="${esc(d.adminNama)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Nama Admin Klinik">
+          </label>
+          <label class="block">
+            <div class="text-xs font-medium text-slate-500 mb-1">Email</div>
+            <input data-bind="adminEmail" type="email" value="${esc(d.adminEmail)}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="admin@kliniknya.id">
+          </label>
+        </div>
+      </div>
+
+      <div class="flex gap-2 pt-2">
+        <button data-action="save" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg">Provisi Klinik</button>
+        <a href="klinik-management.prototype.html" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Batal</a>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderSuccess() {
+  const s = ui.saved;
+  return `<div class="max-w-md mx-auto p-6">
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 text-center" data-anim="in">
+      <div class="w-16 h-16 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xl font-semibold mb-4">${initials(s.nama)}</div>
+      <h1 class="text-lg font-semibold text-slate-800 mb-1">Klinik diprovisi</h1>
+      <p class="text-sm text-slate-500 mb-1">${esc(s.nama)} · ${esc(s.zona)}</p>
+      <div class="text-xs text-slate-500 mb-4">${addressLines(s.address)}</div>
+      ${s.adminEmail
+        ? `<div class="text-sm bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-4 py-2 mb-6">Undangan Admin Klinik terkirim ke <strong>${esc(s.adminEmail)}</strong> (${esc(s.adminNama)}).</div>`
+        : `<div class="text-sm bg-slate-50 border border-slate-200 text-slate-500 rounded-lg px-4 py-2 mb-6">Belum ada Admin Klinik — undang dari halaman Kelola Klinik kapan saja.</div>`}
+      <div class="flex gap-2 justify-center">
+        <button data-action="add-another" class="px-4 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50">Provisi Klinik Lain</button>
+        <a href="klinik-management.prototype.html" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg">← Kembali ke Daftar Klinik</a>
+      </div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  document.getElementById('app').innerHTML = ui.saved ? renderSuccess() : renderForm();
+}
+
+function applyBind(e) {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  const parts = bind.split('.');
+  if (parts[0] === 'address') ui.draft.address[parts[1]] = e.target.value;
+  else if (bind === 'addressSearch') ui.addressSearch = e.target.value;
+  else ui.draft[bind] = e.target.value;
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-action]');
+  if (!t) return;
+  switch (t.dataset.action) {
+    case 'pick-address': {
+      const s = ADDRESS_SUGGESTIONS.find(a => a.placeId === t.dataset.placeId);
+      if (s) ui.draft.address = { ...s };
+      ui.addressSearch = '';
+      break;
+    }
+    case 'manual-address': ui.draft.address = emptyAddress(); break;
+    case 'clear-address': ui.draft.address = null; ui.addressSearch = ''; break;
+    case 'save': {
+      if (!ui.draft.nama.trim() || !(ui.draft.address && ui.draft.address.street.trim()) || !ui.draft.zona) {
+        alert('Nama klinik, alamat, dan zona waktu wajib diisi.');
+        return;
+      }
+      if ((ui.draft.adminNama.trim() && !ui.draft.adminEmail.trim()) || (!ui.draft.adminNama.trim() && ui.draft.adminEmail.trim())) {
+        alert('Nama dan email Admin Klinik harus diisi berdua, atau dikosongkan berdua untuk diundang nanti.');
+        return;
+      }
+      ui.saved = { ...ui.draft, adminNama: ui.draft.adminNama.trim() || null, adminEmail: ui.draft.adminEmail.trim() || null };
+      break;
+    }
+    case 'add-another':
+      ui.draft = emptyDraft(); ui.addressSearch = ''; ui.saved = null;
+      break;
+  }
+  render();
+});
+
+document.addEventListener('input', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName === 'SELECT') return;
+  applyBind(e);
+  const bind = e.target.dataset.bind;
+  const selStart = e.target.selectionStart, selEnd = e.target.selectionEnd;
+  render();
+  const el = document.querySelector(`[data-bind="${bind}"]`);
+  if (el) { el.focus(); if (el.type !== 'email') el.setSelectionRange(selStart, selEnd); }
+});
+
+document.addEventListener('change', (e) => {
+  if (!e.target.dataset.bind || e.target.tagName !== 'SELECT') return;
+  applyBind(e);
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
