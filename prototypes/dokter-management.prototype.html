@@ -15,30 +15,27 @@
   screen links out to that one ("Atur Jadwal →") rather than re-modeling
   scheduling here. See CONTEXT.md for Dokter, Layanan, Admin Klinik; ADR
   0022 for why Layanan *eligibility* (assigned here) is a different thing
-  from Layanan *exclusivity* (one dokter actually holding a Jadwal block
-  for it at a time, enforced in the scheduling screen, not this one).
+  from Layanan *exclusivity*; ADR 0026 for Spesialisasi.
 
-  Three structurally different variants, switchable via ?variant=a|b|c:
-    A (Direktori tabel) — dense sortable table, "+ Tambah Dokter" and row
-      clicks open a right-hand slide-over form.
-    B (Split roster/detail) — persistent two-pane layout, roster list on
-      the left, full profile inline-editable on the right, no modal/overlay
-      at all.
-    C (Grid kartu + expand) — a card grid (closer to how a receptionist
-      might browse "who works here" than a data table); clicking a card
-      expands it in place into the edit form; "+ Tambah Dokter" is a
-      dashed placeholder card in the same grid.
-
-  Same 8-dokter / 8-layanan roster and eligibility mapping as
-  penjadwalan-dokter.prototype.html (dr. Amelia..Hendra, Konsultasi
-  Umum..Jantung) so the two prototypes read as the same clinic. Account
-  status per Dokter is modeled as belum-ada-akun -> diundang -> aktif:
-  Admin Klinik can create a profile without an account yet, then invite
-  one by email later (assumption: the Dokter sets their own password via
-  the invite link, matching issue #1's staff email+password auth — Admin
-  Klinik doesn't type a password on their behalf). A "simulasikan sudah
-  login (demo)" debug action fast-forwards diundang -> aktif so that part
-  of the lifecycle is visible without a real email/login.
+  UPDATE (feedback round 1 — consolidation): three variants were tried —
+  A (Direktori tabel + slide-over), B (Split roster/detail), C (Grid
+  kartu + expand). Feedback picked **Variant A**; B and C are gone, along
+  with the variant switcher. On top of picking A:
+    - Search by name, filter by Layanan, and pagination (5 per page)
+      added to the directory. Per ADR 0026, Spesialisasi is deliberately
+      *not* a filter/search facet here — informational only.
+    - Foto (with upload) and Biografi (free-text) added to the Dokter
+      profile.
+    - "Tambah Dokter" and "Ubah Dokter" moved off this page entirely, onto
+      their own sibling pages — dokter-create.prototype.html and
+      dokter-detail.prototype.html?id= — the same split already used by
+      patient-management -> patient-create / patient-detail. Each file
+      keeps its own copy of the roster (see those files), matching that
+      existing convention; nothing here persists across files.
+    - Spesialisasi is now a <select> drawn from a platform-wide curated
+      list (SPESIALISASI_LIST) instead of free text, per ADR 0026 — this
+      list, and the account-invite/eligibility controls, live on the
+      create/detail pages now, not here.
 
   No backend, no persistence — everything is canned in-memory data, reset
   on reload.
@@ -50,22 +47,23 @@
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
-  .switcher-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; }
 </style>
 </head>
-<body class="bg-slate-100 text-slate-800 min-h-screen pb-24">
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16">
 
 <div class="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-2 text-center">
   🧪 PROTOTYPE — data contoh, tidak tersambung ke backend, tidak tersimpan. Reload untuk reset.
 </div>
 
 <div id="app"></div>
-<div id="switcher"></div>
 
 <script>
+function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
 // ---------------------------------------------------------------------------
-// Canned domain data (see CONTEXT.md) — same roster/eligibility shape as
-// penjadwalan-dokter.prototype.html so the two prototypes feel like one clinic.
+// Canned domain data (see CONTEXT.md). Same roster/eligibility shape as
+// penjadwalan-dokter.prototype.html and dokter-create/dokter-detail so all
+// four prototypes read as the same clinic.
 // ---------------------------------------------------------------------------
 const LAYANAN = [
   { id: 'l1', nama: 'Konsultasi Umum' },
@@ -79,38 +77,26 @@ const LAYANAN = [
 ];
 
 let DOKTER = [
-  { id: 'd1', nama: 'dr. Amelia Putri', spesialisasi: 'Umum', telepon: '081211110001', email: 'amelia@kliniksehat.id', akun: 'aktif', layananIds: ['l1'] },
-  { id: 'd2', nama: 'dr. Bagus Santoso', spesialisasi: 'Gigi', telepon: '081211110002', email: 'bagus@kliniksehat.id', akun: 'aktif', layananIds: ['l2'] },
-  { id: 'd3', nama: 'dr. Citra Dewi', spesialisasi: 'Fisioterapi', telepon: '081211110003', email: 'citra@kliniksehat.id', akun: 'diundang', layananIds: ['l3'] },
-  { id: 'd4', nama: 'dr. Dimas Wijaya', spesialisasi: 'Anak', telepon: '081211110004', email: 'dimas@kliniksehat.id', akun: 'aktif', layananIds: ['l1', 'l4'] },
-  { id: 'd5', nama: 'dr. Rina Hartono', spesialisasi: 'Mata', telepon: '081211110005', email: null, akun: 'belum ada akun', layananIds: ['l5'] },
-  { id: 'd6', nama: 'dr. Yusuf Hakim', spesialisasi: 'THT', telepon: '081211110006', email: 'yusuf@kliniksehat.id', akun: 'aktif', layananIds: ['l6'] },
-  { id: 'd7', nama: 'dr. Maya Kusuma', spesialisasi: 'Kulit & Kelamin', telepon: '081211110007', email: 'maya@kliniksehat.id', akun: 'diundang', layananIds: ['l7'] },
-  { id: 'd8', nama: 'dr. Hendra Saputra', spesialisasi: 'Jantung', telepon: '081211110008', email: null, akun: 'belum ada akun', layananIds: ['l8'] },
+  { id: 'd1', nama: 'dr. Amelia Putri', spesialisasi: 'Umum', telepon: '081211110001', email: 'amelia@kliniksehat.id', akun: 'aktif', layananIds: ['l1'], foto: null, biografi: 'Dokter umum dengan 8 tahun pengalaman di layanan primer.' },
+  { id: 'd2', nama: 'dr. Bagus Santoso', spesialisasi: 'Gigi', telepon: '081211110002', email: 'bagus@kliniksehat.id', akun: 'aktif', layananIds: ['l2'], foto: null, biografi: '' },
+  { id: 'd3', nama: 'dr. Citra Dewi', spesialisasi: 'Fisioterapi', telepon: '081211110003', email: 'citra@kliniksehat.id', akun: 'diundang', layananIds: ['l3'], foto: null, biografi: '' },
+  { id: 'd4', nama: 'dr. Dimas Wijaya', spesialisasi: 'Anak', telepon: '081211110004', email: 'dimas@kliniksehat.id', akun: 'aktif', layananIds: ['l1', 'l4'], foto: null, biografi: 'Fokus pada tumbuh kembang anak usia 0-12 tahun.' },
+  { id: 'd5', nama: 'dr. Rina Hartono', spesialisasi: 'Mata', telepon: '081211110005', email: null, akun: 'belum ada akun', layananIds: ['l5'], foto: null, biografi: '' },
+  { id: 'd6', nama: 'dr. Yusuf Hakim', spesialisasi: 'THT', telepon: '081211110006', email: 'yusuf@kliniksehat.id', akun: 'aktif', layananIds: ['l6'], foto: null, biografi: '' },
+  { id: 'd7', nama: 'dr. Maya Kusuma', spesialisasi: 'Kulit & Kelamin', telepon: '081211110007', email: 'maya@kliniksehat.id', akun: 'diundang', layananIds: ['l7'], foto: null, biografi: '' },
+  { id: 'd8', nama: 'dr. Hendra Saputra', spesialisasi: 'Jantung', telepon: '081211110008', email: null, akun: 'belum ada akun', layananIds: ['l8'], foto: null, biografi: '' },
 ];
 
-const VARIANTS = [
-  { key: 'a', label: 'Direktori tabel' },
-  { key: 'b', label: 'Split roster/detail' },
-  { key: 'c', label: 'Grid kartu + expand' },
-];
+const PAGE_SIZE = 5;
 
-// ---------------------------------------------------------------------------
-// Shared state
-// ---------------------------------------------------------------------------
 const state = {
-  variant: (new URLSearchParams(location.search).get('variant') || 'a').toLowerCase(),
-  mode: 'idle',       // 'idle' | 'create' | 'edit'
-  activeId: null,     // dokter being viewed/edited (variant B/C) or edited (variant A)
-  draft: null,        // form draft while mode is 'create'/'edit'
-  log: [],
+  search: '',
+  layananFilter: '',
+  page: 1,
 };
-if (!VARIANTS.some(v => v.key === state.variant)) state.variant = 'a';
 
 function layananNama(id) { return LAYANAN.find(l => l.id === id).nama; }
-function dokterById(id) { return DOKTER.find(d => d.id === id); }
 function initials(nama) { return nama.replace(/^dr\.\s*/i, '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(); }
-function logAction(text) { state.log.unshift(text); state.log = state.log.slice(0, 6); }
 
 function akunBadge(akun) {
   const map = {
@@ -121,160 +107,72 @@ function akunBadge(akun) {
   return `<span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${map[akun]}">${akun}</span>`;
 }
 
-// ---------------------------------------------------------------------------
-// Form draft helpers (shared across all three variants)
-// ---------------------------------------------------------------------------
-function blankDraft() {
-  return { id: null, nama: '', spesialisasi: '', telepon: '', layananIds: [] };
+function avatar(d, sizeCls) {
+  if (d.foto) return `<img src="${d.foto}" class="${sizeCls} rounded-full object-cover shrink-0">`;
+  return `<div class="${sizeCls} rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">${initials(d.nama)}</div>`;
 }
 
-function openCreate() {
-  state.mode = 'create';
-  state.activeId = null;
-  state.draft = blankDraft();
-  render();
+function filteredDokter() {
+  const q = state.search.trim().toLowerCase();
+  return DOKTER.filter(d => {
+    if (q && !d.nama.toLowerCase().includes(q)) return false;
+    if (state.layananFilter && !d.layananIds.includes(state.layananFilter)) return false;
+    return true;
+  });
 }
 
-function openEdit(id) {
-  const d = dokterById(id);
-  state.mode = 'edit';
-  state.activeId = id;
-  state.draft = { id: d.id, nama: d.nama, spesialisasi: d.spesialisasi, telepon: d.telepon, layananIds: [...d.layananIds] };
-  render();
-}
+function updateSearch(v) { state.search = v; state.page = 1; render(); }
+function updateFilter(v) { state.layananFilter = v; state.page = 1; render(); }
+function goToPage(p) { state.page = p; render(); }
 
-function selectDokter(id) {
-  // Variant B/C: clicking a roster row/card just views it; edit is explicit.
-  state.mode = 'idle';
-  state.activeId = id;
-  state.draft = null;
-  render();
-}
+function render() {
+  const all = filteredDokter();
+  const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+  state.page = Math.min(state.page, totalPages);
+  const pageItems = all.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
 
-function closeForm() {
-  state.mode = 'idle';
-  state.draft = null;
-  render();
-}
-
-function updateDraftField(field, value) {
-  state.draft[field] = value;
-}
-
-function toggleDraftLayanan(id, checked) {
-  const set = new Set(state.draft.layananIds);
-  if (checked) set.add(id); else set.delete(id);
-  state.draft.layananIds = [...set];
-}
-
-function submitForm(e) {
-  e.preventDefault();
-  const nama = document.getElementById('f-nama').value.trim();
-  const spesialisasi = document.getElementById('f-spesialisasi').value.trim();
-  const telepon = document.getElementById('f-telepon').value.trim();
-  if (!nama || !spesialisasi || !telepon) { alert('Nama, spesialisasi, dan No. HP wajib diisi.'); return; }
-  const layananIds = [...document.querySelectorAll('.f-layanan:checked')].map(cb => cb.value);
-
-  if (state.mode === 'create') {
-    const id = 'd' + (Math.max(0, ...DOKTER.map(d => parseInt(d.id.slice(1)))) + 1);
-    DOKTER.push({ id, nama, spesialisasi, telepon, email: null, akun: 'belum ada akun', layananIds });
-    logAction(`+ Ditambahkan: ${nama}`);
-    state.activeId = id;
-  } else {
-    const d = dokterById(state.activeId);
-    Object.assign(d, { nama, spesialisasi, telepon, layananIds });
-    logAction(`✎ Diperbarui: ${nama}`);
-  }
-  state.mode = 'idle';
-  state.draft = null;
-  render();
-}
-
-function undang(id) {
-  const d = dokterById(id);
-  const email = prompt(`Kirim undangan akun ke email untuk ${d.nama}:`, d.email || '');
-  if (!email) return;
-  d.email = email.trim();
-  d.akun = 'diundang';
-  logAction(`✉ Undangan dikirim: ${d.nama} (${d.email})`);
-  render();
-}
-
-function kirimUlangUndangan(id) {
-  const d = dokterById(id);
-  logAction(`✉ Undangan dikirim ulang: ${d.nama} (${d.email})`);
-  render();
-}
-
-function simulasikanLogin(id) {
-  const d = dokterById(id);
-  d.akun = 'aktif';
-  logAction(`🔑 (demo) ${d.nama} login pertama kali — akun aktif`);
-  render();
-}
-
-// ---------------------------------------------------------------------------
-// Layanan checkbox grid (shared form fragment)
-// ---------------------------------------------------------------------------
-function layananCheckboxes(selectedIds) {
-  return LAYANAN.map(l => `
-    <label class="flex items-center gap-2 text-sm px-2 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 cursor-pointer">
-      <input type="checkbox" class="f-layanan" value="${l.id}" ${selectedIds.includes(l.id) ? 'checked' : ''}>
-      ${l.nama}
-    </label>`).join('');
-}
-
-function actionLog() {
-  if (!state.log.length) return '';
-  return `
-    <div class="fixed bottom-20 right-4 bg-white border border-slate-200 rounded-lg shadow-lg p-3 text-xs w-72 max-h-40 overflow-y-auto z-40">
-      <div class="font-semibold text-slate-500 mb-1">Log aksi (demo)</div>
-      ${state.log.map(l => `<div class="text-slate-600 py-0.5 border-b border-slate-100 last:border-0">${l}</div>`).join('')}
-    </div>`;
-}
-
-// ===========================================================================
-// VARIANT A — Direktori tabel + slide-over
-// ===========================================================================
-function renderVariantA() {
-  const rows = DOKTER.map(d => `
-    <tr class="border-b border-slate-100 hover:bg-slate-50">
+  const rows = pageItems.map(d => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onclick="location.href='dokter-detail.prototype.html?id=${d.id}'">
       <td class="px-4 py-3">
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center">${initials(d.nama)}</div>
+          ${avatar(d, 'w-9 h-9')}
           <div>
-            <div class="font-medium text-slate-800">${d.nama}</div>
-            <div class="text-xs text-slate-500">${d.telepon}</div>
+            <div class="font-medium text-slate-800">${esc(d.nama)}</div>
+            <div class="text-xs text-slate-500">${esc(d.telepon)}</div>
           </div>
         </div>
       </td>
-      <td class="px-4 py-3 text-sm text-slate-600">${d.spesialisasi}</td>
+      <td class="px-4 py-3 text-sm text-slate-600">${esc(d.spesialisasi)}</td>
       <td class="px-4 py-3">
         <div class="flex flex-wrap gap-1 max-w-xs">
           ${d.layananIds.map(id => `<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">${layananNama(id)}</span>`).join('')}
         </div>
       </td>
       <td class="px-4 py-3">${akunBadge(d.akun)}</td>
-      <td class="px-4 py-3 text-right whitespace-nowrap">
-        ${d.akun === 'belum ada akun' ? `<button onclick="undang('${d.id}')" class="text-xs font-medium text-blue-600 hover:underline mr-3">Undang</button>` : ''}
-        ${d.akun === 'diundang' ? `<button onclick="kirimUlangUndangan('${d.id}')" class="text-xs font-medium text-blue-600 hover:underline mr-1">Kirim ulang</button><button onclick="simulasikanLogin('${d.id}')" class="text-xs text-slate-400 hover:underline mr-3">(demo) tandai aktif</button>` : ''}
+      <td class="px-4 py-3 text-right whitespace-nowrap" onclick="event.stopPropagation()">
         <a href="penjadwalan-dokter.prototype.html" class="text-xs font-medium text-slate-500 hover:underline mr-3">Atur Jadwal →</a>
-        <button onclick="openEdit('${d.id}')" class="text-xs font-medium text-slate-700 hover:underline">Edit</button>
+        <a href="dokter-detail.prototype.html?id=${d.id}" class="text-xs font-medium text-slate-700 hover:underline">Edit</a>
       </td>
-    </tr>`).join('');
+    </tr>`).join('') || `<tr><td colspan="5" class="px-4 py-10 text-center text-sm text-slate-400">Tidak ada dokter yang cocok dengan pencarian/filter.</td></tr>`;
 
-  const formOpen = state.mode !== 'idle';
-  const d = state.draft;
-
-  return `
+  document.getElementById('app').innerHTML = `
     <div class="max-w-5xl mx-auto p-6">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h1 class="text-lg font-semibold text-slate-800">Dokter</h1>
           <p class="text-sm text-slate-500">${DOKTER.length} dokter terdaftar di klinik ini</p>
         </div>
-        <button onclick="openCreate()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">+ Tambah Dokter</button>
+        <a href="dokter-create.prototype.html" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">+ Tambah Dokter</a>
       </div>
+
+      <div class="flex flex-wrap gap-3 mb-4">
+        <input id="f-search" value="${esc(state.search)}" oninput="updateSearch(this.value)" placeholder="Cari nama dokter…" class="flex-1 min-w-[200px] border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+        <select onchange="updateFilter(this.value)" class="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Semua Layanan</option>
+          ${LAYANAN.map(l => `<option value="${l.id}" ${state.layananFilter === l.id ? 'selected' : ''}>${l.nama}</option>`).join('')}
+        </select>
+      </div>
+
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <table class="w-full text-left">
           <thead class="bg-slate-50 text-xs uppercase text-slate-500">
@@ -283,248 +181,17 @@ function renderVariantA() {
           <tbody>${rows}</tbody>
         </table>
       </div>
-    </div>
 
-    ${formOpen ? `
-    <div class="fixed inset-0 bg-black/30 z-40" onclick="closeForm()"></div>
-    <div class="fixed top-0 right-0 h-full w-full max-w-md bg-white shadow-2xl z-50 overflow-y-auto">
-      <div class="p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-base font-semibold">${state.mode === 'create' ? 'Tambah Dokter' : 'Edit Dokter'}</h2>
-          <button onclick="closeForm()" class="text-slate-400 hover:text-slate-600 text-xl leading-none">&times;</button>
+      <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
+        <span>${all.length ? `Menampilkan ${(state.page - 1) * PAGE_SIZE + 1}–${Math.min(state.page * PAGE_SIZE, all.length)} dari ${all.length}` : ''}</span>
+        <div class="flex items-center gap-2">
+          <button onclick="goToPage(${state.page - 1})" ${state.page <= 1 ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page <= 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">‹ Sebelumnya</button>
+          <span class="text-xs text-slate-500">Halaman ${state.page} dari ${totalPages}</span>
+          <button onclick="goToPage(${state.page + 1})" ${state.page >= totalPages ? 'disabled' : ''} class="px-3 py-1.5 rounded-md border border-slate-300 ${state.page >= totalPages ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white bg-white'}">Berikutnya ›</button>
         </div>
-        <form onsubmit="submitForm(event)" class="space-y-4">
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">Nama</label>
-            <input id="f-nama" value="${d.nama}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="dr. Nama Lengkap">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">Spesialisasi</label>
-            <input id="f-spesialisasi" value="${d.spesialisasi}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Umum, Gigi, dst.">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-1">No. HP</label>
-            <input id="f-telepon" value="${d.telepon}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="08xxxxxxxxxx">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-slate-500 mb-2">Layanan yang dapat ditangani</label>
-            <div class="grid grid-cols-2 gap-2">${layananCheckboxes(d.layananIds)}</div>
-          </div>
-          <div class="flex gap-2 pt-2">
-            <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg">Simpan</button>
-            <button type="button" onclick="closeForm()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Batal</button>
-          </div>
-        </form>
-      </div>
-    </div>` : ''}
-    ${actionLog()}
-  `;
-}
-
-// ===========================================================================
-// VARIANT B — Split roster/detail (persistent two-pane, inline editing)
-// ===========================================================================
-function renderVariantB() {
-  const activeId = state.mode === 'create' ? null : (state.activeId || DOKTER[0].id);
-
-  const list = DOKTER.map(d => `
-    <button onclick="selectDokter('${d.id}')" class="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-3 ${d.id === activeId && state.mode !== 'create' ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-100 border border-transparent'}">
-      <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center shrink-0">${initials(d.nama)}</div>
-      <div class="min-w-0">
-        <div class="text-sm font-medium text-slate-800 truncate">${d.nama}</div>
-        <div class="text-xs text-slate-500 truncate">${d.spesialisasi} · ${d.layananIds.length} layanan</div>
-      </div>
-      <span class="ml-auto w-2 h-2 rounded-full ${d.akun === 'aktif' ? 'bg-emerald-500' : d.akun === 'diundang' ? 'bg-amber-500' : 'bg-slate-300'}"></span>
-    </button>`).join('');
-
-  let detail;
-  if (state.mode === 'create' || (state.mode === 'edit' && state.draft)) {
-    const d = state.draft;
-    detail = `
-      <form onsubmit="submitForm(event)" class="space-y-4 max-w-md">
-        <h2 class="text-base font-semibold text-slate-800">${state.mode === 'create' ? 'Dokter baru' : `Edit ${d.nama}`}</h2>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Nama</label>
-          <input id="f-nama" value="${d.nama}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="dr. Nama Lengkap">
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">Spesialisasi</label>
-          <input id="f-spesialisasi" value="${d.spesialisasi}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-1">No. HP</label>
-          <input id="f-telepon" value="${d.telepon}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-500 mb-2">Layanan yang dapat ditangani</label>
-          <div class="grid grid-cols-2 gap-2">${layananCheckboxes(d.layananIds)}</div>
-        </div>
-        <div class="flex gap-2 pt-2">
-          <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg">Simpan</button>
-          <button type="button" onclick="closeForm()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Batal</button>
-        </div>
-      </form>`;
-  } else {
-    const d = dokterById(activeId);
-    detail = `
-      <div class="max-w-md">
-        <div class="flex items-center gap-4 mb-6">
-          <div class="w-14 h-14 rounded-full bg-blue-100 text-blue-700 font-semibold flex items-center justify-center text-lg">${initials(d.nama)}</div>
-          <div>
-            <h2 class="text-lg font-semibold text-slate-800">${d.nama}</h2>
-            <p class="text-sm text-slate-500">${d.spesialisasi} · ${d.telepon}</p>
-          </div>
-          <button onclick="openEdit('${d.id}')" class="ml-auto text-sm font-medium text-blue-600 hover:underline">Edit</button>
-        </div>
-
-        <div class="mb-6">
-          <div class="text-xs font-medium text-slate-500 mb-2">Layanan</div>
-          <div class="flex flex-wrap gap-1.5">${d.layananIds.map(id => `<span class="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">${layananNama(id)}</span>`).join('') || '<span class="text-sm text-slate-400">Belum ada</span>'}</div>
-        </div>
-
-        <div class="mb-6 p-4 rounded-lg bg-slate-50 border border-slate-200">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-xs font-medium text-slate-500">Akun login</span>
-            ${akunBadge(d.akun)}
-          </div>
-          <div class="text-sm text-slate-600 mb-3">${d.email || 'Belum ada email terdaftar'}</div>
-          ${d.akun === 'belum ada akun' ? `<button onclick="undang('${d.id}')" class="text-sm font-medium text-blue-600 hover:underline">Undang ke akun →</button>` : ''}
-          ${d.akun === 'diundang' ? `<div class="flex gap-3"><button onclick="kirimUlangUndangan('${d.id}')" class="text-sm font-medium text-blue-600 hover:underline">Kirim ulang undangan</button><button onclick="simulasikanLogin('${d.id}')" class="text-sm text-slate-400 hover:underline">(demo) tandai sudah login</button></div>` : ''}
-          ${d.akun === 'aktif' ? `<span class="text-sm text-emerald-700">✓ Sudah bisa login</span>` : ''}
-        </div>
-
-        <a href="penjadwalan-dokter.prototype.html" class="text-sm font-medium text-slate-500 hover:underline">Atur Jadwal & Pengecualian →</a>
-      </div>`;
-  }
-
-  return `
-    <div class="max-w-6xl mx-auto p-6 flex gap-6" style="min-height: calc(100vh - 40px);">
-      <div class="w-72 shrink-0">
-        <div class="flex items-center justify-between mb-3">
-          <h1 class="text-base font-semibold text-slate-800">Dokter</h1>
-          <button onclick="openCreate()" class="text-sm font-medium text-blue-600 hover:underline">+ Baru</button>
-        </div>
-        <div class="space-y-1">${list}</div>
-      </div>
-      <div class="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 p-6">${detail}</div>
-    </div>
-    ${actionLog()}
-  `;
-}
-
-// ===========================================================================
-// VARIANT C — Grid kartu + expand-in-place
-// ===========================================================================
-function renderVariantC() {
-  const cards = DOKTER.map(d => {
-    const expanded = state.mode === 'edit' && state.activeId === d.id;
-    if (expanded) {
-      const dr = state.draft;
-      return `
-        <form onsubmit="submitForm(event)" class="col-span-full sm:col-span-2 lg:col-span-3 bg-white rounded-xl border-2 border-blue-300 shadow-md p-5 space-y-3">
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <input id="f-nama" value="${dr.nama}" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Nama">
-            <input id="f-spesialisasi" value="${dr.spesialisasi}" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Spesialisasi">
-            <input id="f-telepon" value="${dr.telepon}" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="No. HP">
-          </div>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${layananCheckboxes(dr.layananIds)}</div>
-          <div class="flex gap-2">
-            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg">Simpan</button>
-            <button type="button" onclick="closeForm()" class="px-4 py-1.5 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Batal</button>
-          </div>
-        </form>`;
-    }
-    return `
-      <div onclick="openEdit('${d.id}')" class="bg-white rounded-xl border border-slate-200 shadow-sm p-5 cursor-pointer hover:shadow-md hover:border-blue-200 transition">
-        <div class="flex items-start justify-between mb-3">
-          <div class="w-11 h-11 rounded-full bg-blue-100 text-blue-700 font-semibold flex items-center justify-center">${initials(d.nama)}</div>
-          ${akunBadge(d.akun)}
-        </div>
-        <div class="font-medium text-slate-800">${d.nama}</div>
-        <div class="text-xs text-slate-500 mb-3">${d.spesialisasi} · ${d.telepon}</div>
-        <div class="flex flex-wrap gap-1 mb-3">
-          ${d.layananIds.map(id => `<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">${layananNama(id)}</span>`).join('')}
-        </div>
-        <div class="flex items-center justify-between text-xs">
-          <a href="penjadwalan-dokter.prototype.html" onclick="event.stopPropagation()" class="font-medium text-slate-500 hover:underline">Atur Jadwal →</a>
-          ${d.akun === 'belum ada akun' ? `<button onclick="event.stopPropagation(); undang('${d.id}')" class="font-medium text-blue-600 hover:underline">Undang</button>` : ''}
-          ${d.akun === 'diundang' ? `<button onclick="event.stopPropagation(); simulasikanLogin('${d.id}')" class="text-slate-400 hover:underline">(demo) tandai aktif</button>` : ''}
-        </div>
-      </div>`;
-  }).join('');
-
-  const addCard = state.mode === 'create' ? `
-    <form onsubmit="submitForm(event)" class="col-span-full sm:col-span-2 lg:col-span-3 bg-white rounded-xl border-2 border-blue-300 shadow-md p-5 space-y-3">
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <input id="f-nama" value="" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Nama">
-        <input id="f-spesialisasi" value="" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Spesialisasi">
-        <input id="f-telepon" value="" class="border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="No. HP">
-      </div>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${layananCheckboxes([])}</div>
-      <div class="flex gap-2">
-        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg">Simpan</button>
-        <button type="button" onclick="closeForm()" class="px-4 py-1.5 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Batal</button>
-      </div>
-    </form>` : `
-    <button onclick="openCreate()" class="border-2 border-dashed border-slate-300 rounded-xl p-5 flex flex-col items-center justify-center text-slate-400 hover:border-blue-300 hover:text-blue-500 min-h-[168px]">
-      <span class="text-2xl mb-1">+</span>
-      <span class="text-sm font-medium">Tambah Dokter</span>
-    </button>`;
-
-  return `
-    <div class="max-w-6xl mx-auto p-6">
-      <h1 class="text-lg font-semibold text-slate-800 mb-1">Dokter</h1>
-      <p class="text-sm text-slate-500 mb-5">${DOKTER.length} dokter terdaftar di klinik ini</p>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        ${cards}
-        ${addCard}
       </div>
     </div>
-    ${actionLog()}
   `;
-}
-
-// ---------------------------------------------------------------------------
-// Switcher bar (identical across variants, per prototype skill convention)
-// ---------------------------------------------------------------------------
-function renderSwitcher() {
-  const idx = VARIANTS.findIndex(v => v.key === state.variant);
-  const current = VARIANTS[idx];
-  return `
-    <div class="switcher-bar bg-slate-900 text-white rounded-full shadow-xl flex items-center gap-3 px-2 py-1.5 text-sm select-none">
-      <button onclick="cycleVariant(-1)" class="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center">‹</button>
-      <span class="px-1 font-medium">${current.key.toUpperCase()} — ${current.label}</span>
-      <button onclick="cycleVariant(1)" class="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center">›</button>
-    </div>`;
-}
-
-function cycleVariant(delta) {
-  const idx = VARIANTS.findIndex(v => v.key === state.variant);
-  const next = VARIANTS[(idx + delta + VARIANTS.length) % VARIANTS.length];
-  state.variant = next.key;
-  state.mode = 'idle';
-  state.activeId = null;
-  state.draft = null;
-  const params = new URLSearchParams(location.search);
-  params.set('variant', next.key);
-  history.replaceState(null, '', `?${params.toString()}`);
-  render();
-}
-
-document.addEventListener('keydown', (e) => {
-  const tag = document.activeElement && document.activeElement.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
-  if (e.key === 'ArrowLeft') cycleVariant(-1);
-  if (e.key === 'ArrowRight') cycleVariant(1);
-});
-
-// ---------------------------------------------------------------------------
-// Render dispatch
-// ---------------------------------------------------------------------------
-function render() {
-  const renderers = { a: renderVariantA, b: renderVariantB, c: renderVariantC };
-  document.getElementById('app').innerHTML = renderers[state.variant]();
-  document.getElementById('switcher').innerHTML = renderSwitcher();
 }
 
 render();
