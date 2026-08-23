@@ -28,7 +28,11 @@ Staff assigned to a specific Layanan who progress a patient through the remainin
 _Avoid_: Perawat (clinics use this loosely for the role, but not every Staf Layanan is a nurse)
 
 **Dokter**:
-A practitioner at a Klinik who performs Layanan and has their own Jadwal.
+A practitioner at a Klinik who performs Layanan and has their own Jadwal, and who has exactly one Spesialisasi.
+
+**Spesialisasi**:
+A Dokter's field of medical practice (e.g. "Umum", "Gigi", "Anak") — a required, single-valued attribute, purely informational and distinct from Layanan: it carries no Harga or Deskripsi and constrains nothing about which Layanan a Dokter may be assigned to. Drawn from one platform-wide list curated by Super-Admin (unlike Layanan, which has no Platform-wide catalog — see Layanan), not defined per-Klinik. Super-Admin may rename a value (updates in place everywhere it's used) or retire one, though retiring is blocked while any Dokter still holds it. Shown wherever a Dokter's name appears, including to Patients during booking, but only as passive context — never a filter or search facet. See [ADR 0026](docs/adr/0026-spesialisasi-is-platform-wide-informational-attribute.md).
+_Avoid_: Spesialis (names the person/role, not the attribute)
 
 **Patient**:
 A person receiving care from a Dokter, identified across the Platform by phone number and optionally NIK. A Patient never holds credentials or logs in itself — it can be created by a Resepsionis from a phone call, by a Kios walk-in registration, or as a profile a User manages. See User for the account that acts on a Patient's behalf.
