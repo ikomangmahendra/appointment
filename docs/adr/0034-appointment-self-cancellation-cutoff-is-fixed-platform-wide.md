@@ -1,0 +1,9 @@
+# Appointment self-cancellation cutoff is fixed and platform-wide, not per-Klinik configurable
+
+Introducing Pembatalan Mandiri (a User cancelling their own `confirmed` Appointment) raises a question other operational parameters in this system answer with a per-Klinik setting: Slot Hold duration, OTP attempt limit, Interval Pembaruan Papan, and Target Waktu Tunggu are all Admin Klinik-configurable. We deliberately did *not* follow that pattern here. The cutoff is fixed platform-wide: a User can self-cancel any time up to 00:00 in the Klinik's local timezone on the Appointment's own date, and not after — no Klinik can loosen or tighten it.
+
+This is a scope decision, not a technical one: those other settings tune an internal mechanism nobody outside the Klinik notices directly, while a cancellation cutoff is a policy a Patient experiences and needs to predict ("can I still cancel this myself?"). Making it per-Klinik would mean that answer depends on which Klinik they booked with, for a brand-new feature with no evidence yet that clinics actually need different values. We're deferring that configurability until real demand shows up, rather than guessing at bounds now.
+
+The cutoff is date-based (00:00 on the Appointment's date), not a rolling hour offset from the Appointment's start time — this keeps the rule predictable for a Patient ("not on the day itself") independent of what time their Appointment happens to be at, at the cost of a same-morning Appointment effectively having no self-cancel window at all the night before if booked late; that's accepted for now rather than solved with an hour-based rule.
+
+Past the cutoff, self-cancellation is withdrawn entirely (no override, no grace period) and the User is directed to the Klinik's Resepsionis, the same fallback-to-staff pattern already used when Self Check-In isn't eligible.
