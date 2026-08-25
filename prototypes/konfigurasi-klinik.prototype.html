@@ -31,8 +31,12 @@
   scrolling page of sectioned cards with a sticky unsaved-changes bar), B
   (Sidebar Kategori, a settings-app shape with a left category nav), C
   (Kartu Ringkas, a dashboard of summary cards that expand in place to
-  edit). Feedback picked **Variant C**; A and B are gone, along with the
-  variant switcher — there's only one screen now.
+  edit). Feedback first picked Variant C, then a follow-up pass switched
+  the pick to **Variant A** instead — B and C are gone, along with the
+  variant switcher and per-card expand/collapse; every setting now lives
+  open on one page with a single sticky "unsaved changes" bar at the
+  bottom. The branding fields below (added while C was current) carried
+  over unchanged.
 
   UPDATE (branding fields): added Logo Klinik and Deskripsi Klinik cards.
   Both are patient-facing (shown on this Klinik's own booking page, per the
@@ -113,8 +117,6 @@ function initialState() {
     },
     // draft is a deep-cloned working copy; "saved" only updates on Save.
     draft: null,
-    // which summary card is currently expanded into its edit form
-    expandedCard: null,
     liburKhususDraftInput: {tanggal: '', label: ''},
     toast: null,
   };
@@ -124,6 +126,8 @@ function cloneSaved() { return JSON.parse(JSON.stringify(state.saved)); }
 
 let state = initialState();
 state.draft = cloneSaved();
+
+function isDirty() { return JSON.stringify(state.draft) !== JSON.stringify(state.saved); }
 
 function preserveFocusRender() {
   const active = document.activeElement;
@@ -146,15 +150,13 @@ function showToast(msg) {
   setTimeout(() => { state.toast = null; render(); }, 1800);
 }
 
-function saveField(key) {
-  state.saved[key] = JSON.parse(JSON.stringify(state.draft[key]));
-  state.expandedCard = null;
-  showToast('Tersimpan.');
+function saveAll() {
+  state.saved = JSON.parse(JSON.stringify(state.draft));
+  showToast('Konfigurasi disimpan.');
 }
 
-function cancelField(key) {
-  state.draft[key] = JSON.parse(JSON.stringify(state.saved[key]));
-  state.expandedCard = null;
+function discardAll() {
+  state.draft = cloneSaved();
   render();
 }
 
@@ -200,11 +202,6 @@ function removeLiburKhusus(id) {
 function setLiburKhususDraft(field, value) {
   state.liburKhususDraftInput[field] = value;
   preserveFocusRender();
-}
-
-function toggleExpandedCard(key) {
-  state.expandedCard = state.expandedCard === key ? null : key;
-  render();
 }
 
 function onLogoFileChange(input) {
@@ -342,27 +339,16 @@ function numberFieldBlock(key, label, help) {
   `;
 }
 
+function papanFields() {
+  return numberFieldBlock('intervalPembaruanPapan', 'Interval Pembaruan Papan',
+      `Seberapa sering Papan Status Kunjungan memuat ulang data. Rentang ${BOUNDS.intervalPembaruanPapan.min}–${BOUNDS.intervalPembaruanPapan.max} detik.`)
+    + `<div class="mt-5">` + numberFieldBlock('targetWaktuTunggu', 'Target Waktu Tunggu',
+      `Kartu "menunggu" akan ditandai merah setelah melewati durasi ini.`) + `</div>`;
+}
+
 function bookingFields() {
   return numberFieldBlock('slotHoldDurasi', 'Durasi Penahanan Slot',
     `Slot tertahan selama proses verifikasi OTP; dilepas otomatis jika tidak selesai dalam durasi ini. Rentang ${BOUNDS.slotHoldDurasi.min}–${BOUNDS.slotHoldDurasi.max} menit.`);
-}
-
-function summarizeJamOperasional() {
-  const jadwal = state.draft.jamOperasional.jadwal;
-  const buka = DAYS.filter(d => !jadwal[d.key].libur);
-  const libur = DAYS.filter(d => jadwal[d.key].libur);
-  if (!buka.length) return 'Tutup sepanjang minggu';
-  const sample = jadwal[buka[0].key];
-  const liburCount = state.draft.jamOperasional.liburKhusus.length;
-  return `${buka.map(d => d.label).join(', ')} · ${sample.buka}–${sample.tutup}`
-    + (libur.length ? `, ${libur.map(d => d.label).join('/')} libur` : '')
-    + ` · ${liburCount} libur khusus`;
-}
-
-function summarizeDeskripsi() {
-  const v = state.draft.deskripsi.trim();
-  if (!v) return 'Belum diisi';
-  return v.length > 70 ? esc(v.slice(0, 70)) + '…' : esc(v);
 }
 
 // ---------- header + toast ----------
@@ -382,49 +368,39 @@ function renderToast() {
   return `<div data-anim="in" class="fixed top-4 right-4 bg-slate-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50">${esc(state.toast)}</div>`;
 }
 
-// ---------- Kartu Ringkas: summary cards that expand in place ----------
+// ---------- Satu Halaman: every setting open on one page ----------
 
-function summaryCard(key, title, summaryHtml, editFieldsHtml) {
-  const expanded = state.expandedCard === key;
+function renderSections() {
+  const dirty = isDirty();
   return `
-    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-      <button onclick="toggleExpandedCard('${key}')" class="w-full text-left px-5 py-4 flex items-center justify-between hover:bg-slate-50">
-        <div>
-          <h2 class="text-base font-semibold text-slate-800">${esc(title)}</h2>
-          <p class="text-sm text-slate-500 mt-0.5">${summaryHtml}</p>
-        </div>
-        <span class="text-slate-400 text-sm">${expanded ? 'Tutup ▲' : 'Ubah ▾'}</span>
-      </button>
-      ${expanded ? `
-        <div data-anim="in" class="px-5 pb-5 border-t border-slate-100 pt-4">
-          ${editFieldsHtml}
-          <div class="mt-4 flex justify-end gap-2">
-            <button onclick="cancelField('${key}')" class="text-sm text-slate-500 px-3 py-1.5 hover:text-slate-700">Batal</button>
-            <button onclick="saveField('${key}')" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700">Simpan</button>
-          </div>
-        </div>
-      ` : ''}
-    </div>
-  `;
-}
-
-function renderCards() {
-  const url = state.draft.logoUrl;
-  const logoSummary = url
-    ? `<img src="${url}" class="w-5 h-5 rounded object-cover inline-block align-middle mr-1.5">Sudah diunggah`
-    : 'Belum ada logo';
-  const cards = [
-    summaryCard('logoUrl', 'Logo Klinik', logoSummary, logoFields()),
-    summaryCard('deskripsi', 'Deskripsi Klinik', summarizeDeskripsi(), deskripsiFields()),
-    summaryCard('jamOperasional', 'Jam Operasional', esc(summarizeJamOperasional()), renderJamOperasionalFields()),
-    summaryCard('intervalPembaruanPapan', 'Interval Pembaruan Papan', `${state.draft.intervalPembaruanPapan} detik`, numberFieldBlock('intervalPembaruanPapan', 'Interval Pembaruan Papan', `Rentang ${BOUNDS.intervalPembaruanPapan.min}–${BOUNDS.intervalPembaruanPapan.max} detik.`)),
-    summaryCard('targetWaktuTunggu', 'Target Waktu Tunggu', `${state.draft.targetWaktuTunggu} menit`, numberFieldBlock('targetWaktuTunggu', 'Target Waktu Tunggu', `Kartu "menunggu" ditandai merah setelah melewati durasi ini.`)),
-    summaryCard('slotHoldDurasi', 'Durasi Penahanan Slot', `${state.draft.slotHoldDurasi} menit`, bookingFields()),
-  ];
-  return `
-    <main class="max-w-3xl mx-auto px-4 py-6 space-y-4">
-      ${cards.join('')}
+    <main class="max-w-3xl mx-auto px-4 py-6 space-y-5">
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Logo Klinik</h2>
+        ${logoFields()}
+      </section>
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Deskripsi Klinik</h2>
+        ${deskripsiFields()}
+      </section>
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Jam Operasional</h2>
+        ${renderJamOperasionalFields()}
+      </section>
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Papan Status Kunjungan</h2>
+        ${papanFields()}
+      </section>
+      <section class="bg-white rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">Booking Online</h2>
+        ${bookingFields()}
+      </section>
     </main>
+    ${dirty ? `
+      <div data-anim="in" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white border border-slate-200 shadow-lg rounded-xl px-4 py-3 flex items-center gap-3 z-40">
+        <span class="text-sm text-slate-600">Ada perubahan yang belum disimpan.</span>
+        <button onclick="discardAll()" class="text-sm text-slate-500 hover:text-slate-700 px-2">Batalkan</button>
+        <button onclick="saveAll()" class="text-sm bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700">Simpan Semua</button>
+      </div>` : ''}
   `;
 }
 
@@ -432,7 +408,7 @@ function renderCards() {
 
 function render() {
   const app = document.getElementById('app');
-  app.innerHTML = renderToast() + renderHeader() + renderCards();
+  app.innerHTML = renderToast() + renderHeader() + renderSections();
 }
 
 render();
