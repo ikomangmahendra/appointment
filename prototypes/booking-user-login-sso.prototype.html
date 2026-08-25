@@ -123,6 +123,31 @@
   existing-appointment flow, so ADR 0025's "reschedule re-snapshots the
   current price" clause isn't separately demonstrated here.
 
+  UPDATE (feedback round 6):
+    - Google SSO now mirrors Email+Password: a *returning* Google sign-in
+      reuses the phone already on file for that account and sends OTP to it
+      directly — no more re-typing a No. HP you've already given the Klinik.
+      "Lanjutkan dengan Google" takes this path (against the seeded Budi
+      account). The old "type a phone" screen still exists, but only for a
+      brand-new Google signup with no phone on file yet — reachable via the
+      small demo-only link under the main button (a real Google SDK would
+      tell the backend "new identity" vs "returning identity"; this mock has
+      only one seeded account, so both paths are exposed for the demo rather
+      than inferred).
+    - Every primary/secondary/ghost action button that used to be pinned to
+      the bottom of the screen (`margin-top:auto`, so it floated far below
+      short forms) now sits directly under the last field/question instead,
+      in normal document flow with everything else.
+    - Booking Terkonfirmasi gained: a downloadable QR (a deterministic fake
+      pattern, not a real scannable QR — this prototype has no check-in
+      system to scan it against) for showing at the Klinik; a note that the
+      same details are sent via WhatsApp; a delivery-status line that starts
+      as "belum diterima" with a 30s-cooldown "Kirim ulang" resend (cooldown
+      length configurable via `?waResendSeconds=N`, bounded 10-120) and
+      flips to "terkirim" a few seconds later to simulate the message
+      landing; and a short FAQ plus a "Hubungi WhatsApp Admin" link (mocked,
+      like every other backend action here — no real WhatsApp number).
+
   No backend, no persistence, no real OAuth/SMS — everything is canned
   in-memory mock data, reset on browser reload. Any 4-6 digit code is
   accepted as a valid OTP. See the harness banner below for test values.
@@ -189,7 +214,7 @@
 
   .primary-btn {
     width: 100%; border: none; border-radius: 14px; background: var(--accent); color: #fff;
-    font-size: 15px; font-weight: 700; padding: 14px; margin-top: auto;
+    font-size: 15px; font-weight: 700; padding: 14px;
   }
   .primary-btn:disabled { background: #c7cedb; }
   .secondary-btn {
@@ -269,7 +294,7 @@
 <body>
 
 <div id="harness-banner">
-  <b>PROTOTYPE</b> — reload resets everything · Login: <b>budi@example.com</b> / sandi bebas ("Budi Santoso", No. HP 081234567890) · Coba No. HP <b>081234567890</b> lewat Google/Tamu untuk lihat penautan ke akun Budi (bukan akun baru) · No. HP pasien yang sudah pernah berobat (belum jadi User): <b>081277777777</b> ("Rian Saputra") · Setelah login sekali, No. HP itu "dipercaya" di perangkat ini — coba login lagi tanpa OTP, atau tekan Keluar untuk lupakan
+  <b>PROTOTYPE</b> — reload resets everything · Login: <b>budi@example.com</b> / sandi bebas ("Budi Santoso", No. HP 081234567890) · "Lanjutkan dengan Google" = akun Google lama, OTP langsung ke No. HP terdaftar (tanpa input ulang) · link kecil di bawahnya = demo akun Google baru (No. HP belum ada) · Coba No. HP <b>081234567890</b> di jalur akun-baru itu untuk lihat penautan ke akun Budi juga · No. HP pasien yang sudah pernah berobat (belum jadi User): <b>081277777777</b> ("Rian Saputra") · Setelah login sekali, No. HP itu "dipercaya" di perangkat ini — coba login lagi tanpa OTP, atau tekan Keluar untuk lupakan
 </div>
 
 <div id="stage"><div id="phone">
@@ -319,6 +344,12 @@ const HOLD_MINUTES = (() => {
   return isNaN(v) ? 5 : Math.max(2, Math.min(15, v));
 })();
 const HOLD_MS = HOLD_MINUTES * 60 * 1000;
+// WhatsApp resend cooldown for the Booking Terkonfirmasi screen (default 30s,
+// bounded 10-120 — override with ?waResendSeconds=N for this demo).
+const WA_RESEND_SECONDS = (() => {
+  const v = parseInt(new URLSearchParams(location.search).get("waResendSeconds"), 10);
+  return isNaN(v) ? 30 : Math.max(10, Math.min(120, v));
+})();
 function isSlotHoldExpired() { return !!a.slotHeldAt && (Date.now() - a.slotHeldAt) > HOLD_MS; }
 function holdRemainingLabel() {
   const rem = Math.max(0, HOLD_MS - (Date.now() - (a.slotHeldAt || Date.now())));
@@ -395,6 +426,7 @@ function initialState() {
     matchedExternal: null,       // EXTERNAL_PATIENTS entry the new-patient form matched
     keluhan: "",
     justConverted: false,        // guest just tapped "Simpan sebagai akun" on the done screen
+    waStatus: "pending",         // "pending" -> "delivered": simulates the WhatsApp booking-details message landing
     err: null,
   };
 }
@@ -413,7 +445,12 @@ function render() {
   };
   root().innerHTML = screens[a.step]();
   if (["otpLogin", "guestOtp", "patientMatchOtp"].includes(a.step)) startResendTimer(30);
+  if (a.step === "done") {
+    drawBookingQr();
+    if (a.waStatus === "pending") startWaResendTimer(WA_RESEND_SECONDS);
+  }
   manageHoldTimer();
+  manageWaDeliverTimer();
 }
 
 /* ---- OTP resend cooldown, shared by every OTP screen (one at a time) ---- */
@@ -449,20 +486,116 @@ function otpResendRow() {
   </div>`;
 }
 
+/* ---- WhatsApp booking-details delivery simulation, done screen only ---- */
+let waDeliverTimer = null;
+function manageWaDeliverTimer() {
+  const shouldRun = a.step === "done" && a.waStatus === "pending";
+  if (shouldRun && !waDeliverTimer) {
+    waDeliverTimer = setTimeout(() => {
+      waDeliverTimer = null;
+      a.waStatus = "delivered";
+      render();
+    }, 6000);
+  } else if (!shouldRun && waDeliverTimer) {
+    clearTimeout(waDeliverTimer); waDeliverTimer = null;
+  }
+}
+let waResendCooldown = null;
+function startWaResendTimer(seconds) {
+  if (waResendCooldown) clearInterval(waResendCooldown);
+  let remaining = seconds;
+  const tick = () => {
+    const btn = document.getElementById("waResendBtn");
+    if (!btn) { clearInterval(waResendCooldown); waResendCooldown = null; return; } // left the done screen
+    if (remaining <= 0) {
+      btn.disabled = false;
+      btn.textContent = "Kirim ulang ke WhatsApp";
+      clearInterval(waResendCooldown); waResendCooldown = null;
+    } else {
+      btn.disabled = true;
+      btn.textContent = `Kirim ulang ke WhatsApp (${remaining}s)`;
+      remaining--;
+    }
+  };
+  tick();
+  waResendCooldown = setInterval(tick, 1000);
+}
+function resendWa() {
+  const note = document.getElementById("waResendNote");
+  if (note) note.textContent = "Pesan WhatsApp dikirim ulang (demo).";
+  startWaResendTimer(WA_RESEND_SECONDS);
+}
+function contactWaAdmin() {
+  alert("(Demo) Akan membuka chat WhatsApp ke Admin Klinik — tidak ada nomor atau backend nyata di prototype ini.");
+}
+
+/* ---- fake QR for the done screen — a deterministic pattern, not a real
+   scannable QR (this prototype has no check-in system to scan it against) --- */
+function bookingQrSeed() {
+  return `${a.layanan}|${a.dokter}|${a.dateLabel}|${a.slot}|${a.patientId || a.guestPhone}`;
+}
+function drawBookingQr() {
+  const canvas = document.getElementById("qrCanvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const size = 21;
+  const px = canvas.width / size;
+  let h = 0;
+  const seed = bookingQrSeed();
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  function rand() { h = (h * 1103515245 + 12345) >>> 0; return (h >>> 8) / 0xFFFFFF; }
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#1c1f26";
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const inFinder = (x < 7 && y < 7) || (x > size - 8 && y < 7) || (x < 7 && y > size - 8);
+      const on = inFinder
+        ? (x % 6 === 0 || y % 6 === 0 || (x > 1 && x < 5 && y > 1 && y < 5))
+        : rand() > 0.55;
+      if (on) ctx.fillRect(x * px, y * px, px, px);
+    }
+  }
+}
+function downloadQr() {
+  const canvas = document.getElementById("qrCanvas");
+  if (!canvas) return;
+  const link = document.createElement("a");
+  link.href = canvas.toDataURL("image/png");
+  link.download = "booking-qr.png";
+  link.click();
+}
+
 /* ---- gate & login ---- */
 function screenGate() {
   return `<div class="screen">
     <h1 class="title">${KLINIK.nama}</h1>
     <p class="subtitle">Booking appointment lebih cepat kalau Anda masuk — riwayat &amp; data pasien tersimpan. Atau lanjut sebagai tamu, tanpa akun.</p>
-    <button class="google-btn" onclick="startGoogleLogin()"><span class="g-dot"></span> Lanjutkan dengan Google</button>
+    <button class="google-btn" onclick="startGoogleLogin(false)"><span class="g-dot"></span> Lanjutkan dengan Google</button>
+    <button class="ghost-btn" style="font-size:11.5px;padding:2px 4px;margin-top:-6px;" onclick="startGoogleLogin(true)">(Demo) Google akun baru — No. HP belum terdaftar</button>
     <button class="secondary-btn" onclick="a.step='emailLogin'; render();">Masuk dengan Email &amp; Kata Sandi</button>
     <div class="divider">atau</div>
-    <button class="ghost-btn" onclick="a.step='guestIdentity'; render();" style="margin-top:auto;">Lanjutkan sebagai Tamu →</button>
+    <button class="ghost-btn" onclick="a.step='guestIdentity'; render();">Lanjutkan sebagai Tamu →</button>
   </div>`;
 }
-function startGoogleLogin() {
+// Perangkat Terpercaya + phone-on-file apply to Google SSO the same way they
+// apply to Email+Password: a *returning* Google identity already has a User
+// account (and therefore a phone) on file, so there's nothing to ask for —
+// OTP (or a skip, if this device already trusts that phone) goes straight to
+// the registered No. HP, same as loginWithPhone() below does for
+// Email+Password. Only a signup with no linked account yet needs the
+// phone-entry screen. This mock has one seeded account (Budi's), so both
+// paths are reachable via separate buttons on the gate screen for the demo —
+// a real Google SDK would tell the backend which case it is.
+const GOOGLE_LINKED_PHONE = "081234567890";
+function startGoogleLogin(isNewSignup) {
   a.step = "googleConnecting"; render();
-  setTimeout(() => { a.step = "googlePhone"; render(); }, 900);
+  setTimeout(() => {
+    if (isNewSignup) {
+      a.step = "googlePhone"; render();
+    } else {
+      loginWithPhone(GOOGLE_LINKED_PHONE, ACCOUNTS[GOOGLE_LINKED_PHONE]);
+    }
+  }, 900);
 }
 function screenGoogleConnecting() {
   return `<div class="screen" style="align-items:center;justify-content:center;">
@@ -473,7 +606,7 @@ function screenGoogleConnecting() {
 function screenGooglePhone() {
   return `<div class="screen">
     <div class="topbar"><button class="back-btn" onclick="a.step='gate'; render();">&#8592;</button><h1 class="title">Verifikasi No. HP</h1></div>
-    <p class="subtitle">Google berhasil terhubung. Untuk keamanan tambahan, kami akan kirim kode OTP ke No. HP Anda.</p>
+    <p class="subtitle">Akun Google ini belum tertaut ke Klinik — belum ada No. HP terdaftar. Masukkan No. HP Anda, kami kirim kode OTP untuk verifikasi.</p>
     <label class="field-label">No. HP</label>
     <input class="field" id="in_googlePhone" placeholder="08xxxxxxxxxx">
     <button class="primary-btn" onclick="submitGooglePhone()">Kirim OTP</button>
@@ -828,21 +961,46 @@ function screenDone() {
   const wasGuest = !a.session || a.justConverted;
   const patientName = wasGuest ? a.guestName : a.session.patients.find(p => p.id === a.patientId).nama;
   const bookedBy = wasGuest ? "Guest Patient" : `User (${a.session.nama})`;
-  return `<div class="screen" style="align-items:center;text-align:center;justify-content:center;">
+  const notifyPhone = wasGuest ? a.guestPhone : a.session.phone;
+  return `<div class="screen" style="align-items:center;text-align:center;">
     <div class="check-hero">&#10003;</div>
     <h1 class="title">Booking Terkonfirmasi</h1>
     <p class="subtitle">${fmtLayanan(a.layanan)} · ${fmtDokter(a.dokter)}<br>${a.dateLabel}, ${a.slot} · Pasien: ${patientName}<br>Biaya: ${idr(a.hargaLocked)}</p>
     <span class="badge booked-by">Booked By: ${bookedBy}</span>
+
+    <div class="banner-note">Detail booking ini juga dikirim ke WhatsApp Anda di ${maskPhone(notifyPhone)}.</div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+      <canvas id="qrCanvas" width="168" height="168" style="border:1.5px solid #e7e9ee;border-radius:12px;"></canvas>
+      <p class="subtitle" style="margin:0;">Tunjukkan QR ini saat check-in di klinik.</p>
+      <button class="secondary-btn" style="width:auto;padding:10px 18px;" onclick="downloadQr()">Unduh QR</button>
+    </div>
+    ${a.waStatus === "delivered" ? `
+      <p class="subtitle" style="margin:0;color:#2e7d32;font-weight:700;">&#10003; Pesan WhatsApp terkirim</p>
+    ` : `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+        <p class="subtitle" style="margin:0;">Belum menerima detail booking di WhatsApp?</p>
+        <button class="ghost-btn" id="waResendBtn" disabled onclick="resendWa()">Kirim ulang ke WhatsApp (${WA_RESEND_SECONDS}s)</button>
+        <p class="subtitle" id="waResendNote" style="margin:0;"></p>
+      </div>
+    `}
+
     ${a.justConverted ? `
       <div class="banner-note">Akun tersimpan untuk No. HP ${maskPhone(a.guestPhone)} — lain kali cukup masuk lewat Google atau Email+Kata Sandi, tanpa OTP lagi di perangkat ini. Booking di atas tetap tercatat Booked By: Guest Patient — status ini adalah jejak audit, bukan penunjuk akun saat ini.</div>
-      <button class="primary-btn" style="margin-top:16px;" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
+      <button class="primary-btn" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
     ` : a.session ? `
-      <button class="primary-btn" style="margin-top:16px;" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
+      <button class="primary-btn" onclick="const s=a.session,p=a.patientId; reset(); a.session=s; a.patientId=p; a.step='layanan'; render();">Booking Lagi (tetap masuk)</button>
       <button class="ghost-btn" onclick="trustedPhones.delete(a.session.phone); reset();">Keluar (lupakan perangkat ini)</button>
     ` : `
-      <button class="primary-btn" style="margin-top:16px;" onclick="convertGuestToAccount()">Simpan No. HP ini sebagai akun</button>
+      <button class="primary-btn" onclick="convertGuestToAccount()">Simpan No. HP ini sebagai akun</button>
       <button class="ghost-btn" onclick="reset();">Booking lagi (reset demo)</button>
     `}
+
+    <details style="width:100%;text-align:left;font-size:12.5px;color:var(--muted);line-height:1.5;">
+      <summary style="cursor:pointer;font-weight:700;color:var(--ink);">Pertanyaan Umum</summary>
+      <p><b>Kenapa WhatsApp belum masuk?</b><br>Pesan bisa perlu waktu beberapa saat. Pakai tombol "Kirim ulang" di atas kalau sudah lewat ${WA_RESEND_SECONDS} detik.</p>
+      <p style="margin-bottom:0;"><b>No. HP saya salah, bagaimana?</b><br>Hubungi Admin Klinik lewat WhatsApp di bawah ini untuk memperbaiki data booking Anda.</p>
+    </details>
+    <button class="ghost-btn" onclick="contactWaAdmin()">&#128172; Hubungi WhatsApp Admin</button>
   </div>`;
 }
 
